@@ -59,7 +59,7 @@ h2 span { margin-left: 6px; color: #64748b; font-size: 13px; font-weight: 500; }
 small { color: #718096; }
 
 .field { display: grid; gap: 3px; margin: 18px 0 8px; font-weight: 700; }
-input[type="text"] {
+input[type="text"], select {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid #cbd5e1;
@@ -68,7 +68,10 @@ input[type="text"] {
   background: white;
   font: inherit;
 }
-input[type="text"]:focus { outline: 3px solid #bfdbfe; border-color: #2563eb; }
+input[type="text"]:focus, select:focus { outline: 3px solid #bfdbfe; border-color: #2563eb; }
+.check-row.wide { margin-top: 12px; }
+.permission-note { margin: 9px 0 0; padding-left: 14px; color: #7c4a03; font-size: 13px; line-height: 1.55; }
+.permission-note.en { margin-top: 2px; color: #8a6a26; }
 
 dl { display: grid; gap: 10px; margin: 0; }
 dl div { display: grid; grid-template-columns: 180px 1fr; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid #edf1f6; }

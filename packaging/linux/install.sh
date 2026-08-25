@@ -6,14 +6,14 @@ usage() {
 GPTLock Linux 安装器 / Linux installer
 
 用法 / Usage:
-  ./install.sh --extension-id <32位ID> [--binary <gptlock-core>] [--browser all|chrome|chromium|edge]
+  ./install.sh [--extension-id <32位ID>] [--binary <gptlock-core>] [--browser all|chrome|chromium|edge]
 
-先在 chrome://extensions 或 edge://extensions 加载 extension/，再复制扩展 ID。
-Load extension/ first, then copy its extension ID from the browser extensions page.
+默认使用项目固定扩展 ID，并把扩展复制到 ~/.local/share/gptlock/extension。
+The stable project extension ID is used by default and the extension is copied to ~/.local/share/gptlock/extension.
 EOF
 }
 
-extension_id=""
+extension_id="bhchcpeodphgjfjoookncemnamdbfcof"
 binary_path=""
 browser="all"
 
@@ -63,8 +63,15 @@ data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 install_dir="$data_home/gptlock/bin"
 installed_binary="$install_dir/gptlock-core"
+installed_updater="$install_dir/gptlock-update"
+installed_extension="$data_home/gptlock/extension"
 mkdir -p "$install_dir"
 install -m 0755 "$binary_path" "$installed_binary"
+install -m 0755 "$script_dir/update.sh" "$installed_updater"
+mkdir -p "$installed_extension"
+for file in background.js content.js guard.js manifest.json network-evidence.js network-monitor.js options.css options.html options.js policy.js popup.css popup.html popup.js; do
+  install -m 0644 "$repo_root/extension/$file" "$installed_extension/$file"
+done
 
 write_manifest() {
   local directory="$1"
@@ -117,6 +124,9 @@ Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectSystem=strict
+UMask=0077
+LockPersonality=true
 
 [Install]
 WantedBy=default.target
@@ -138,4 +148,6 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 
 echo "GPTLock Linux 安装完成 / Linux installation completed."
+echo "扩展目录 / Extension directory: $installed_extension"
+echo "更新命令 / Updater: $installed_updater"
 echo "请重新启动浏览器 / Restart the browser."

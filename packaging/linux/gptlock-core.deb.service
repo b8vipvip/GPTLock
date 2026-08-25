@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/share/gptlock/bin/gptlock-core serve
+ExecStart=/usr/bin/gptlock-core serve
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

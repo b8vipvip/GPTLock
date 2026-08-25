@@ -10,7 +10,7 @@
   <main class="shell">
     <header>
       <div>
-        <p class="eyebrow">GPTLOCK 0.2</p>
+        <p class="eyebrow">GPTLOCK 0.3</p>
         <h1>模型锁定与验证</h1>
         <p class="subtitle">Model policy guard &amp; evidence-based verification</p>
       </div>
@@ -31,6 +31,39 @@
     <section class="card" aria-labelledby="reasoningHeading">
       <h2 id="reasoningHeading">允许的推理强度 <span>Allowed reasoning levels</span></h2>
       <div id="reasoningChoices" class="choices"></div>
+      <label class="field" for="preferredReasoning">
+        <span>优先推理强度</span>
+        <small>Preferred reasoning level for best-effort UI alignment</small>
+      </label>
+      <select id="preferredReasoning"></select>
+    </section>
+
+    <section class="card" aria-labelledby="verificationHeading">
+      <h2 id="verificationHeading">真实响应验证 <span>Response verification</span></h2>
+      <label class="check-row wide">
+        <input id="networkVerification" type="checkbox">
+        <span><strong>启用网络响应验证</strong><small>Use Chrome DevTools Protocol to read response metadata. Prompt and answer content are never persisted.</small></span>
+      </label>
+      <p class="permission-note">此功能需要 Chrome/Edge 的“调试程序”权限。浏览器 DevTools 与 GPTLock 不能同时附加同一标签页；打开 DevTools 会让 GPTLock 降级为未验证。</p>
+      <p class="permission-note en">This requires the browser “debugger” permission. Opening DevTools on the same tab detaches GPTLock and produces an unverified state.</p>
+
+      <label class="check-row wide">
+        <input id="autoAlignSelection" type="checkbox">
+        <span><strong>自动对齐页面选择（尽力而为）</strong><small>Best-effort UI alignment; this is convenience only and never proof of the backend model.</small></span>
+      </label>
+    </section>
+
+    <section class="card" aria-labelledby="probeHeading">
+      <h2 id="probeHeading">首次请求 <span>First request</span></h2>
+      <p class="help">服务器响应前无法证明真实路由。默认允许一次符合页面预检的探测请求，随后等待响应验证。</p>
+      <label class="radio-row">
+        <input type="radio" name="firstRequestMode" value="allow_once">
+        <span><strong>自动允许一次探测</strong><small>Allow one preflight-matching probe, then block until verified</small></span>
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="firstRequestMode" value="block">
+        <span><strong>默认阻断，手动授权探测</strong><small>Block until “Arm one probe” is clicked in the popup</small></span>
+      </label>
     </section>
 
     <section class="card" aria-labelledby="modeHeading">

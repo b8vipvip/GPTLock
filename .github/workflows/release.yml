@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    name: Linux release assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native-core
+      - name: Validate tag version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' native-core/Cargo.toml | head -n 1)"
+          manifest_version="$(python -c 'import json; print(json.load(open("extension/manifest.json"))["version"])')"
+          test "$version" = "$cargo_version"
+          test "$version" = "$manifest_version"
+      - name: Build assets
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cargo build --locked --release --manifest-path native-core/Cargo.toml
+          chmod +x packaging/linux/build-deb.sh
+          GPTLOCK_VERSION="$version" packaging/linux/build-deb.sh dist
+          tar -C native-core/target/release -czf "dist/gptlock-core-${version}-linux-x64.tar.gz" gptlock-core
+          cd extension
+          zip -9 "../dist/gptlock-extension-${version}.zip" \
+            background.js content.js guard.js manifest.json network-evidence.js network-monitor.js \
+            options.css options.html options.js policy.js popup.css popup.html popup.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: dist/*
+          if-no-files-found: error
+
+  windows:
+    name: Windows release assets
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native-core
+      - name: Build Setup
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $manifest = Get-Content 'extension\manifest.json' -Raw | ConvertFrom-Json
+          if ($manifest.version -ne $version) { throw 'Tag and extension version differ.' }
+          cargo build --locked --release --manifest-path native-core/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            choco install innosetup --yes --no-progress
+          }
+          & $iscc "/DMyAppVersion=$version" 'packaging\windows\GPTLock.iss'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: dist/windows/GPTLockSetup-x64.exe
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes \
+            --title "GPTLock $GITHUB_REF_NAME"

@@ -91,7 +91,12 @@ fn handle_message(state: &Arc<AppState>, message: Value) -> Value {
                 "network_response_metadata",
                 "conversation_response_metadata"
             ],
-            "informationalEvidenceSources": ["page_dom", "user_selection", "unknown"]
+            "informationalEvidenceSources": [
+                "network_request_metadata",
+                "page_dom",
+                "user_selection",
+                "unknown"
+            ]
         })),
         "get_policy" => state
             .policy()

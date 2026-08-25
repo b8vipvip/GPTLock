@@ -1,9 +1,18 @@
-import { KNOWN_MODELS, REASONING_LEVELS, normalizeModelId, normalizePolicy } from './policy.js';
+import {
+  KNOWN_MODELS,
+  REASONING_LEVELS,
+  normalizeModelId,
+  normalizePolicy,
+  normalizeSettings,
+} from './policy.js';
 
 const elements = {
   modelChoices: document.getElementById('modelChoices'),
   reasoningChoices: document.getElementById('reasoningChoices'),
   customModels: document.getElementById('customModels'),
+  preferredReasoning: document.getElementById('preferredReasoning'),
+  networkVerification: document.getElementById('networkVerification'),
+  autoAlignSelection: document.getElementById('autoAlignSelection'),
   connectionBadge: document.getElementById('connectionBadge'),
   nativeStatus: document.getElementById('nativeStatus'),
   verificationStatus: document.getElementById('verificationStatus'),
@@ -36,6 +45,10 @@ function checkbox(container, name, id, label, detail = '') {
 for (const model of KNOWN_MODELS) checkbox(elements.modelChoices, 'model', model.id, model.label, model.id);
 for (const level of REASONING_LEVELS) {
   checkbox(elements.reasoningChoices, 'reasoning', level.id, level.labelZh, level.labelEn);
+  const option = document.createElement('option');
+  option.value = level.id;
+  option.textContent = `${level.labelZh} / ${level.labelEn}`;
+  elements.preferredReasoning.append(option);
 }
 
 function selected(name) {
@@ -87,11 +100,16 @@ function renderStatus(nativeStatus = {}) {
 async function load() {
   const state = await sendMessage({ type: 'GPTLOCK_GET_STATE' });
   const policy = normalizePolicy(state.policy);
+  const settings = normalizeSettings(state.settings);
   setSelected('model', policy.lockedModels);
   setSelected('reasoning', policy.allowedReasoningLevels);
   const known = new Set(KNOWN_MODELS.map((model) => model.id));
   elements.customModels.value = policy.lockedModels.filter((model) => !known.has(model)).join(', ');
   document.querySelector(`input[name="mode"][value="${policy.strictMode}"]`).checked = true;
+  elements.preferredReasoning.value = settings.preferredReasoning;
+  elements.networkVerification.checked = settings.networkVerificationEnabled;
+  elements.autoAlignSelection.checked = settings.autoAlignSelection;
+  document.querySelector(`input[name="firstRequestMode"][value="${settings.firstRequestMode}"]`).checked = true;
   renderStatus(state.nativeStatus);
 }
 
@@ -109,7 +127,19 @@ async function save() {
   }
 
   const strictMode = document.querySelector('input[name="mode"]:checked')?.value === 'true';
-  await chrome.storage.sync.set({ policy: { lockedModels, allowedReasoningLevels, strictMode } });
+  const preferredReasoning = allowedReasoningLevels.includes(elements.preferredReasoning.value)
+    ? elements.preferredReasoning.value
+    : allowedReasoningLevels[0];
+  const settings = {
+    preferredReasoning,
+    networkVerificationEnabled: elements.networkVerification.checked,
+    autoAlignSelection: elements.autoAlignSelection.checked,
+    firstRequestMode: document.querySelector('input[name="firstRequestMode"]:checked')?.value || 'allow_once',
+  };
+  await chrome.storage.sync.set({
+    policy: { lockedModels, allowedReasoningLevels, strictMode },
+    settings,
+  });
   elements.formMessage.textContent = '已保存，正在同步本地核心 / Saved; syncing with the local core.';
   window.setTimeout(() => void load().catch(() => {}), 700);
 }

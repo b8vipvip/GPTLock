@@ -1,0 +1,34 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  color: #172033;
+  background: #f6f8fc;
+}
+
+* { box-sizing: border-box; }
+body { width: 390px; margin: 0; }
+main { padding: 18px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.eyebrow { margin: 0 0 3px; color: #2563eb; font-size: 10px; font-weight: 900; letter-spacing: .13em; }
+h1 { margin: 0; font-size: 21px; }
+h1 small { color: #64748b; font-size: 11px; font-weight: 600; }
+.verdict { border-radius: 999px; padding: 7px 10px; color: white; background: #b45309; font-size: 12px; font-weight: 800; }
+.verdict.good { background: #15803d; }
+.verdict.bad { background: #b91c1c; }
+.verdict.off { background: #64748b; }
+.summary { margin: 15px 0 12px; padding: 13px; border: 1px solid #dbe3ef; border-radius: 13px; background: white; }
+.summary strong { display: block; margin-bottom: 4px; font-size: 14px; }
+.summary p { margin: 0; color: #64748b; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+dl { display: grid; gap: 1px; margin: 0; overflow: hidden; border: 1px solid #dbe3ef; border-radius: 13px; background: #dbe3ef; }
+dl div { display: grid; grid-template-columns: 130px 1fr; gap: 8px; padding: 10px 11px; background: white; }
+dt { color: #526076; font-size: 12px; }
+dt small { display: block; color: #94a3b8; font-size: 9px; }
+dd { margin: 0; font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
+.boundary { margin: 12px 0; padding: 10px 11px; border-left: 3px solid #f59e0b; color: #704b00; background: #fffbeb; font-size: 11px; line-height: 1.45; }
+.boundary span { color: #8a6a26; }
+.actions { display: grid; grid-template-columns: 1.35fr 1fr .8fr; gap: 7px; }
+button { border: 0; border-radius: 10px; padding: 9px 7px; color: #1d4ed8; background: #e8efff; font: 750 12px/1.2 inherit; cursor: pointer; }
+button.primary { color: white; background: #1d4ed8; }
+button:disabled { opacity: .45; cursor: default; }
+button small { font-size: 9px; font-weight: 600; }
+#message { min-height: 15px; margin: 8px 0 0; color: #64748b; font-size: 11px; }

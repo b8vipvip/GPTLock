@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { DEFAULT_POLICY, normalizePolicy, normalizeReasoningLevel } from '../policy.js';
+import {
+  DEFAULT_POLICY,
+  DEFAULT_SETTINGS,
+  normalizePolicy,
+  normalizeReasoningLevel,
+  normalizeSettings,
+} from '../policy.js';
 
 test('uses the canonical default policy', () => {
   assert.deepEqual(normalizePolicy(null), DEFAULT_POLICY);
@@ -34,4 +40,23 @@ test('rejects malformed custom model identifiers', () => {
 test('normalizes extra-high aliases', () => {
   assert.equal(normalizeReasoningLevel('extra_high'), 'extra-high');
   assert.equal(normalizeReasoningLevel('xhigh'), 'extra-high');
+});
+
+test('normalizes extension-only verification settings independently', () => {
+  assert.deepEqual(normalizeSettings(null), DEFAULT_SETTINGS);
+  assert.deepEqual(
+    normalizeSettings({
+      networkVerificationEnabled: false,
+      firstRequestMode: 'block',
+      autoAlignSelection: false,
+      preferredReasoning: 'xhigh',
+      ignored: 'value',
+    }),
+    {
+      networkVerificationEnabled: false,
+      firstRequestMode: 'block',
+      autoAlignSelection: false,
+      preferredReasoning: 'extra-high',
+    },
+  );
 });

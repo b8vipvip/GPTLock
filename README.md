@@ -1,127 +1,74 @@
 # GPTLock
 
-> 默认文档语言：中文；英文说明见下半部分。
-> Default documentation language: Chinese; English follows.
+> 默认文档语言：中文；English summary follows.
 
-GPTLock 是面向 `chatgpt.com` 官方网页聊天的模型策略锁定与状态验证工具，支持 Windows/Linux 上的 Chrome、Chromium 和 Edge。它由 Manifest V3 浏览器扩展与 Rust 本地核心组成，不使用 Worker 模式，不调用 OpenAI API。
+GPTLock 是专用于 `chatgpt.com` 官方网页聊天的模型策略锁定与真实状态验证工具，支持 Windows/Linux 上的 Chrome、Chromium 和 Edge。它由 Manifest V3 扩展与 Rust 本地核心组成，不使用 OpenAI API，不代理 HTTPS，也不尝试绕过服务端限制。
 
-## 当前状态
+当前版本：`0.3.0`。Phase 1–5 的代码已经实现，包括响应元数据采集、严格发送守卫、状态弹窗、Windows Setup、Linux `.deb`、CI 制品、GitHub Release 与校验和更新流程。
 
-**Phase 2 已实现：本地核心、Native Messaging、扩展策略同步、本机 API、审计日志和跨平台 CI。**
+## 核心能力
 
-本阶段已经建立“证据来源分级”基础，但尚未把 ChatGPT 网络响应中的模型元数据采集器接入扩展，因此不能把页面显示的 `GPT-5.6 Sol` 声明为后端真实模型。页面 DOM 证据会明确返回 `unverified`。网络响应元数据采集和发送前阻断属于后续 Phase 4。
+- 默认并优先选择 `gpt-5.6-sol`，也可配置多个允许模型；
+- 允许 `low / medium / high / extra-high` 推理强度，并设置首选强度；
+- 通过 Chrome DevTools Protocol 关联当前 ChatGPT 请求与完整响应；
+- 只把网络/会话响应元数据视为可产生 `verified` 的证据；
+- 严格模式在不匹配、未验证、验证器离线或等待响应时阻止后续发送；
+- 提醒模式只显示告警和记录审计，不阻止发送；
+- Windows/Linux Native Messaging、本机 API 和隐私化 JSONL 审计日志；
+- 固定扩展 ID：`bhchcpeodphgjfjoookncemnamdbfcof`，更新后无需重新登记本地主机。
 
-## 能做与不能做
+## 必须理解的边界
 
-GPTLock 可以：
+GPTLock 无法强制 OpenAI 后端使用某个模型。它只能控制网页端策略、执行发送前检查，并验证服务端实际暴露给网页的响应元数据。如果 ChatGPT 没有返回模型或推理强度元数据，GPTLock 会显示 `unverified`，不会使用页面标签伪造 `verified`。
 
-- 保存多个允许模型和多个推理强度；
-- 在扩展与本地核心之间同步策略；
-- 对带来源标记的观测证据执行 `verified / mismatch / unverified` 三态判断；
-- 在严格模式下为不匹配或证据不足返回 `block` 决策；
-- 记录不含聊天正文和令牌的 JSONL 审计日志；
-- 在 Windows/Linux 上通过 Chromium Native Messaging 通信。
+首次请求也无法在服务端响应前被证明。默认策略允许一次“页面选择符合策略”的探测请求，发送后立即进入等待状态；之后只有匹配的响应元数据才会解锁下一次发送。也可配置为首次默认阻断，再从弹窗手动授权一次探测。
 
 GPTLock 不能：
 
-- 绕过 ChatGPT 套餐、额度、区域或账号限制；
-- 修改 OpenAI 服务端模型路由；
-- 仅凭模型菜单、DOM 文字或模拟点击证明后端实际使用了某个模型；
-- 承诺 OpenAI 未公开或未稳定提供的内部模型标识永远不变。
+- 绕过 ChatGPT 套餐、额度、区域、账号或模型可用性限制；
+- 修改 OpenAI Gateway 或内部路由；
+- 从模型菜单、DOM 文字或自动点击推断后端实际模型；
+- 对 OpenAI 未向网页暴露的内部调度作密码学证明；
+- 保证 ChatGPT 私有前端协议未来不发生变化。
 
-## 架构
+## 安装、使用与更新
 
-```text
-ChatGPT 官方网页
-       │ 页面状态（提示级证据；后续接入响应元数据）
-       ▼
-Manifest V3 扩展
-       │ Chromium Native Messaging（长度前缀 JSON）
-       ▼
-GPTLock Rust 本地核心
-       ├── 策略验证器
-       ├── 127.0.0.1:17856 本机 API
-       └── ~/.gptlock/logs/audit.jsonl
-```
+- [安装方法（Windows/Linux）](docs/INSTALL.md)
+- [使用方法与状态说明](docs/USAGE.md)
+- [以后如何更新与发布](docs/UPDATE.md)
+- [架构说明](docs/ARCHITECTURE.md)
+- [安全与隐私边界](docs/SECURITY.md)
+- [Native Messaging 协议](docs/NATIVE_MESSAGING.md)
 
-详细设计见 [架构说明](docs/ARCHITECTURE.md)、[安全边界](docs/SECURITY.md) 和 [Native Messaging 协议](docs/NATIVE_MESSAGING.md)。
+最短安装流程：
 
-## 快速开发验证
+1. 从 GitHub Release 下载 Windows `GPTLockSetup-x64.exe` 或 Linux `gptlock_<版本>_amd64.deb`；
+2. 安装后在 `chrome://extensions` 或 `edge://extensions` 开启开发者模式；
+3. Windows 加载 `%LOCALAPPDATA%\GPTLock\extension`，Linux 加载 `/usr/share/gptlock/extension`；
+4. 确认扩展 ID 为上面的固定 ID，完全重启浏览器；
+5. 打开 `chatgpt.com`，在 GPTLock 设置中保存策略，从弹窗检查 Core、Network verifier 和 Response evidence。
 
-要求：Rust stable、Node.js 22+、Chrome/Chromium/Edge。
+## 开发与测试
 
-```bash
-cargo test --manifest-path native-core/Cargo.toml --all-targets
-cargo build --release --manifest-path native-core/Cargo.toml
-cd extension && npm test
-```
-
-在浏览器扩展管理页启用“开发者模式”，选择“加载已解压的扩展程序”，加载 `extension/`。记下 32 位扩展 ID，然后安装本地核心：
-
-Linux：
+要求：Rust stable、Node.js 22+、Chrome/Chromium/Edge。Linux 构建 `.deb` 还需要 `dpkg-deb`，Windows Setup 需要 Inno Setup 6。
 
 ```bash
-./packaging/linux/install.sh --extension-id <扩展ID>
+node --test extension/tests/*.test.mjs
+cargo fmt --manifest-path native-core/Cargo.toml --all -- --check
+cargo clippy --locked --manifest-path native-core/Cargo.toml --all-targets -- -D warnings
+cargo test --locked --manifest-path native-core/Cargo.toml --all-targets
+cargo build --locked --release --manifest-path native-core/Cargo.toml
+./packaging/linux/build-deb.sh
 ```
 
-Windows PowerShell：
-
-```powershell
-.\packaging\windows\Install-GPTLock.ps1 -ExtensionId <扩展ID>
-```
-
-安装后完全退出并重新启动浏览器。开发安装细节见 [本地核心文档](native-core/README.md)。
-
-## 验证语义
-
-| 证据来源 | 可信度 | 匹配时结果 | 说明 |
-|---|---:|---|---|
-| `network_response_metadata` | 高 | `verified` | 来自当前服务端网络响应的模型元数据 |
-| `conversation_response_metadata` | 中 | `verified` | 来自当前会话服务端响应元数据 |
-| `page_dom` | 低 | `unverified` | 页面文字可能只是选择状态 |
-| `user_selection` | 低 | `unverified` | 用户选择不等于服务器实际路由 |
-| `unknown` | 无 | `unverified` | 无可验证来源 |
-
-任一已观测模型或推理强度不在策略中时返回 `mismatch`。严格模式将 `mismatch` 和 `unverified` 映射为 `block`；提醒模式映射为 `warn`。
-
-## 本机 API
-
-默认监听 `127.0.0.1:17856`：
-
-- `GET /health`：无需令牌；
-- `GET /policy`：读取策略；
-- `PUT /policy`：更新策略；
-- `POST /verify`：验证一次观测；
-- `GET /status`：运行状态与最近验证。
-
-除 `/health` 外均要求 `Authorization: Bearer <token>` 或 `X-GPTLock-Token`。令牌保存在 `~/.gptlock/api.token`，不要提交或分享。
-
-## 路线图
-
-- [x] Phase 1：扩展与策略框架
-- [x] Phase 2：Rust Native Core、Native Messaging、Windows/Linux CI
-- [ ] Phase 3：扩展状态面板与策略体验完善
-- [ ] Phase 4：当前请求响应元数据采集、证据关联、发送前阻断
-- [ ] Phase 5：签名安装包、自动升级和正式发布
-
----
+CI 在 Ubuntu 和 Windows 编译、测试并上传扩展 ZIP、Linux `.deb`、Windows Setup 和本地核心制品。推送与版本一致的 `v*` tag 后，Release 工作流生成 SHA-256 校验和并发布安装资产。
 
 ## English
 
-GPTLock is a model-policy guard and evidence-based status verifier for official `chatgpt.com` web chats. It supports Chrome, Chromium, and Edge on Windows and Linux. It does not use Worker mode or the OpenAI API.
+GPTLock is a model-policy guard and evidence-based status verifier exclusively for official `chatgpt.com` web chats. It supports Chrome, Chromium, and Edge on Windows and Linux, uses no OpenAI API, performs no TLS interception, and cannot bypass server-side limits or routing.
 
-Phase 2 implements the Rust local core, Native Messaging, policy synchronization, loopback API, privacy-conscious audit log, installers, and cross-platform CI. It does **not** yet capture ChatGPT response metadata, so visible UI text is intentionally classified as `unverified`, never as proof of the backend model.
+Version `0.3.0` implements the Rust Native Core, Native Messaging, response-metadata capture through the Chrome DevTools Protocol, per-request correlation, a strict pre-send guard, status popup, bilingual settings, Windows Setup, Linux `.deb`, CI artifacts, tagged releases, checksums, and update scripts.
 
-GPTLock can compare source-labelled observations with a local policy and return `verified`, `mismatch`, or `unverified`. Strict mode maps mismatches and insufficient evidence to a `block` decision; warning mode returns `warn`. It cannot bypass service limits, change OpenAI routing, or prove a backend model from a menu selection or DOM label.
+Only current response metadata can produce `verified`. UI text and request metadata are preflight evidence only. Missing or conflicting response metadata produces `unverified`; GPTLock never invents a successful result. Since a first request cannot be verified before a response exists, the default allows one policy-matching probe and then waits for evidence.
 
-Build and test:
-
-```bash
-cargo test --manifest-path native-core/Cargo.toml --all-targets
-cargo build --release --manifest-path native-core/Cargo.toml
-cd extension && npm test
-```
-
-Load `extension/` as an unpacked extension, copy its 32-character ID, then run the Linux or Windows installer shown above. Restart the browser completely after installation.
-
-The optional API listens only on `127.0.0.1:17856`. `/health` is public locally; `/policy`, `/verify`, and `/status` require the random token stored in `~/.gptlock/api.token`. See the linked architecture, security, protocol, and Native Core documents for full bilingual details.
+See [Installation](docs/INSTALL.md), [Usage](docs/USAGE.md), and [Updates](docs/UPDATE.md) for complete bilingual instructions. The fixed unpacked extension ID is `bhchcpeodphgjfjoookncemnamdbfcof`.

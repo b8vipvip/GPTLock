@@ -4,6 +4,13 @@ export const DEFAULT_POLICY = Object.freeze({
   strictMode: true,
 });
 
+export const DEFAULT_SETTINGS = Object.freeze({
+  networkVerificationEnabled: true,
+  firstRequestMode: 'allow_once',
+  autoAlignSelection: true,
+  preferredReasoning: 'high',
+});
+
 export const KNOWN_MODELS = Object.freeze([
   { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
   { id: 'gpt-5.5', label: 'GPT-5.5' },
@@ -53,5 +60,22 @@ export function normalizePolicy(input) {
       ? allowedReasoningLevels
       : [...DEFAULT_POLICY.allowedReasoningLevels],
     strictMode: typeof source.strictMode === 'boolean' ? source.strictMode : DEFAULT_POLICY.strictMode,
+  };
+}
+
+export function normalizeSettings(input) {
+  const source = input && typeof input === 'object' ? input : DEFAULT_SETTINGS;
+  return {
+    networkVerificationEnabled: typeof source.networkVerificationEnabled === 'boolean'
+      ? source.networkVerificationEnabled
+      : DEFAULT_SETTINGS.networkVerificationEnabled,
+    firstRequestMode: ['allow_once', 'block'].includes(source.firstRequestMode)
+      ? source.firstRequestMode
+      : DEFAULT_SETTINGS.firstRequestMode,
+    autoAlignSelection: typeof source.autoAlignSelection === 'boolean'
+      ? source.autoAlignSelection
+      : DEFAULT_SETTINGS.autoAlignSelection,
+    preferredReasoning: normalizeReasoningLevel(source.preferredReasoning)
+      ?? DEFAULT_SETTINGS.preferredReasoning,
   };
 }

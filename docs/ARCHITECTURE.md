@@ -2,55 +2,65 @@
 
 > 默认中文，English follows.
 
-## 组件边界
+## 组件
 
-1. **ChatGPT 内容脚本**：只采集与模型/推理选择相关的最小页面状态，不读取聊天正文。当前 DOM 证据固定为低可信度。
-2. **MV3 Service Worker**：保存策略、管理 Native Messaging 连接、关联请求与响应、维护扩展状态徽章。
-3. **Rust Native Core**：规范化策略、执行三态验证、持久化策略与审计日志，并提供令牌保护的 loopback API。
-4. **安装层**：为 Chrome/Chromium/Edge 注册 Native Messaging 主机；Linux 可同时启用 systemd 用户服务。
+1. **内容脚本 `content.js`**：读取最小页面选择状态，保守地尝试对齐模型/推理菜单，同步发送守卫，并拦截发送按钮、Enter 和表单提交。它不读取聊天正文。
+2. **MV3 Service Worker `background.js`**：管理策略、每标签页/会话状态机、Native Messaging、请求关联和徽章。
+3. **网络验证器 `network-monitor.js`**：通过 `chrome.debugger` 附加 `chatgpt.com` 标签页，启用 CDP `Network` 域，关联 conversation-like POST、响应头与响应体。
+4. **证据提取器 `network-evidence.js`**：只解析白名单元数据键/响应头；提示词与回答字段被跳过，完整正文只在内存中短暂存在并立即丢弃。
+5. **Rust Native Core**：规范化策略、执行三态验证、原子持久化策略/状态、写脱敏审计，并提供令牌保护的 loopback API。
+6. **安装/发布层**：固定扩展 ID，注册 Chrome/Chromium/Edge Native Messaging，构建 Windows Setup、Linux `.deb`、CI artifacts 和 Release assets。
 
 ```text
-chatgpt.com
-    │ page_dom（当前）/ response metadata（Phase 4）
-    ▼
-content.js ── chrome.runtime messaging ──► background.js
-                                                │
-                                      Native Messaging JSON
-                                                ▼
-                                         gptlock-core
-                                      ┌─────────┴─────────┐
-                                      │                   │
-                                config + audit     loopback HTTP API
+chatgpt.com 页面
+  ├─ DOM 选择（低可信预检）──► 内容脚本 ──► 发送守卫
+  └─ 当前网络响应 ──────────► CDP Network ──► 元数据提取
+                                                   │
+                                                   ▼
+                                             MV3 Service Worker
+                                                   │ Native Messaging
+                                                   ▼
+                                             Rust Native Core
+                                              ├─ config/status
+                                              ├─ audit.jsonl
+                                              └─ 127.0.0.1 API
 ```
 
-## 策略来源与一致性
+## 请求关联
 
-扩展的 `chrome.storage.sync.policy` 是用户界面编辑来源。本地核心收到 `set_policy` 后执行严格校验和规范化，再原子写入 `~/.gptlock/config.json`。每次验证和 API 读取都会重新加载配置，最近验证同时写入 `status.json`，因此 Native Messaging 进程与 systemd/API 进程共享同一磁盘策略与最近状态。策略 revision 是规范化 JSON 的稳定 FNV-1a 标识，用于审计关联，不用于加密安全。
+网络验证器只跟踪 `https://chatgpt.com/backend-api/*` 下 conversation、response、message 或 codex 类 POST。每个 CDP `requestId` 关联请求时间、有限请求元数据、响应头和完成后的响应体。写入 Native Core 前，扩展只保留：模型、推理强度、时间和安全字符组成的 `cdp-<tab>-<request>` 标识。
 
-## 验证状态机
+请求体中的模型/推理值属于 `network_request_metadata`，只能帮助预检，不能得到 `verified`。响应完成后，从白名单响应头或 JSON/SSE 元数据抽取值；最高可信候选冲突时清空该字段并降级为 `unverified`。
 
-- **Verified**：模型、推理强度均匹配，证据来自当前网络响应或会话响应元数据，且时间未过期。
-- **Mismatch**：已观测模型或推理强度不在允许列表。
-- **Unverified**：字段缺失、证据仅来自 DOM/用户选择、来源未知或证据过期。
+## 严格发送状态机
 
-严格模式：`verified → allow`，其余状态 `→ block`。提醒模式：`verified → allow`，其余状态 `→ warn`。
+| 状态 | 严格模式能否发送 | 转移条件 |
+|---|---:|---|
+| `probe_ready` | 一次 | 新会话、网络验证器在线且页面选择符合策略 |
+| `waiting` | 否 | 探测或已验证后的下一次请求已经开始 |
+| `verified` | 一次 | 当前关联响应元数据完整且符合策略 |
+| `mismatch` | 否 | 响应模型或推理强度违反策略 |
+| `unverified` | 否 | 响应字段缺失、冲突、过期或不可读 |
+| `monitor_offline/error` | 否 | CDP/Native Core 断开或处理失败 |
 
-这里的 `block` 是本地策略决策。Phase 2 尚未把它绑定到 ChatGPT 发送动作；Phase 4 必须在建立当前请求与响应证据关联后执行阻断，避免使用陈旧证据。
+允许发送后会立即本地消费该权限，防止双击或重复 Enter。新会话、策略变化或完整页面选择变化会清除旧证据。提醒模式保持同一验证过程，但不拦截发送。
 
-## Phase 4 接入约束
+## 策略与进程一致性
 
-网络采集器必须满足：
+`chrome.storage.sync.policy` 是设置页编辑来源；扩展专用行为存放在独立 `settings` 对象，避免进入 Native Core 的严格策略 schema。本地核心收到 `set_policy` 后校验并原子写入 `~/.gptlock/config.json`。Native Messaging 与可选 API 服务每次验证都重新读取磁盘策略，并通过 `status.json` 共享最近结果。
 
-- 只采集模型、推理强度、请求 ID、会话 ID 哈希和时间戳，不采集提示词/回答正文；
-- 把证据与当前发送动作绑定，不能使用上一轮结果；
-- 元数据不存在时返回 `unverified`，不能回退到 UI 文字并标记为 `verified`；
-- OpenAI 前端协议变化时安全失败（fail closed in strict mode），同时给出可理解的诊断原因；
-- 不安装 TLS 根证书、不进行中间人解密、不修改 OpenAI 返回内容。
+策略 revision 是规范化 JSON 的稳定 FNV-1a 标识，只用于审计关联，不承担密码学完整性。
+
+## 故障安全
+
+- ChatGPT 协议变化、响应体不可读取或元数据不存在：`unverified`；
+- 打开同标签页 DevTools 导致调试器分离：`monitor_offline`；
+- Native Core 离线：`error`；
+- DOM 选择未知：不允许自动探测；
+- 任何服务端限制：向用户展示，不尝试绕过。
 
 ## English
 
-The content script observes only minimal model/reasoning UI state. The MV3 service worker owns policy synchronization and Native Messaging. The Rust core validates and persists policy, evaluates evidence, writes redacted audit records, and exposes an authenticated loopback API. Installers register the host for Chromium browsers.
+The content script performs minimal UI preflight and synchronous send interception. The MV3 worker owns per-tab state and Native Messaging. A `chrome.debugger`/CDP Network monitor correlates ChatGPT backend POST requests with their completed responses, while a pure extractor keeps only whitelisted model/reasoning metadata and immediately discards response bodies.
 
-The extension's synchronized policy is the editing source. The core validates and writes it to disk; every verification reloads that disk policy so independent Native Messaging and API processes remain consistent. A deterministic policy revision is used for correlation, not cryptographic security.
-
-Verification has three states: `verified` for fresh matching response metadata, `mismatch` for an observed disallowed value, and `unverified` for missing, weak, unknown, or stale evidence. Phase 2 returns decisions but does not yet bind `block` to ChatGPT's send action. Phase 4 must correlate each send with current response evidence, collect no chat bodies, fail safely when protocols change, and never install a TLS interception certificate.
+Request metadata and DOM text are preflight-only. Current response metadata is sent to the Rust core for `verified`, `mismatch`, or `unverified` evaluation. Strict mode grants a single probe or verified send, consumes that grant immediately, and waits for the correlated response; warning mode never blocks. Protocol changes, missing/conflicting metadata, debugger detachment, and core failures all fail safely without fabricating proof.

@@ -8,6 +8,7 @@ use crate::config::{normalize_model_id, normalize_reasoning_level, Policy};
 pub enum EvidenceSource {
     NetworkResponseMetadata,
     ConversationResponseMetadata,
+    NetworkRequestMetadata,
     PageDom,
     UserSelection,
     #[default]
@@ -26,7 +27,7 @@ impl EvidenceSource {
         match self {
             Self::NetworkResponseMetadata => Confidence::High,
             Self::ConversationResponseMetadata => Confidence::Medium,
-            Self::PageDom | Self::UserSelection => Confidence::Low,
+            Self::NetworkRequestMetadata | Self::PageDom | Self::UserSelection => Confidence::Low,
             Self::Unknown => Confidence::None,
         }
     }
@@ -232,6 +233,21 @@ mod tests {
         assert!(result
             .reasons
             .contains(&ReasonCode::EvidenceSourceInsufficient));
+    }
+
+    #[test]
+    fn request_metadata_is_preflight_only() {
+        let result = verify(
+            &Policy::default(),
+            "revision",
+            request(
+                EvidenceSource::NetworkRequestMetadata,
+                "gpt-5.6-sol",
+                "high",
+            ),
+        );
+        assert_eq!(result.verdict, Verdict::Unverified);
+        assert_eq!(result.decision, PolicyDecision::Block);
     }
 
     #[test]

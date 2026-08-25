@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [ValidatePattern('^[a-p]{32}$')]
-    [string]$ExtensionId,
+    [string]$ExtensionId = 'bhchcpeodphgjfjoookncemnamdbfcof',
 
     [Parameter(Mandatory = $false)]
     [string]$BinaryPath = '',
@@ -25,9 +25,18 @@ if (-not (Test-Path -LiteralPath $BinaryPath -PathType Leaf)) {
 
 $installDirectory = Join-Path $env:LOCALAPPDATA 'GPTLock\bin'
 $manifestDirectory = Join-Path $env:LOCALAPPDATA 'GPTLock\native-messaging'
+$extensionDirectory = Join-Path $env:LOCALAPPDATA 'GPTLock\extension'
+$extensionSource = Join-Path $repositoryRoot 'extension'
 $installedBinary = Join-Path $installDirectory 'gptlock-core.exe'
-New-Item -ItemType Directory -Force -Path $installDirectory, $manifestDirectory | Out-Null
+New-Item -ItemType Directory -Force -Path $installDirectory, $manifestDirectory, $extensionDirectory | Out-Null
 Copy-Item -LiteralPath $BinaryPath -Destination $installedBinary -Force
+$runtimeFiles = @(
+    'background.js', 'content.js', 'guard.js', 'manifest.json', 'network-evidence.js', 'network-monitor.js',
+    'options.css', 'options.html', 'options.js', 'policy.js', 'popup.css', 'popup.html', 'popup.js'
+)
+foreach ($file in $runtimeFiles) {
+    Copy-Item -LiteralPath (Join-Path $extensionSource $file) -Destination (Join-Path $extensionDirectory $file) -Force
+}
 
 function Install-NativeManifest {
     param(
@@ -59,5 +68,6 @@ if ($Browser -in @('All', 'Edge')) {
 
 Write-Host 'GPTLock Windows Native Messaging 安装完成 / installation completed.' -ForegroundColor Green
 Write-Host '请完全退出并重新启动 Chrome/Edge / Fully restart Chrome or Edge.'
+Write-Host "扩展目录 / Extension directory: $extensionDirectory"
 Write-Host '本机 API 可按需启动 / Start the optional local API with:'
 Write-Host "  `"$installedBinary`" serve"
