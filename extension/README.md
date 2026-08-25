@@ -2,7 +2,7 @@
 
 > 默认中文，English follows.
 
-GPTLock `0.3.1` 扩展只匹配 `https://chatgpt.com/*`，支持 Chrome、Chromium 和 Edge Manifest V3。
+GPTLock `0.3.2` 扩展只匹配 `https://chatgpt.com/*`，支持 Chrome、Chromium 和 Edge Manifest V3。
 
 已实现：
 
@@ -28,6 +28,6 @@ node --test extension/tests/*.test.mjs
 
 ## English
 
-The v0.3.1 MV3 extension targets only official `chatgpt.com` pages. It provides policy settings, conservative UI alignment, CDP Network correlation, whitelisted JSON/SSE response-metadata extraction, strict send interception, a one-probe state machine, popup/status UI, Native Messaging, and actionable Local Core installation diagnostics. Loading this directory installs only the extension; Setup, a platform package, or a source installer must separately register the Native Core.
+The v0.3.2 MV3 extension targets only official `chatgpt.com` pages. It provides policy settings, conservative UI alignment, CDP Network correlation, whitelisted JSON/SSE response-metadata extraction, strict send interception, a one-probe state machine, popup/status UI, Native Messaging, and actionable Local Core installation diagnostics. It distinguishes a missing host from a host that starts but fails the protocol handshake. Loading this directory installs only the extension; Setup, a platform package, or a source installer must separately register the Native Core.
 
 Chat bodies and complete network payloads are never persisted. DOM labels, automatic selection, and request metadata are preflight-only and cannot produce `verified`. The committed public manifest key gives official unpacked builds the stable ID shown above.

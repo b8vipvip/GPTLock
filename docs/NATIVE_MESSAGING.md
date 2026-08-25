@@ -2,7 +2,7 @@
 
 > 默认中文，English follows.
 
-主机名：`com.gptlock.core`；协议版本：`1`。
+主机名：`com.gptlock.core`；协议版本：`1`。Chromium 启动主机时附加的扩展来源参数（以及 Windows 的 `--parent-window` 参数）由核心识别为浏览器调用，不会被误当成 CLI 子命令。
 
 每条消息使用 Chromium Native Messaging 标准：4 字节小端无符号长度，后跟 UTF-8 JSON；单条消息最大 1 MiB。请求携带唯一 `id`，响应原样返回该 `id`。
 
@@ -53,6 +53,6 @@
 
 ## English
 
-The host is `com.gptlock.core`, protocol version `1`. Each frame is a four-byte little-endian unsigned length followed by UTF-8 JSON, with a 1 MiB maximum. Requests carry a unique `id`; responses echo it.
+The host is `com.gptlock.core`, protocol version `1`. Chromium's caller-origin argument and the Windows `--parent-window` argument are recognized as a browser invocation rather than CLI subcommands. Each frame is a four-byte little-endian unsigned length followed by UTF-8 JSON, with a 1 MiB maximum. Requests carry a unique `id`; responses echo it.
 
 Supported request types are `ping`, `get_capabilities`, `get_policy`, `set_policy`, `verify`, and `get_status`. Capabilities distinguish sufficient response sources from informational request/DOM/selection sources. Successful responses contain `ok: true` and `data`; failures contain a stable error code plus Chinese and English messages. Invalid or oversized framing terminates the current host process so the extension can reconnect cleanly. Verification messages must never carry chat content, headers, cookies, or complete payloads.

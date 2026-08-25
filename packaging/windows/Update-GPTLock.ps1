@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
     [switch]$Silent
@@ -6,6 +6,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repository = 'b8vipvip/GPTLock'
+$scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$installRoot = Split-Path -Parent $scriptDirectory
 $headers = @{
     Accept = 'application/vnd.github+json'
     'User-Agent' = 'GPTLock-Updater'
@@ -39,7 +41,7 @@ try {
     }
 
     Write-Host "正在安装 $($release.tag_name) / Installing $($release.tag_name)…"
-    $arguments = @('/SUPPRESSMSGBOXES', '/NORESTART')
+    $arguments = @('/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$installRoot`"")
     if ($Silent) { $arguments += '/VERYSILENT' }
     $process = Start-Process -FilePath $installerPath -ArgumentList $arguments -Wait -PassThru
     if ($process.ExitCode -ne 0) {

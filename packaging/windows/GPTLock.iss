@@ -1,6 +1,6 @@
 #define MyAppName "GPTLock"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.3.1"
+  #define MyAppVersion "0.3.2"
 #endif
 #define MyAppPublisher "GPTLock Maintainers"
 #define MyAppURL "https://github.com/b8vipvip/GPTLock"
@@ -16,6 +16,7 @@ AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={localappdata}\GPTLock
 DefaultGroupName=GPTLock
+DisableDirPage=no
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
@@ -53,7 +54,7 @@ Name: "{group}\修复 GPTLock 浏览器连接"; Filename: "{sys}\WindowsPowerShe
 Name: "{group}\卸载 GPTLock"; Filename: "{uninstallexe}"
 
 [Run]
-Filename: "{app}\bin\gptlock-core.exe"; Parameters: "doctor"; Description: "运行安装诊断 / Run installation diagnostics"; Flags: postinstall runhidden waituntilterminated skipifsilent
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\Repair-GPTLock.ps1"""; Description: "验证浏览器连接 / Verify browser connection"; Flags: postinstall runhidden waituntilterminated
 
 [Code]
 function JsonEscape(Value: String): String;

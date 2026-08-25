@@ -17,6 +17,9 @@ export function classifyNativeError(error) {
   ) {
     return 'origin_not_allowed';
   }
+  if (message.includes('error when communicating with the native messaging host')) {
+    return 'protocol_error';
+  }
   if (
     message.includes('failed to start native messaging host')
     || message.includes('native host has exited')
@@ -40,6 +43,10 @@ export function nativeHelp(errorCode) {
     host_start_failed: {
       title: '本地核心无法启动 / Local Core could not start',
       detail: '请重新运行安装器修复文件与浏览器注册，然后完全重启浏览器。',
+    },
+    protocol_error: {
+      title: '本地通信协议失败 / Native protocol failed',
+      detail: '浏览器已找到并启动核心，但协议握手失败。请更新 GPTLock Core 后运行“修复浏览器连接”。',
     },
     connection_failed: {
       title: '本地核心连接失败 / Local Core connection failed',

@@ -14,7 +14,7 @@ gptlock-core doctor                输出脱敏诊断信息和路径
 gptlock-core --version
 ```
 
-Native Messaging 清单不能附加命令参数，所以无参数启动进入 `native`。Linux systemd 用户服务显式使用 `serve`。
+Native Messaging 清单的 `path` 不能附加自定义命令参数；手动无参数启动会进入 `native`。Chromium 实际启动主机时会自动把调用扩展的 `chrome-extension://.../` 来源作为首个参数，并可能在 Windows 追加 `--parent-window=<句柄>`；核心会校验这些参数后进入同一模式。Linux systemd 用户服务显式使用 `serve`。
 
 ## 数据目录
 
@@ -67,6 +67,6 @@ cargo test --locked --manifest-path native-core/Cargo.toml --all-targets
 
 ## English
 
-The Rust Native Core provides Native Messaging, policy persistence, three-state evidence verification, a loopback API, and privacy-conscious JSONL audit logs. With no arguments it runs as the native host; `serve` starts the optional API and `doctor` prints a redacted report.
+The Rust Native Core provides Native Messaging, policy persistence, three-state evidence verification, a loopback API, and privacy-conscious JSONL audit logs. With no arguments it runs as the native host. It also accepts Chromium's automatically supplied caller origin and Windows `--parent-window` argument after validating their shape. `serve` starts the optional API and `doctor` prints a redacted report.
 
 Only response-metadata sources are sufficient for verification. Request, DOM, selection, and unknown sources remain unverified. The API is loopback-only, token-protected except for health, size-limited, and non-CORS. User data is stored in `.gptlock` under the current profile unless `GPTLOCK_HOME` overrides it.
