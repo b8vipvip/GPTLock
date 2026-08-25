@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GPTLock Policy",
+  "type": "object",
+  "properties": {
+    "lockedModels": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "allowedReasoningLevels": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "strictMode": {
+      "type": "boolean"
+    }
+  }
+}
