@@ -14,8 +14,11 @@
 - `set_policy`，附带 `policy`
 - `verify`，附带 `observation`
 - `get_status`
+- `get_diagnostics`，可附带 `auditLimit`（`1..500`）
 
 `get_capabilities` 会分别列出充分证据来源 `network_response_metadata`、`conversation_response_metadata`，以及提示级来源 `network_request_metadata`、`page_dom`、`user_selection`、`unknown`。
+
+`get_diagnostics` 返回脱敏的 `doctor` 报告和有界的最近审计记录，用于扩展诊断导出；它不返回 API 令牌、配置文件正文、提示词或回答正文。
 
 示例：
 
@@ -55,4 +58,4 @@
 
 The host is `com.gptlock.core`, protocol version `1`. Chromium's caller-origin argument and the Windows `--parent-window` argument are recognized as a browser invocation rather than CLI subcommands. Each frame is a four-byte little-endian unsigned length followed by UTF-8 JSON, with a 1 MiB maximum. Requests carry a unique `id`; responses echo it.
 
-Supported request types are `ping`, `get_capabilities`, `get_policy`, `set_policy`, `verify`, and `get_status`. Capabilities distinguish sufficient response sources from informational request/DOM/selection sources. Successful responses contain `ok: true` and `data`; failures contain a stable error code plus Chinese and English messages. Invalid or oversized framing terminates the current host process so the extension can reconnect cleanly. Verification messages must never carry chat content, headers, cookies, or complete payloads.
+Supported request types are `ping`, `get_capabilities`, `get_policy`, `set_policy`, `verify`, `get_status`, and `get_diagnostics`. The diagnostics request returns a redacted doctor report plus a bounded audit tail. Capabilities distinguish sufficient response sources from informational request/DOM/selection sources. Successful responses contain `ok: true` and `data`; failures contain a stable error code plus Chinese and English messages. Invalid or oversized framing terminates the current host process so the extension can reconnect cleanly. Verification messages must never carry chat content, headers, cookies, or complete payloads.

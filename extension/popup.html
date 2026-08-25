@@ -21,6 +21,14 @@
       <p id="guardDetail">Checking the active ChatGPT tab…</p>
     </section>
 
+    <section class="enable-row">
+      <span><strong>启用 GPTLock</strong><small>Enable protection</small></span>
+      <label class="switch" title="启用或关闭 GPTLock / Enable or disable GPTLock">
+        <input id="enabled" type="checkbox">
+        <span aria-hidden="true"></span>
+      </label>
+    </section>
+
     <section id="installHelp" class="install-help" hidden>
       <strong id="installTitle">尚未安装本地核心</strong>
       <p id="installDetail"></p>
@@ -37,8 +45,10 @@
     <p class="boundary">页面显示只用于发送前检查；只有响应元数据能显示“已验证”。<br><span>UI text is preflight-only; only response metadata can be Verified.</span></p>
 
     <div class="actions">
-      <button id="armProbe" type="button" class="primary">允许一次探测<br><small>Arm one probe</small></button>
+      <button id="autoVerify" type="button" class="primary auto">自动验证<br><small>Prepare automatic verification</small></button>
+      <button id="armProbe" type="button">允许一次探测<br><small>Arm one probe</small></button>
       <button id="reconnect" type="button">重新连接<br><small>Reconnect</small></button>
+      <button id="logs" type="button">运行日志<br><small>Runtime logs</small></button>
       <button id="options" type="button">设置<br><small>Settings</small></button>
     </div>
     <p id="message" role="status"></p>

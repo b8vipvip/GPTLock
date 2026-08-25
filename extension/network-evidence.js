@@ -63,9 +63,9 @@ function pathScore(path, key, kind) {
     if (key.includes('slug') && metadata) return 120;
     if (key.includes('slug')) return 105;
     if (metadata) return 100;
-    return path.length <= 2 ? 90 : 35;
+    return path.length <= 2 ? 90 : 0;
   }
-  return metadata ? 115 : path.length <= 3 ? 95 : 70;
+  return metadata ? 115 : path.length <= 3 ? 95 : 0;
 }
 
 function collectCandidates(value, candidates, path = [], depth = 0) {
@@ -82,11 +82,13 @@ function collectCandidates(value, candidates, path = [], depth = 0) {
     const nextPath = [...path, rawKey];
     if (MODEL_KEYS.has(key)) {
       const model = modelFrom(child);
-      if (model) candidates.model.push({ value: model, score: pathScore(path, key, 'model'), path: nextPath.join('.') });
+      const score = pathScore(path, key, 'model');
+      if (model && score > 0) candidates.model.push({ value: model, score, path: nextPath.join('.') });
     }
     if (REASONING_KEYS.has(key)) {
       const reasoning = reasoningFrom(child);
-      if (reasoning) candidates.reasoning.push({ value: reasoning, score: pathScore(path, key, 'reasoning'), path: nextPath.join('.') });
+      const score = pathScore(path, key, 'reasoning');
+      if (reasoning && score > 0) candidates.reasoning.push({ value: reasoning, score, path: nextPath.join('.') });
     }
     if (!SKIPPED_CONTENT_KEYS.has(key)) {
       collectCandidates(child, candidates, nextPath, depth + 1);
@@ -118,6 +120,12 @@ function inspectObjects(values) {
     fields: {
       model: model.path,
       reasoning: reasoning.path,
+    },
+    diagnostics: {
+      modelCandidateCount: candidates.model.length,
+      reasoningCandidateCount: candidates.reasoning.length,
+      modelCandidatePaths: [...new Set(candidates.model.map((candidate) => candidate.path))].slice(-12),
+      reasoningCandidatePaths: [...new Set(candidates.reasoning.map((candidate) => candidate.path))].slice(-12),
     },
   };
 }
@@ -153,22 +161,42 @@ export function parseSseObjects(body) {
   return objects;
 }
 
-function bodyObjects(body, mimeType = '') {
-  if (typeof body !== 'string' || !body || body.length > MAX_BODY_CHARS) return [];
+function inspectBody(body, mimeType = '') {
+  const bodyLength = typeof body === 'string' ? body.length : 0;
+  if (typeof body !== 'string' || !body) {
+    return { values: [], diagnostics: { bodyLength, bodyFormat: 'empty', parsedObjectCount: 0 } };
+  }
+  if (body.length > MAX_BODY_CHARS) {
+    return { values: [], diagnostics: { bodyLength, bodyFormat: 'too_large', parsedObjectCount: 0 } };
+  }
   const trimmed = body.trim();
   const values = [];
+  const formats = [];
   const whole = parseJson(trimmed);
-  if (whole && typeof whole === 'object') values.push(whole);
+  if (whole && typeof whole === 'object') {
+    values.push(whole);
+    formats.push('json');
+  }
   if (/event-stream/i.test(mimeType) || /(^|\n)data:/.test(trimmed)) {
-    values.push(...parseSseObjects(trimmed));
+    const objects = parseSseObjects(trimmed);
+    values.push(...objects);
+    if (objects.length) formats.push('sse');
   }
   if (!values.length && trimmed.includes('\n')) {
     for (const line of trimmed.split(/\r?\n/)) {
       const parsed = parseJson(line.trim());
       if (parsed && typeof parsed === 'object') values.push(parsed);
     }
+    if (values.length) formats.push('ndjson');
   }
-  return values;
+  return {
+    values,
+    diagnostics: {
+      bodyLength,
+      bodyFormat: formats.join('+') || 'unparsed',
+      parsedObjectCount: values.length,
+    },
+  };
 }
 
 function normalizeHeaders(headers) {
@@ -237,17 +265,32 @@ function mergeEvidence(headerEvidence, bodyEvidence) {
 
 export function extractResponseEvidence({ body = '', headers = {}, mimeType = '' } = {}) {
   const headerEvidence = extractHeaderEvidence(headers);
-  const bodyEvidence = inspectObjects(bodyObjects(body, mimeType));
+  const inspectedBody = inspectBody(body, mimeType);
+  const bodyEvidence = inspectObjects(inspectedBody.values);
   return {
     ...mergeEvidence(headerEvidence, bodyEvidence),
     evidenceSource: 'network_response_metadata',
+    diagnostics: {
+      mimeType: String(mimeType || ''),
+      ...inspectedBody.diagnostics,
+      ...bodyEvidence.diagnostics,
+      matchedHeaderFields: [headerEvidence.fields.model, headerEvidence.fields.reasoning].filter(Boolean),
+    },
   };
 }
 
 export function extractRequestEvidence(postData = '') {
   const parsed = typeof postData === 'string' ? parseJson(postData) : null;
   const evidence = inspectObjects(parsed && typeof parsed === 'object' ? [parsed] : []);
-  return { ...evidence, evidenceSource: 'network_request_metadata' };
+  return {
+    ...evidence,
+    evidenceSource: 'network_request_metadata',
+    diagnostics: {
+      postDataLength: typeof postData === 'string' ? postData.length : 0,
+      parsedObjectCount: parsed && typeof parsed === 'object' ? 1 : 0,
+      ...evidence.diagnostics,
+    },
+  };
 }
 
 export function isChatGptConversationRequest(url, method = 'GET') {

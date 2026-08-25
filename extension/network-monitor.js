@@ -22,6 +22,17 @@ function safeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function diagnosticEndpoint(value) {
+  try {
+    return new URL(value).pathname
+      .split('/')
+      .map((segment) => (/^[a-z0-9_-]{20,}$/i.test(segment) ? ':id' : segment))
+      .join('/');
+  } catch {
+    return 'invalid-url';
+  }
+}
+
 export class ChatGptNetworkMonitor {
   constructor({ onStatus, onRequest, onEvidence, onFailure }) {
     this.onStatus = onStatus;
@@ -138,6 +149,7 @@ export class ChatGptNetworkMonitor {
       requestId: String(params.requestId),
       startedAt: Date.now(),
       url: request.url,
+      endpoint: diagnosticEndpoint(request.url),
       mimeType: '',
       responseHeaders: {},
     };
@@ -164,6 +176,11 @@ export class ChatGptNetworkMonitor {
       model: requested.model,
       reasoning: requested.reasoning,
       conflicts: requested.conflicts,
+      fields: requested.fields,
+      diagnostics: {
+        endpoint: record.endpoint,
+        ...requested.diagnostics,
+      },
     });
     postData = '';
   }
@@ -211,6 +228,12 @@ export class ChatGptNetworkMonitor {
       conflicts: evidence.conflicts,
       fields: evidence.fields,
       bodyError,
+      diagnostics: {
+        endpoint: record.endpoint,
+        httpStatus: record.status,
+        encodedDataLength: Number.isFinite(params.encodedDataLength) ? params.encodedDataLength : null,
+        ...evidence.diagnostics,
+      },
     });
   }
 
@@ -223,6 +246,8 @@ export class ChatGptNetworkMonitor {
       requestId: record.requestId,
       error: params.errorText || 'network_loading_failed',
       canceled: Boolean(params.canceled),
+      endpoint: record.endpoint,
+      httpStatus: record.status,
     });
   }
 }

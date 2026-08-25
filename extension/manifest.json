@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GPTLock",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "ChatGPT 模型策略锁定与证据化状态验证 / Model policy guard and evidence-based verification.",
   "minimum_chrome_version": "110",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAp344vhDkbnBOB1hrAcdHtk2T2+VQwyT0danaUFbc5esuZ1dWKAaEvInMIf3hs68jXt1gW5EUAjh4Wrsjew96ojHHUybDHO2HyKM7aLVugV0RmIAc+YbuzHOG3PUtZIxIi1u8KeCZc0+tA4RJhHUjj05dyGq6ZaTl0lu7oEIq8EqJBzEItMAjgo94pz3Ovlh4tzzjo7qC4NyYCF6thRJFc/VnMtpDc+Zhc3/qGPwVrPcAQT0IxHpalhheo2dviheL+4IcAiAsKu6ZV62OJ2hI3ZgE/CKrH3AU5lPc3+2TYunKKVisWMgUWNjYaGW6k2ebzJsfCqOHs+Ql8teaNZQlNwIDAQAB",

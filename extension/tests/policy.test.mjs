@@ -46,6 +46,7 @@ test('normalizes extension-only verification settings independently', () => {
   assert.deepEqual(normalizeSettings(null), DEFAULT_SETTINGS);
   assert.deepEqual(
     normalizeSettings({
+      enabled: false,
       networkVerificationEnabled: false,
       firstRequestMode: 'block',
       autoAlignSelection: false,
@@ -53,6 +54,7 @@ test('normalizes extension-only verification settings independently', () => {
       ignored: 'value',
     }),
     {
+      enabled: false,
       networkVerificationEnabled: false,
       firstRequestMode: 'block',
       autoAlignSelection: false,

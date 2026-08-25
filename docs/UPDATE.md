@@ -61,8 +61,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\packaging\windows\Install-
 4. 创建与代码版本一致的签名或普通 tag，例如：
 
    ```bash
-   git tag -a v0.3.2 -m "GPTLock v0.3.2"
-   git push origin v0.3.2
+   git tag -a v0.3.3 -m "GPTLock v0.3.3"
+   git push origin v0.3.3
    ```
 
 5. `.github/workflows/release.yml` 会在 Ubuntu/Windows 分别构建 `.deb`、Linux tarball、扩展 ZIP 和 Setup，生成 `SHA256SUMS.txt`，再创建 GitHub Release。

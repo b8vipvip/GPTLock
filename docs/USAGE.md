@@ -13,6 +13,7 @@
    - 网络响应验证：开启
    - 页面选择自动对齐：开启（尽力而为）
    - 首次请求：自动允许一次探测
+   - GPTLock 总开关：开启
 
 2. 按需要勾选模型与推理强度。自定义模型必须使用 ChatGPT 响应元数据实际暴露的标识；不要把显示名称当成已确认的后端标识。
 
@@ -34,6 +35,14 @@
 
 每次允许发送后都会重新进入等待状态，避免把上一轮证据直接当成当前请求的证明。切换会话或修改页面模型/推理选择也会重置状态。
 
+## 自动验证按钮与总开关
+
+弹窗的“自动验证”会依次检查 Native Core、同步策略、重新附加当前 ChatGPT 标签页的网络验证器、刷新页面选择，并清除旧结果、授权下一条真实消息作为探测。按钮本身不会偷偷发送消息，也不会把页面文字标为 `verified`。显示“已准备”后，回到页面正常发送一条消息；响应完成后再根据真实响应元数据给出 `Verified`、`Mismatch` 或 `Unverified`。
+
+总开关关闭后，GPTLock 停止当前标签页的网络监控与发送阻断，徽章显示 `OFF`；本地核心可以继续保持可连接状态。重新启用后建议点击一次“自动验证”。
+
+The Auto verify button checks the core, synchronizes policy, reattaches the network monitor, refreshes page selection, clears stale evidence, and arms the next real user message as a probe. It never sends a hidden prompt or promotes UI text to verified. The global switch pauses monitoring and enforcement; click Auto verify after enabling again.
+
 ## 弹窗状态
 
 | 字段 | 含义 |
@@ -54,6 +63,8 @@
 
 如果 ChatGPT 当前协议不向网页返回足够的模型/推理元数据，严格模式会按设计保持阻断。可以临时切换提醒模式继续聊天，但这不等于已验证。
 
+`model_missing` 的准确含义是：已捕获并提交验证的响应证据中没有可验证模型字段。它不表示 Native Core 离线，也不能通过询问模型“你是什么模型”来补证。点击“自动验证”可以启动下一轮干净探测；若仍出现该原因，请导出诊断包分析响应格式或字段变化。
+
 ## Chrome/Edge 调试提示
 
 网络验证需要扩展的 `debugger` 权限，浏览器可能显示“正在调试此浏览器”提示。同一标签页打开 DevTools 会使 GPTLock 的调试连接断开，状态随即降级为未验证。关闭 DevTools 后，从 GPTLock 弹窗点击“重新连接”。
@@ -69,6 +80,8 @@ Windows: %USERPROFILE%\.gptlock\logs\audit.jsonl
 
 日志记录时间、请求 ID、模型、推理强度、证据来源、可信度、判定、原因和策略 revision。它不记录提示词、回答正文、Cookie、登录信息、Authorization 或完整响应体。达到 10 MiB 时保留一份轮换文件 `audit.1.jsonl`。
 
+扩展弹窗和设置页的“运行日志”会打开诊断页。该页支持按级别/组件筛选、刷新、清空扩展日志，以及导出 `gptlock-diagnostics-<时间>.json`。导出包包含扩展/平台版本、策略、设置、各标签页验证状态、解析诊断、最多 1200 条扩展日志和最多 300 条 Native Core 审计记录；不包含聊天正文或凭据。清空按钮只清空扩展日志，不删除本地 `audit.jsonl`。
+
 ## 本机 API（可选）
 
 启动 `gptlock-core serve` 后监听 `127.0.0.1:17856`。`/health` 无需认证，其余接口使用 `.gptlock/api.token`：
@@ -81,8 +94,8 @@ curl -H "Authorization: Bearer $GPTLOCK_TOKEN" http://127.0.0.1:17856/status
 
 ## English
 
-Configure allowed models, reasoning levels, enforcement mode, preferred reasoning, network verification, UI alignment, and the first-request policy from Settings. The default is strict `gpt-5.6-sol` with medium/high/extra-high allowed and high preferred.
+Configure allowed models, reasoning levels, enforcement mode, preferred reasoning, network verification, UI alignment, the global switch, and the first-request policy from Settings. The default is strict `gpt-5.6-sol` with medium/high/extra-high allowed and high preferred.
 
 A first request is a probe because no response exists yet. After each allowed send, GPTLock waits for the correlated response. Matching model and reasoning response metadata yields `verified`; disallowed values yield `mismatch`; missing, conflicting, stale, or unreadable metadata yields `unverified`. Strict mode blocks future sends in every state except verified or an explicitly allowed probe. Warning mode reports but does not block.
 
-UI alignment and DOM labels are preflight-only. Missing UI fields are shown as unknown and may be manually probed; explicitly disallowed values cannot be overridden. Opening DevTools on the same tab detaches GPTLock's debugger session; close DevTools and click Reconnect. Audit logs contain only minimal metadata and never chat content or credentials.
+UI alignment and DOM labels are preflight-only. Missing UI fields are shown as unknown and may be manually probed; explicitly disallowed values cannot be overridden. `model_missing` means the captured response exposed no verifiable model field, not that the core is offline. Opening DevTools on the same tab detaches GPTLock's debugger session; close DevTools and click Reconnect. The diagnostics page exports bounded extension logs and core audit records without chat content or credentials.

@@ -10,12 +10,20 @@
   <main class="shell">
     <header>
       <div>
-        <p class="eyebrow">GPTLOCK <span id="extensionVersion">0.3.2</span></p>
+        <p class="eyebrow">GPTLOCK <span id="extensionVersion">0.3.3</span></p>
         <h1>模型锁定与验证</h1>
         <p class="subtitle">Model policy guard &amp; evidence-based verification</p>
       </div>
       <div id="connectionBadge" class="badge offline">本地核心离线 / Core offline</div>
     </header>
+
+    <section class="card" aria-labelledby="globalHeading">
+      <h2 id="globalHeading">总开关 <span>Global switch</span></h2>
+      <label class="check-row wide">
+        <input id="enabled" type="checkbox">
+        <span><strong>启用 GPTLock 保护</strong><small>When disabled, monitoring pauses and GPTLock does not block sends.</small></span>
+      </label>
+    </section>
 
     <section class="card" aria-labelledby="modelHeading">
       <h2 id="modelHeading">锁定模型 <span>Locked models</span></h2>
@@ -81,7 +89,11 @@
     <section class="card status-card" aria-labelledby="statusHeading">
       <div class="status-title">
         <h2 id="statusHeading">真实状态 <span>Verification status</span></h2>
-        <button id="reconnect" class="secondary" type="button">重新连接 / Reconnect</button>
+        <div class="status-actions">
+          <button id="autoVerify" class="primary" type="button">自动验证 / Auto verify</button>
+          <button id="reconnect" class="secondary" type="button">重新连接 / Reconnect</button>
+          <button id="logs" class="secondary" type="button">运行日志 / Runtime logs</button>
+        </div>
       </div>
       <dl>
         <div><dt>Native Core</dt><dd id="nativeStatus">检查中 / Checking…</dd></div>

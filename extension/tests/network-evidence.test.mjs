@@ -17,6 +17,9 @@ test('extracts strong metadata from a JSON response', () => {
   assert.equal(result.model, 'gpt-5.6-sol');
   assert.equal(result.reasoning, 'high');
   assert.equal(result.evidenceSource, 'network_response_metadata');
+  assert.equal(result.diagnostics.bodyFormat, 'json');
+  assert.equal(result.diagnostics.parsedObjectCount, 1);
+  assert.equal(result.diagnostics.modelCandidateCount, 1);
 });
 
 test('extracts metadata from SSE without treating DONE as JSON', () => {
@@ -40,6 +43,14 @@ test('never parses model-looking JSON inside message content', () => {
         metadata: {},
       },
     }),
+  });
+  assert.equal(result.model, null);
+  assert.equal(result.reasoning, null);
+});
+
+test('ignores generic model fields buried in unrelated tool data', () => {
+  const result = extractResponseEvidence({
+    body: JSON.stringify({ event: { tool: { result: { payload: { model: 'gpt-5.6-sol', reasoning_effort: 'high' } } } } }),
   });
   assert.equal(result.model, null);
   assert.equal(result.reasoning, null);
@@ -88,4 +99,24 @@ test('missing metadata remains missing instead of being invented', () => {
   assert.equal(result.model, null);
   assert.equal(result.reasoning, null);
   assert.deepEqual(result.conflicts, { model: false, reasoning: false });
+  assert.equal(result.diagnostics.bodyFormat, 'json');
+  assert.equal(result.diagnostics.modelCandidateCount, 0);
+});
+
+test('diagnoses empty and unparseable response bodies without retaining content', () => {
+  const empty = extractResponseEvidence({ body: '', mimeType: 'text/event-stream' });
+  assert.deepEqual(empty.diagnostics, {
+    mimeType: 'text/event-stream',
+    bodyLength: 0,
+    bodyFormat: 'empty',
+    parsedObjectCount: 0,
+    modelCandidateCount: 0,
+    reasoningCandidateCount: 0,
+    modelCandidatePaths: [],
+    reasoningCandidatePaths: [],
+    matchedHeaderFields: [],
+  });
+  const unparsed = extractResponseEvidence({ body: 'not-json', mimeType: 'text/plain' });
+  assert.equal(unparsed.diagnostics.bodyFormat, 'unparsed');
+  assert.equal(unparsed.diagnostics.bodyLength, 8);
 });

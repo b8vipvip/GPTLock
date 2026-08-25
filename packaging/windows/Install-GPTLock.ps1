@@ -54,8 +54,9 @@ function Copy-FileIfDifferent {
 
 Copy-FileIfDifferent -Source $BinaryPath -Destination $installedBinary
 $runtimeFiles = @(
-    'background.js', 'content.js', 'guard.js', 'manifest.json', 'native-status.js', 'network-evidence.js', 'network-monitor.js',
-    'options.css', 'options.html', 'options.js', 'policy.js', 'popup.css', 'popup.html', 'popup.js'
+    'background.js', 'content.js', 'diagnostics.css', 'diagnostics.html', 'diagnostics.js', 'guard.js', 'manifest.json',
+    'native-status.js', 'network-evidence.js', 'network-monitor.js', 'options.css', 'options.html', 'options.js',
+    'policy.js', 'popup.css', 'popup.html', 'popup.js', 'runtime-log.js'
 )
 foreach ($file in $runtimeFiles) {
     Copy-FileIfDifferent -Source (Join-Path $extensionSource $file) -Destination (Join-Path $extensionDirectory $file)
