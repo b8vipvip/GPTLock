@@ -1,18 +1,41 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "GPTLock Policy",
+  "description": "GPTLock 模型锁定策略 / GPTLock model-lock policy",
   "type": "object",
+  "required": ["lockedModels", "allowedReasoningLevels", "strictMode"],
+  "additionalProperties": false,
   "properties": {
     "lockedModels": {
       "type": "array",
-      "items": {"type": "string"}
+      "description": "允许的模型标识，可多选 / Allowed model identifiers",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9._:-]+$"
+      },
+      "default": ["gpt-5.6-sol"]
     },
     "allowedReasoningLevels": {
       "type": "array",
-      "items": {"type": "string"}
+      "description": "允许的推理强度，可多选 / Allowed reasoning levels",
+      "minItems": 1,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["low", "medium", "high", "extra-high"]
+      },
+      "default": ["medium", "high", "extra-high"]
     },
     "strictMode": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "证据不足或不匹配时返回阻断决策 / Return a block decision for mismatch or insufficient evidence",
+      "default": true
     }
   }
 }

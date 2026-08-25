@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPTLock 状态 / Status</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">GPTLOCK <span id="version"></span></p>
+        <h1>验证状态 <small>Verification</small></h1>
+      </div>
+      <span id="verdict" class="verdict wait">检查中</span>
+    </header>
+
+    <section class="summary" aria-live="polite">
+      <strong id="guardTitle">正在读取状态…</strong>
+      <p id="guardDetail">Checking the active ChatGPT tab…</p>
+    </section>
+
+    <section id="installHelp" class="install-help" hidden>
+      <strong id="installTitle">尚未安装本地核心</strong>
+      <p id="installDetail"></p>
+      <button id="installCore" type="button">下载并安装本地核心<br><small>Download installer</small></button>
+    </section>
+
+    <dl>
+      <div><dt>本地核心 <small>Native Core</small></dt><dd id="native">—</dd></div>
+      <div><dt>网络验证 <small>Network verifier</small></dt><dd id="monitor">—</dd></div>
+      <div><dt>页面选择 <small>Page selection</small></dt><dd id="pageState">—</dd></div>
+      <div><dt>响应证据 <small>Response evidence</small></dt><dd id="responseState">—</dd></div>
+    </dl>
+
+    <p class="boundary">页面显示只用于发送前检查；只有响应元数据能显示“已验证”。<br><span>UI text is preflight-only; only response metadata can be Verified.</span></p>
+
+    <div class="actions">
+      <button id="armProbe" type="button" class="primary">允许一次探测<br><small>Arm one probe</small></button>
+      <button id="reconnect" type="button">重新连接<br><small>Reconnect</small></button>
+      <button id="options" type="button">设置<br><small>Settings</small></button>
+    </div>
+    <p id="message" role="status"></p>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,14 +1,107 @@
 <!doctype html>
-<html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPTLock 设置 / Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
 <body>
-<h1>GPTLock Settings</h1>
-<label>Models (comma separated)</label>
-<input id="models" value="gpt-5.6-sol">
-<br>
-<label>Reasoning levels</label>
-<input id="levels" value="medium,high">
-<br>
-<label><input id="strict" type="checkbox" checked> Strict mode</label>
-<script src="options.js"></script>
+  <main class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">GPTLOCK <span id="extensionVersion">0.3.1</span></p>
+        <h1>模型锁定与验证</h1>
+        <p class="subtitle">Model policy guard &amp; evidence-based verification</p>
+      </div>
+      <div id="connectionBadge" class="badge offline">本地核心离线 / Core offline</div>
+    </header>
+
+    <section class="card" aria-labelledby="modelHeading">
+      <h2 id="modelHeading">锁定模型 <span>Locked models</span></h2>
+      <p class="help">可多选。标识用于策略匹配，不代表网页显示文字已经证明后端模型。</p>
+      <div id="modelChoices" class="choices"></div>
+      <label class="field" for="customModels">
+        <span>自定义模型标识（逗号分隔）</span>
+        <small>Custom model IDs, comma-separated</small>
+      </label>
+      <input id="customModels" type="text" spellcheck="false" placeholder="例如 / e.g. gpt-5.6-sol">
+    </section>
+
+    <section class="card" aria-labelledby="reasoningHeading">
+      <h2 id="reasoningHeading">允许的推理强度 <span>Allowed reasoning levels</span></h2>
+      <div id="reasoningChoices" class="choices"></div>
+      <label class="field" for="preferredReasoning">
+        <span>优先推理强度</span>
+        <small>Preferred reasoning level for best-effort UI alignment</small>
+      </label>
+      <select id="preferredReasoning"></select>
+    </section>
+
+    <section class="card" aria-labelledby="verificationHeading">
+      <h2 id="verificationHeading">真实响应验证 <span>Response verification</span></h2>
+      <label class="check-row wide">
+        <input id="networkVerification" type="checkbox">
+        <span><strong>启用网络响应验证</strong><small>Use Chrome DevTools Protocol to read response metadata. Prompt and answer content are never persisted.</small></span>
+      </label>
+      <p class="permission-note">此功能需要 Chrome/Edge 的“调试程序”权限。浏览器 DevTools 与 GPTLock 不能同时附加同一标签页；打开 DevTools 会让 GPTLock 降级为未验证。</p>
+      <p class="permission-note en">This requires the browser “debugger” permission. Opening DevTools on the same tab detaches GPTLock and produces an unverified state.</p>
+
+      <label class="check-row wide">
+        <input id="autoAlignSelection" type="checkbox">
+        <span><strong>自动对齐页面选择（尽力而为）</strong><small>Best-effort UI alignment; this is convenience only and never proof of the backend model.</small></span>
+      </label>
+    </section>
+
+    <section class="card" aria-labelledby="probeHeading">
+      <h2 id="probeHeading">首次请求 <span>First request</span></h2>
+      <p class="help">服务器响应前无法证明真实路由。默认允许一次符合页面预检的探测请求，随后等待响应验证。</p>
+      <label class="radio-row">
+        <input type="radio" name="firstRequestMode" value="allow_once">
+        <span><strong>自动允许一次探测</strong><small>Allow one preflight-matching probe, then block until verified</small></span>
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="firstRequestMode" value="block">
+        <span><strong>默认阻断，手动授权探测</strong><small>Block until “Arm one probe” is clicked in the popup</small></span>
+      </label>
+    </section>
+
+    <section class="card" aria-labelledby="modeHeading">
+      <h2 id="modeHeading">处理模式 <span>Enforcement mode</span></h2>
+      <label class="radio-row">
+        <input type="radio" name="mode" value="false">
+        <span><strong>提醒</strong><small>Warn — 记录异常但不要求阻断</small></span>
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="mode" value="true">
+        <span><strong>强制</strong><small>Strict — 未验证或不匹配时返回阻断决策</small></span>
+      </label>
+    </section>
+
+    <section class="card status-card" aria-labelledby="statusHeading">
+      <div class="status-title">
+        <h2 id="statusHeading">真实状态 <span>Verification status</span></h2>
+        <button id="reconnect" class="secondary" type="button">重新连接 / Reconnect</button>
+      </div>
+      <dl>
+        <div><dt>Native Core</dt><dd id="nativeStatus">检查中 / Checking…</dd></div>
+        <div><dt>最近验证 / Last check</dt><dd id="verificationStatus">暂无 / None</dd></div>
+        <div><dt>证据来源 / Evidence</dt><dd id="evidenceStatus">暂无 / None</dd></div>
+      </dl>
+      <div id="installHelp" class="core-help" hidden>
+        <strong id="installTitle">尚未安装本地核心 / Local Core is not installed</strong>
+        <p id="installDetail"></p>
+        <button id="installCore" class="secondary" type="button">下载安装器 / Download installer</button>
+      </div>
+      <p class="boundary">重要：仅“网络响应元数据”或“会话响应元数据”可被判定为已验证；页面 DOM 和模型菜单只作为提示证据。</p>
+      <p class="boundary en">Important: only response metadata can produce a verified result. Page DOM and menu selections remain informational evidence.</p>
+    </section>
+
+    <footer>
+      <p id="formMessage" role="status" aria-live="polite"></p>
+      <button id="save" class="primary" type="button">保存并同步 / Save &amp; sync</button>
+    </footer>
+  </main>
+  <script type="module" src="options.js"></script>
 </body>
 </html>

@@ -1,0 +1,6 @@
+/native-core/target/
+/dist/
+/.gptlock/
+*.log
+*.tmp
+.DS_Store

@@ -1,0 +1,184 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  extension:
+    name: Extension checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate JSON
+        run: |
+          python -m json.tool extension/manifest.json >/dev/null
+          python -m json.tool native-core/config.schema.json >/dev/null
+          python -m json.tool packaging/native-messaging/com.gptlock.core.template.json >/dev/null
+      - name: Validate version consistency
+        run: |
+          python - <<'PY'
+          import json
+          import tomllib
+
+          with open('extension/manifest.json', encoding='utf-8') as handle:
+              manifest_version = json.load(handle)['version']
+          with open('extension/package.json', encoding='utf-8') as handle:
+              package_version = json.load(handle)['version']
+          with open('native-core/Cargo.toml', 'rb') as handle:
+              cargo_version = tomllib.load(handle)['package']['version']
+          assert manifest_version == package_version == cargo_version, (
+              manifest_version, package_version, cargo_version
+          )
+          PY
+      - name: Test extension policy
+        working-directory: extension
+        run: npm test
+      - name: Check Linux installer syntax
+        run: bash -n packaging/linux/install.sh packaging/linux/build-deb.sh packaging/linux/update.sh
+      - name: Build extension archive
+        run: |
+          mkdir -p dist
+          cd extension
+          zip -9 ../dist/gptlock-extension.zip \
+            background.js content.js guard.js manifest.json native-status.js network-evidence.js network-monitor.js \
+            options.css options.html options.js policy.js popup.css popup.html popup.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gptlock-extension
+          path: dist/gptlock-extension.zip
+          if-no-files-found: error
+
+  native-core:
+    name: Native Core (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            executable: gptlock-core
+          - os: windows-latest
+            executable: gptlock-core.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native-core
+      - name: Check formatting
+        run: cargo fmt --manifest-path native-core/Cargo.toml --all -- --check
+      - name: Lint
+        run: cargo clippy --locked --manifest-path native-core/Cargo.toml --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked --manifest-path native-core/Cargo.toml --all-targets
+      - name: Build release
+        run: cargo build --locked --release --manifest-path native-core/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gptlock-core-${{ matrix.os }}
+          path: native-core/target/release/${{ matrix.executable }}
+          if-no-files-found: error
+
+  windows-installer:
+    name: Windows Setup
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native-core
+      - name: Parse PowerShell installer
+        shell: pwsh
+        run: |
+          foreach ($file in @(
+            'packaging/windows/Install-GPTLock.ps1',
+            'packaging/windows/Repair-GPTLock.ps1',
+            'packaging/windows/Update-GPTLock.ps1'
+          )) {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file), [ref]$tokens, [ref]$parseErrors
+            ) | Out-Null
+            if ($parseErrors.Count -gt 0) {
+              $parseErrors | Format-List | Out-String | Write-Error
+              exit 1
+            }
+          }
+      - name: Build Native Core
+        run: cargo build --locked --release --manifest-path native-core/Cargo.toml
+      - name: Compile Setup
+        shell: pwsh
+        run: |
+          $version = (Get-Content 'extension\manifest.json' -Raw | ConvertFrom-Json).version
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            choco install innosetup --yes --no-progress
+          }
+          & $iscc "/DMyAppVersion=$version" 'packaging\windows\GPTLock.iss'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install and verify Setup registration
+        shell: pwsh
+        run: |
+          & 'dist\windows\GPTLockSetup-x64.exe' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $root = Join-Path $env:LOCALAPPDATA 'GPTLock'
+          $binary = Join-Path $root 'bin\gptlock-core.exe'
+          $repair = Join-Path $root 'tools\Repair-GPTLock.ps1'
+          foreach ($path in @($binary, $repair, (Join-Path $root 'extension\manifest.json'))) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing installed file: $path" }
+          }
+          & $repair
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($registryPath in @(
+            'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.gptlock.core',
+            'HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.gptlock.core'
+          )) {
+            $manifestPath = (Get-Item -LiteralPath $registryPath).GetValue('')
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            if ($manifest.path -ne $binary) { throw "Wrong native binary path: $($manifest.path)" }
+            if ($manifest.allowed_origins[0] -ne 'chrome-extension://bhchcpeodphgjfjoookncemnamdbfcof/') {
+              throw "Wrong allowed origin: $($manifest.allowed_origins[0])"
+            }
+          }
+          & $binary doctor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gptlock-windows-setup
+          path: dist/windows/GPTLockSetup-x64.exe
+          if-no-files-found: error
+
+  linux-package:
+    name: Linux deb package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native-core
+      - name: Build Native Core
+        run: cargo build --locked --release --manifest-path native-core/Cargo.toml
+      - name: Build and inspect deb
+        run: |
+          chmod +x packaging/linux/build-deb.sh
+          package="$(packaging/linux/build-deb.sh dist/linux | tail -n 1)"
+          dpkg-deb --info "$package"
+          dpkg-deb --contents "$package"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gptlock-linux-deb
+          path: dist/linux/gptlock_*_amd64.deb
+          if-no-files-found: error

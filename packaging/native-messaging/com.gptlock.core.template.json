@@ -1,0 +1,9 @@
+{
+  "name": "com.gptlock.core",
+  "description": "GPTLock 本地验证核心 / GPTLock Local Verification Core",
+  "path": "__ABSOLUTE_BINARY_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__EXTENSION_ID__/"
+  ]
+}
