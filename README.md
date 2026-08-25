@@ -1,11 +1,11 @@
 # GPTLock
 
-GPTLock is a Manifest V3 browser extension for Windows and Linux Chrome/Edge browsers.
+GPTLock is a Manifest V3 browser extension plus optional local companion for Windows and Linux Chrome/Edge browsers.
 
 Goals:
 - Lock preferred ChatGPT model selections.
 - Support multiple target models and reasoning levels.
-- Provide network-layer diagnostics through an optional local companion service.
+- Provide local verification and diagnostics.
 - Never bypass OpenAI service limits or security controls.
 
 Architecture:
@@ -13,13 +13,19 @@ Architecture:
 ```
 Browser Extension
     |
-    | chrome.debugger / webRequest diagnostics
+    | policy + state bridge
     |
-Local Companion (optional)
+Local Companion
     |
-    | HTTPS traffic metadata inspection
+    | diagnostic verification API
     |
 ChatGPT Web
 ```
 
-The first version focuses on extension foundation, settings storage, model policy management, and cross-platform compatibility.
+Current roadmap:
+
+1. Extension foundation
+2. Policy engine
+3. Windows/Linux native companion
+4. Local verification API
+5. Model state audit logs
