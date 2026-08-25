@@ -5,11 +5,12 @@
 ## 组件
 
 1. **内容脚本 `content.js`**：读取最小页面选择状态，保守地尝试对齐模型/推理菜单，同步发送守卫，并拦截发送按钮、Enter 和表单提交。它不读取聊天正文。
-2. **MV3 Service Worker `background.js`**：管理策略、每标签页/会话状态机、Native Messaging、请求关联和徽章。
+2. **MV3 Service Worker `background.js`**：管理策略、总开关、自动验证准备、每标签页/会话状态机、Native Messaging、请求关联和徽章。
 3. **网络验证器 `network-monitor.js`**：通过 `chrome.debugger` 附加 `chatgpt.com` 标签页，启用 CDP `Network` 域，关联 conversation-like POST、响应头与响应体。
 4. **证据提取器 `network-evidence.js`**：只解析白名单元数据键/响应头；提示词与回答字段被跳过，完整正文只在内存中短暂存在并立即丢弃。
 5. **Rust Native Core**：规范化策略、执行三态验证、原子持久化策略/状态、写脱敏审计，并提供令牌保护的 loopback API。
-6. **安装/发布层**：固定扩展 ID，注册 Chrome/Chromium/Edge Native Messaging，构建 Windows Setup、Linux `.deb`、CI artifacts 和 Release assets。
+6. **诊断层 `runtime-log.js` / `diagnostics.*`**：保存有界、脱敏的扩展事件，展示筛选日志，并与 Native Core 审计尾部组合导出 JSON 诊断包。
+7. **安装/发布层**：固定扩展 ID，注册 Chrome/Chromium/Edge Native Messaging，构建 Windows Setup、Linux `.deb`、CI artifacts 和 Release assets。
 
 ```text
 chatgpt.com 页面
@@ -42,6 +43,7 @@ chatgpt.com 页面
 | `mismatch` | 否 | 响应模型或推理强度违反策略 |
 | `unverified` | 否 | 响应字段缺失、冲突、过期或不可读 |
 | `monitor_offline/error` | 否 | CDP/Native Core 断开或处理失败 |
+| `disabled` | 是 | 用户关闭 GPTLock，总开关暂停监控和阻断 |
 
 允许发送后会立即本地消费该权限，防止双击或重复 Enter。新会话、策略变化或完整页面选择变化会清除旧证据。提醒模式保持同一验证过程，但不拦截发送。
 
@@ -58,9 +60,10 @@ chatgpt.com 页面
 - Native Core 离线：`error`；
 - DOM 选择未知：不允许自动探测；
 - 任何服务端限制：向用户展示，不尝试绕过。
+- 诊断日志：只持久化状态、元数据路径和错误；提示词、回答正文、请求/响应体与凭据均不写入日志。
 
 ## English
 
-The content script performs minimal UI preflight and synchronous send interception. The MV3 worker owns per-tab state and Native Messaging. A `chrome.debugger`/CDP Network monitor correlates ChatGPT backend POST requests with their completed responses, while a pure extractor keeps only whitelisted model/reasoning metadata and immediately discards response bodies.
+The content script performs minimal UI preflight and synchronous send interception. The MV3 worker owns the global switch, automatic-verification preparation, per-tab state, and Native Messaging. A `chrome.debugger`/CDP Network monitor correlates ChatGPT backend POST requests with their completed responses, while a pure extractor keeps only whitelisted model/reasoning metadata and immediately discards response bodies. A bounded, redacted extension event log can be combined with the Native Core audit tail in a JSON diagnostic export.
 
 Request metadata and DOM text are preflight-only. Current response metadata is sent to the Rust core for `verified`, `mismatch`, or `unverified` evaluation. Strict mode grants a single probe or verified send, consumes that grant immediately, and waits for the correlated response; warning mode never blocks. Protocol changes, missing/conflicting metadata, debugger detachment, and core failures all fail safely without fabricating proof.

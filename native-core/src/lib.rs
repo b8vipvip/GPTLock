@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
+use serde_json::Value;
 
 use config::{ConfigStore, Policy};
 use logger::AuditLogger;
@@ -128,6 +129,10 @@ impl AppState {
                 .to_owned(),
             native_host_name: NATIVE_HOST_NAME,
         })
+    }
+
+    pub fn recent_audit_records(&self, limit: usize) -> Result<Vec<Value>> {
+        self.audit.recent_records(limit)
     }
 }
 

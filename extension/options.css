@@ -19,6 +19,7 @@ header, .status-title, footer {
   justify-content: space-between;
   gap: 20px;
 }
+.status-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 
 .eyebrow { margin: 0 0 5px; color: #2563eb; font-size: 12px; font-weight: 800; letter-spacing: .14em; }
 h1 { margin: 0; font-size: clamp(28px, 5vw, 42px); letter-spacing: -.035em; }
@@ -92,6 +93,7 @@ button:hover { filter: brightness(.97); }
 @media (max-width: 620px) {
   header, footer { align-items: flex-start; flex-direction: column; }
   .status-title { align-items: flex-start; }
+  .status-actions { justify-content: flex-start; }
   dl div { grid-template-columns: 1fr; gap: 3px; }
   .badge { white-space: normal; }
 }

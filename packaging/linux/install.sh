@@ -69,7 +69,7 @@ mkdir -p "$install_dir"
 install -m 0755 "$binary_path" "$installed_binary"
 install -m 0755 "$script_dir/update.sh" "$installed_updater"
 mkdir -p "$installed_extension"
-for file in background.js content.js guard.js manifest.json native-status.js network-evidence.js network-monitor.js options.css options.html options.js policy.js popup.css popup.html popup.js; do
+for file in background.js content.js diagnostics.css diagnostics.html diagnostics.js guard.js manifest.json native-status.js network-evidence.js network-monitor.js options.css options.html options.js policy.js popup.css popup.html popup.js runtime-log.js; do
   install -m 0644 "$repo_root/extension/$file" "$installed_extension/$file"
 done
 

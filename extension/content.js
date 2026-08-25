@@ -114,6 +114,13 @@
       network_monitor_not_attached: '网络验证器未连接 / Network verifier is not attached',
       native_core_offline: '本地核心离线 / Native Core is offline',
       metadata_missing: '响应缺少可验证元数据 / Verifiable response metadata is missing',
+      model_missing: '响应未暴露可验证模型字段 / Response did not expose a verifiable model field',
+      reasoning_missing: '响应未暴露可验证推理强度字段 / Response did not expose a verifiable reasoning field',
+      model_not_allowed: '响应模型不在允许列表 / Response model is not allowed',
+      reasoning_not_allowed: '响应推理强度不在允许列表 / Response reasoning is not allowed',
+      evidence_source_insufficient: '证据来源不足 / Evidence source is insufficient',
+      evidence_stale: '响应证据已过期 / Response evidence is stale',
+      gptlock_disabled: 'GPTLock 已关闭 / GPTLock is disabled',
       policy_mismatch: '响应元数据与策略不匹配 / Response metadata mismatches policy',
       verification_error: '验证发生错误 / Verification error',
     };
@@ -159,6 +166,7 @@
       monitor_disabled: ['验证已关闭', 'bad'],
       core_offline: ['核心离线', 'bad'],
       initial_block: ['已阻断', 'bad'],
+      disabled: ['已关闭', 'off'],
     };
     const [label, tone] = labels[guard?.status] || ['检查中', 'wait'];
     button.textContent = `GPTLock · ${label}`;
@@ -194,7 +202,7 @@
   }
 
   function locallyConsumeGuard() {
-    if (!cachedState?.guard || cachedState.guard.allowKind === 'warning') return;
+    if (!cachedState?.guard || ['warning', 'disabled', 'outside_scope'].includes(cachedState.guard.allowKind)) return;
     cachedState = {
       ...cachedState,
       phase: 'waiting',
@@ -217,6 +225,11 @@
       event.stopPropagation();
       event.stopImmediatePropagation();
       showNotice(guard);
+      void sendMessage({
+        type: 'GPTLOCK_SEND_BLOCKED',
+        status: guard.status,
+        reason: guard.reason,
+      }).catch(() => {});
       return false;
     }
     sendConsumedAt = Date.now();
@@ -292,7 +305,7 @@
   }
 
   async function alignSelection() {
-    if (!cachedSettings?.autoAlignSelection || !cachedPolicy || document.querySelector('button[data-testid="stop-button"]')) return;
+    if (!cachedSettings?.enabled || !cachedSettings.autoAlignSelection || !cachedPolicy || document.querySelector('button[data-testid="stop-button"]')) return;
     const observation = collectObservation();
     const desiredModel = cachedPolicy.lockedModels?.[0];
     const preferred = cachedPolicy.allowedReasoningLevels?.includes(cachedSettings.preferredReasoning)

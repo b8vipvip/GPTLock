@@ -4,7 +4,7 @@
 
 GPTLock 是专用于 `chatgpt.com` 官方网页聊天的模型策略锁定与真实状态验证工具，支持 Windows/Linux 上的 Chrome、Chromium 和 Edge。它由 Manifest V3 扩展与 Rust 本地核心组成，不使用 OpenAI API，不代理 HTTPS，也不尝试绕过服务端限制。
 
-当前版本：`0.3.2`。Phase 1–5 的代码已经实现，包括响应元数据采集、严格发送守卫、状态弹窗、Windows Setup、Linux `.deb`、CI 制品、GitHub Release 与校验和更新流程。0.3.2 修复 Chromium 启动 Native Messaging 主机时附加来源参数所导致的协议启动失败，安装/修复流程会执行真实消息往返自检；Windows 还支持自定义安装根目录（例如 `D:\AI\GPTLock`），并修复 Windows PowerShell 5.1 的中文脚本乱码。
+当前版本：`0.3.3`。Phase 1–5 的代码已经实现，包括响应元数据采集、严格发送守卫、状态弹窗、Windows Setup、Linux `.deb`、CI 制品、GitHub Release 与校验和更新流程。0.3.3 新增总启用开关、一键自动验证准备、响应证据缺失诊断、隐私安全的扩展运行日志以及包含 Native Core 审计尾部的 JSON 诊断导出。Windows 支持自定义安装根目录（例如 `D:\AI\GPTLock`），安装/修复流程会执行真实 Native Messaging 往返自检。
 
 ## 核心能力
 
@@ -15,6 +15,7 @@ GPTLock 是专用于 `chatgpt.com` 官方网页聊天的模型策略锁定与真
 - 严格模式在不匹配、未验证、验证器离线或等待响应时阻止后续发送；
 - 提醒模式只显示告警和记录审计，不阻止发送；
 - Windows/Linux Native Messaging、本机 API 和隐私化 JSONL 审计日志；
+- 弹窗一键准备自动验证、全局启停和可筛选/清空/导出的运行诊断；
 - 固定扩展 ID：`bhchcpeodphgjfjoookncemnamdbfcof`，更新后无需重新登记本地主机。
 
 ## 必须理解的边界
@@ -67,7 +68,7 @@ CI 在 Ubuntu 和 Windows 编译、测试并上传扩展 ZIP、Linux `.deb`、Wi
 
 GPTLock is a model-policy guard and evidence-based status verifier exclusively for official `chatgpt.com` web chats. It supports Chrome, Chromium, and Edge on Windows and Linux, uses no OpenAI API, performs no TLS interception, and cannot bypass server-side limits or routing.
 
-Version `0.3.2` implements the Rust Native Core, Native Messaging, response-metadata capture through the Chrome DevTools Protocol, per-request correlation, a strict pre-send guard, status popup, bilingual settings, Windows Setup, Linux `.deb`, CI artifacts, tagged releases, checksums, and update scripts. It fixes Chromium-origin command-line handling for native hosts, performs a real framed-message round-trip during Windows installation/repair, supports custom Windows roots such as `D:\AI\GPTLock`, and preserves readable Chinese output in Windows PowerShell 5.1.
+Version `0.3.3` implements the Rust Native Core, Native Messaging, response-metadata capture through the Chrome DevTools Protocol, per-request correlation, a strict pre-send guard, status popup, bilingual settings, Windows Setup, Linux `.deb`, CI artifacts, tagged releases, checksums, and update scripts. It adds a global enable switch, one-click automatic-verification preparation, evidence-gap diagnostics, privacy-safe extension runtime logs, and JSON export containing a bounded Native Core audit tail. Windows supports custom roots such as `D:\AI\GPTLock`, and installation/repair performs a real framed Native Messaging round trip.
 
 Only current response metadata can produce `verified`. UI text and request metadata are preflight evidence only. Missing or conflicting response metadata produces `unverified`; GPTLock never invents a successful result. Since a first request cannot be verified before a response exists, the default allows one policy-matching probe and then waits for evidence.
 

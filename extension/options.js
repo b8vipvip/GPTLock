@@ -13,6 +13,7 @@ const elements = {
   reasoningChoices: document.getElementById('reasoningChoices'),
   customModels: document.getElementById('customModels'),
   preferredReasoning: document.getElementById('preferredReasoning'),
+  enabled: document.getElementById('enabled'),
   networkVerification: document.getElementById('networkVerification'),
   autoAlignSelection: document.getElementById('autoAlignSelection'),
   connectionBadge: document.getElementById('connectionBadge'),
@@ -20,6 +21,8 @@ const elements = {
   verificationStatus: document.getElementById('verificationStatus'),
   evidenceStatus: document.getElementById('evidenceStatus'),
   reconnect: document.getElementById('reconnect'),
+  autoVerify: document.getElementById('autoVerify'),
+  logs: document.getElementById('logs'),
   save: document.getElementById('save'),
   formMessage: document.getElementById('formMessage'),
   installHelp: document.getElementById('installHelp'),
@@ -120,6 +123,7 @@ async function load() {
   elements.customModels.value = policy.lockedModels.filter((model) => !known.has(model)).join(', ');
   document.querySelector(`input[name="mode"][value="${policy.strictMode}"]`).checked = true;
   elements.preferredReasoning.value = settings.preferredReasoning;
+  elements.enabled.checked = settings.enabled;
   elements.networkVerification.checked = settings.networkVerificationEnabled;
   elements.autoAlignSelection.checked = settings.autoAlignSelection;
   document.querySelector(`input[name="firstRequestMode"][value="${settings.firstRequestMode}"]`).checked = true;
@@ -144,6 +148,7 @@ async function save() {
     ? elements.preferredReasoning.value
     : allowedReasoningLevels[0];
   const settings = {
+    enabled: elements.enabled.checked,
     preferredReasoning,
     networkVerificationEnabled: elements.networkVerification.checked,
     autoAlignSelection: elements.autoAlignSelection.checked,
@@ -170,6 +175,23 @@ elements.reconnect.addEventListener('click', () => {
     .catch((error) => {
       elements.nativeStatus.textContent = `连接失败 / Failed: ${error.message}`;
     });
+});
+
+elements.autoVerify.addEventListener('click', () => {
+  elements.formMessage.textContent = '正在准备自动验证 / Preparing automatic verification…';
+  void sendMessage({ type: 'GPTLOCK_AUTO_VERIFY' })
+    .then((result) => {
+      elements.formMessage.textContent = result.ready
+        ? '已准备；切回 ChatGPT 正常发送一条消息 / Ready; return to ChatGPT and send one normal message.'
+        : `尚未就绪 / Not ready · ${result.tabState?.guard?.reason || result.tabState?.guard?.status || 'unknown'}`;
+    })
+    .catch((error) => {
+      elements.formMessage.textContent = `自动验证失败 / Auto verification failed: ${error.message}`;
+    });
+});
+
+elements.logs.addEventListener('click', () => {
+  void sendMessage({ type: 'GPTLOCK_OPEN_DIAGNOSTICS' });
 });
 
 elements.installCore.addEventListener('click', () => {

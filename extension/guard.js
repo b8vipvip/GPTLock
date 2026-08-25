@@ -34,6 +34,15 @@ export function evaluateGuard({ state, policy, settings, inScope = true }) {
   if (!inScope) {
     return { ...base, canSend: true, allowKind: 'outside_scope', status: 'outside_scope' };
   }
+  if (!settings.enabled) {
+    return {
+      ...base,
+      canSend: true,
+      allowKind: 'disabled',
+      status: 'disabled',
+      reason: 'gptlock_disabled',
+    };
+  }
   if (!settings.networkVerificationEnabled) {
     return { ...base, status: 'monitor_disabled', reason: 'network_monitor_disabled' };
   }

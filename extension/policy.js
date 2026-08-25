@@ -5,6 +5,7 @@ export const DEFAULT_POLICY = Object.freeze({
 });
 
 export const DEFAULT_SETTINGS = Object.freeze({
+  enabled: true,
   networkVerificationEnabled: true,
   firstRequestMode: 'allow_once',
   autoAlignSelection: true,
@@ -66,6 +67,9 @@ export function normalizePolicy(input) {
 export function normalizeSettings(input) {
   const source = input && typeof input === 'object' ? input : DEFAULT_SETTINGS;
   return {
+    enabled: typeof source.enabled === 'boolean'
+      ? source.enabled
+      : DEFAULT_SETTINGS.enabled,
     networkVerificationEnabled: typeof source.networkVerificationEnabled === 'boolean'
       ? source.networkVerificationEnabled
       : DEFAULT_SETTINGS.networkVerificationEnabled,

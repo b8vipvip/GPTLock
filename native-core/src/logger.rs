@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::verifier::{
     Confidence, EvidenceSource, PolicyDecision, ReasonCode, Verdict, VerificationResult,
@@ -57,6 +58,27 @@ impl AuditLogger {
             source,
             policy_revision: revision,
         })
+    }
+
+    pub fn recent_records(&self, limit: usize) -> Result<Vec<Value>> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("audit log lock is poisoned"))?;
+        let contents = match fs::read_to_string(&self.path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error).context("read GPTLock audit log"),
+        };
+        let limit = limit.clamp(1, 500);
+        let mut records = contents
+            .lines()
+            .rev()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .take(limit)
+            .collect::<Vec<_>>();
+        records.reverse();
+        Ok(records)
     }
 
     fn append<T: Serialize>(&self, record: &T) -> Result<()> {

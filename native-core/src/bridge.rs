@@ -87,6 +87,7 @@ fn handle_message(state: &Arc<AppState>, message: Value) -> Value {
             "localhostApi": true,
             "policyPersistence": true,
             "auditLog": true,
+            "diagnosticExport": true,
             "sufficientEvidenceSources": [
                 "network_response_metadata",
                 "conversation_response_metadata"
@@ -120,6 +121,23 @@ fn handle_message(state: &Arc<AppState>, message: Value) -> Value {
         "get_status" => state
             .status()
             .and_then(|status| serde_json::to_value(status).map_err(Into::into)),
+        "get_diagnostics" => {
+            let audit_limit = message
+                .get("auditLimit")
+                .and_then(Value::as_u64)
+                .unwrap_or(200)
+                .clamp(1, 500) as usize;
+            state.doctor_report().and_then(|doctor| {
+                state
+                    .recent_audit_records(audit_limit)
+                    .map(|audit_records| {
+                        json!({
+                            "doctor": doctor,
+                            "auditRecords": audit_records,
+                        })
+                    })
+            })
+        }
         _ => {
             return error_response(
                 id,
@@ -189,5 +207,38 @@ mod tests {
         let response = handle_message(&state, json!({ "id": 7, "type": "delete_everything" }));
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "unsupported_message");
+    }
+
+    #[test]
+    fn exports_bounded_diagnostics_without_chat_content() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = AppState::initialize(ConfigStore::at(directory.path().to_path_buf())).unwrap();
+        let verification = handle_message(
+            &state,
+            json!({
+                "id": 1,
+                "type": "verify",
+                "observation": {
+                    "model": "gpt-5.6-sol",
+                    "reasoning": "high",
+                    "evidenceSource": "network_response_metadata",
+                    "capturedAt": "2026-08-25T00:00:00Z",
+                    "requestId": "diagnostic-test"
+                }
+            }),
+        );
+        assert_eq!(verification["ok"], true);
+
+        let response = handle_message(
+            &state,
+            json!({ "id": 2, "type": "get_diagnostics", "auditLimit": 10 }),
+        );
+        assert_eq!(response["ok"], true);
+        assert!(response["data"]["doctor"]["auditFile"].is_string());
+        assert_eq!(
+            response["data"]["auditRecords"].as_array().unwrap().len(),
+            1
+        );
+        assert!(response["data"].get("chatContent").is_none());
     }
 }

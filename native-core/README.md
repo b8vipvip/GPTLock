@@ -32,6 +32,8 @@ Native Messaging 清单的 `path` 不能附加自定义命令参数；手动无�
 
 日志达到 10 MiB 后保留一份轮换文件。只记录模型、推理、来源、判定、原因、策略 revision 和有限请求 ID，不记录聊天正文或凭据。
 
+扩展可通过 Native Messaging `get_diagnostics` 读取最多 500 条最近审计记录和脱敏 doctor 报告，用于用户主动导出的诊断包；API 令牌和聊天内容不会通过该消息返回。
+
 ## HTTP API
 
 | 方法 | 路径 | 令牌 | 用途 |
@@ -67,6 +69,6 @@ cargo test --locked --manifest-path native-core/Cargo.toml --all-targets
 
 ## English
 
-The Rust Native Core provides Native Messaging, policy persistence, three-state evidence verification, a loopback API, and privacy-conscious JSONL audit logs. With no arguments it runs as the native host. It also accepts Chromium's automatically supplied caller origin and Windows `--parent-window` argument after validating their shape. `serve` starts the optional API and `doctor` prints a redacted report.
+The Rust Native Core provides Native Messaging, policy persistence, three-state evidence verification, a loopback API, and privacy-conscious JSONL audit logs. With no arguments it runs as the native host. It also accepts Chromium's automatically supplied caller origin and Windows `--parent-window` argument after validating their shape. `serve` starts the optional API and `doctor` prints a redacted report. The `get_diagnostics` native message returns a bounded audit tail and redacted doctor data for explicit user export.
 
 Only response-metadata sources are sufficient for verification. Request, DOM, selection, and unknown sources remain unverified. The API is loopback-only, token-protected except for health, size-limited, and non-CORS. User data is stored in `.gptlock` under the current profile unless `GPTLOCK_HOME` overrides it.

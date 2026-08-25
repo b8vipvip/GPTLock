@@ -9,8 +9,11 @@ const elements = {
   monitor: document.getElementById('monitor'),
   pageState: document.getElementById('pageState'),
   responseState: document.getElementById('responseState'),
+  enabled: document.getElementById('enabled'),
+  autoVerify: document.getElementById('autoVerify'),
   armProbe: document.getElementById('armProbe'),
   reconnect: document.getElementById('reconnect'),
+  logs: document.getElementById('logs'),
   options: document.getElementById('options'),
   message: document.getElementById('message'),
   installHelp: document.getElementById('installHelp'),
@@ -39,6 +42,8 @@ function render(state) {
   const native = state.nativeStatus ?? {};
   const tab = state.tabState;
   const guard = tab?.guard;
+  const enabled = state.settings?.enabled !== false;
+  elements.enabled.checked = enabled;
   elements.native.textContent = native.connected
     ? `已连接 / Online${native.version ? ` · ${native.version}` : ''}`
     : `离线 / Offline${native.lastError ? ` · ${native.lastError}` : ''}`;
@@ -46,7 +51,10 @@ function render(state) {
     ? '已连接 / Attached'
     : `未连接 / Detached${tab?.monitor?.error ? ` · ${tab.monitor.error}` : ''}`;
   elements.pageState.textContent = valuePair(tab?.pageObservation?.model, tab?.pageObservation?.reasoning);
-  elements.responseState.textContent = valuePair(tab?.lastVerification?.model, tab?.lastVerification?.reasoning);
+  const responseValue = valuePair(tab?.lastVerification?.model, tab?.lastVerification?.reasoning);
+  elements.responseState.textContent = tab?.evidenceIssue
+    ? `${responseValue} · ${tab.evidenceIssue}`
+    : responseValue;
   const nativeErrorCode = native.errorCode || classifyNativeError(native.lastError);
   elements.installHelp.hidden = Boolean(native.connected);
   if (!native.connected) {
@@ -71,16 +79,54 @@ function render(state) {
     initial_block: ['等待探测授权 / Probe required', '在此窗口允许一次探测，或在设置中更改首次请求策略。', 'bad'],
     error: ['验证错误 / Error', tab?.lastError || 'Verification failed.', 'bad'],
     outside_scope: ['不适用 / Out of scope', 'GPTLock 仅作用于 chatgpt.com。', 'off'],
+    disabled: ['GPTLock 已关闭 / Disabled', '保护与网络监控已暂停；发送不会被 GPTLock 阻止。', 'off'],
   };
   const [title, detail, tone] = states[guard?.status] || ['无活动状态 / No active state', '请打开 chatgpt.com 后重试。', 'off'];
+  const reasonDetails = {
+    model_missing: '响应已被捕获，但其中没有可验证的模型字段；这不是本地核心离线。',
+    reasoning_missing: '响应已被捕获，但其中没有可验证的推理强度字段。',
+    response_body_read_failed: '浏览器未能读取本次响应体；请在运行日志中查看具体错误。',
+    response_model_not_exposed: 'ChatGPT 本次响应未暴露模型元数据。',
+    response_reasoning_not_exposed: 'ChatGPT 本次响应未暴露推理强度元数据。',
+    response_body_empty: '本次可读取响应体为空。',
+    response_body_unparseable: '本次响应格式无法安全解析为元数据。',
+  };
+  const evidenceDetail = reasonDetails[tab?.evidenceIssue] || reasonDetails[guard?.reason];
   elements.verdict.textContent = title.split(' / ')[0];
   elements.verdict.className = `verdict ${tone}`;
   elements.guardTitle.textContent = title;
-  elements.guardDetail.textContent = guard?.reason ? `${detail} · ${guard.reason}` : detail;
-  elements.armProbe.disabled = !tab || [
+  elements.guardDetail.textContent = [detail, evidenceDetail, guard?.reason].filter(Boolean).join(' · ');
+  elements.autoVerify.disabled = !tab || !enabled;
+  elements.armProbe.disabled = !tab || !enabled || [
     'verified', 'waiting', 'core_offline', 'monitor_offline', 'monitor_disabled', 'preflight_mismatch',
   ].includes(guard?.status);
 }
+
+elements.enabled.addEventListener('change', () => {
+  elements.enabled.disabled = true;
+  elements.message.textContent = elements.enabled.checked
+    ? '正在启用 / Enabling…'
+    : '正在关闭 / Disabling…';
+  void sendMessage({ type: 'GPTLOCK_SET_ENABLED', enabled: elements.enabled.checked })
+    .then(load)
+    .then(() => { elements.message.textContent = elements.enabled.checked ? 'GPTLock 已启用 / Enabled.' : 'GPTLock 已关闭 / Disabled.'; })
+    .catch((error) => { elements.message.textContent = error.message; })
+    .finally(() => { elements.enabled.disabled = false; });
+});
+
+elements.autoVerify.addEventListener('click', () => {
+  elements.message.textContent = '正在检查核心、网络验证器和页面状态 / Checking core, verifier, and page…';
+  elements.autoVerify.disabled = true;
+  void sendMessage({ type: 'GPTLOCK_AUTO_VERIFY' })
+    .then(async (result) => {
+      await load();
+      elements.message.textContent = result.ready
+        ? '自动验证已准备；请正常发送一条消息 / Ready; send one normal message.'
+        : `尚未就绪 / Not ready · ${result.tabState?.guard?.reason || result.tabState?.guard?.status || 'unknown'}`;
+    })
+    .catch((error) => { elements.message.textContent = error.message; })
+    .finally(() => { elements.autoVerify.disabled = false; });
+});
 
 function armFeedback(guard) {
   if (guard?.canSend) return '已授权；返回页面发送一次消息 / Armed; send one message.';
@@ -121,6 +167,10 @@ elements.installCore.addEventListener('click', () => {
 
 elements.options.addEventListener('click', () => {
   void sendMessage({ type: 'GPTLOCK_OPEN_OPTIONS' }).then(() => window.close());
+});
+
+elements.logs.addEventListener('click', () => {
+  void sendMessage({ type: 'GPTLOCK_OPEN_DIAGNOSTICS' }).then(() => window.close());
 });
 
 void load().catch((error) => {

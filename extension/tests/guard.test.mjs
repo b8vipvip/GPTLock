@@ -92,3 +92,15 @@ test('strict mode blocks when the Native Core is offline', () => {
   assert.equal(guard.canSend, false);
   assert.equal(guard.status, 'core_offline');
 });
+
+test('global disable bypasses enforcement and reports an explicit disabled state', () => {
+  const guard = evaluateGuard({
+    state: state({ core: { connected: false, error: 'host missing' } }),
+    policy: DEFAULT_POLICY,
+    settings: { ...DEFAULT_SETTINGS, enabled: false },
+  });
+  assert.equal(guard.canSend, true);
+  assert.equal(guard.allowKind, 'disabled');
+  assert.equal(guard.status, 'disabled');
+  assert.equal(guard.reason, 'gptlock_disabled');
+});
