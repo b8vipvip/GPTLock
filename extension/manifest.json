@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "GPTLock",
+  "version": "0.1.0",
+  "description": "ChatGPT model preference guard and diagnostics extension.",
+  "permissions": ["storage", "tabs", "webRequest"],
+  "host_permissions": ["https://chatgpt.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "GPTLock"
+  },
+  "options_page": "options.html"
+}
