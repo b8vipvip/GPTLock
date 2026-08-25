@@ -30,6 +30,8 @@
    - `不匹配 / Mismatch`：至少一个实际元数据值不在策略中；严格模式继续阻断；
    - `未验证 / Unverified`：元数据缺失、冲突、无法读取或已过期；严格模式继续阻断。
 
+页面模型或推理强度没有显示时，0.3.1 会标记为“页面选择未知”，不再误称为明确策略冲突。此时可以手动“允许一次探测”；但若页面已经检测到不允许的值，手动探测仍不会绕过该冲突。
+
 每次允许发送后都会重新进入等待状态，避免把上一轮证据直接当成当前请求的证明。切换会话或修改页面模型/推理选择也会重置状态。
 
 ## 弹窗状态
@@ -41,7 +43,7 @@
 | Page selection | 页面 DOM 看到的模型/推理，仅用于预检 |
 | Response evidence | 最近一个关联响应经过本地核心验证的模型/推理 |
 
-常见徽章：`OK` 已验证，`!` 不匹配/预检失败，`…` 等待响应，`1` 可发送一次探测，`OFF` 验证器未连接。
+常见徽章：`OK` 已验证，`!` 不匹配/明确预检冲突，`?` 页面信息不完整，`…` 等待响应，`1` 可发送一次探测，`OFF` 核心或验证器未连接。
 
 “允许一次探测”按钮只授权下一条请求，不会把请求提前标记为已验证。若设置为“首次默认阻断”，必须使用该按钮才能开始一个新会话的验证链路。页面暂时无法显示某个字段时，手动探测可以在“没有已知冲突”的前提下启动验证；它绝不会覆盖一个明确不在策略内的页面值。
 
@@ -83,4 +85,4 @@ Configure allowed models, reasoning levels, enforcement mode, preferred reasonin
 
 A first request is a probe because no response exists yet. After each allowed send, GPTLock waits for the correlated response. Matching model and reasoning response metadata yields `verified`; disallowed values yield `mismatch`; missing, conflicting, stale, or unreadable metadata yields `unverified`. Strict mode blocks future sends in every state except verified or an explicitly allowed probe. Warning mode reports but does not block.
 
-UI alignment and DOM labels are preflight-only. Opening DevTools on the same tab detaches GPTLock's debugger session; close DevTools and click Reconnect. Audit logs contain only minimal metadata and never chat content or credentials.
+UI alignment and DOM labels are preflight-only. Missing UI fields are shown as unknown and may be manually probed; explicitly disallowed values cannot be overridden. Opening DevTools on the same tab detaches GPTLock's debugger session; close DevTools and click Reconnect. Audit logs contain only minimal metadata and never chat content or credentials.

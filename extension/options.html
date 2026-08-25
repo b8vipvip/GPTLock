@@ -10,7 +10,7 @@
   <main class="shell">
     <header>
       <div>
-        <p class="eyebrow">GPTLOCK 0.3</p>
+        <p class="eyebrow">GPTLOCK <span id="extensionVersion">0.3.1</span></p>
         <h1>模型锁定与验证</h1>
         <p class="subtitle">Model policy guard &amp; evidence-based verification</p>
       </div>
@@ -88,6 +88,11 @@
         <div><dt>最近验证 / Last check</dt><dd id="verificationStatus">暂无 / None</dd></div>
         <div><dt>证据来源 / Evidence</dt><dd id="evidenceStatus">暂无 / None</dd></div>
       </dl>
+      <div id="installHelp" class="core-help" hidden>
+        <strong id="installTitle">尚未安装本地核心 / Local Core is not installed</strong>
+        <p id="installDetail"></p>
+        <button id="installCore" class="secondary" type="button">下载安装器 / Download installer</button>
+      </div>
       <p class="boundary">重要：仅“网络响应元数据”或“会话响应元数据”可被判定为已验证；页面 DOM 和模型菜单只作为提示证据。</p>
       <p class="boundary en">Important: only response metadata can produce a verified result. Page DOM and menu selections remain informational evidence.</p>
     </section>

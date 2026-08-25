@@ -41,7 +41,7 @@ mkdir -p \
 install -m 0755 "$binary_path" "$package_root/usr/bin/gptlock-core"
 install -m 0755 "$script_dir/update.sh" "$package_root/usr/bin/gptlock-update"
 install -m 0644 "$script_dir/gptlock-core.deb.service" "$package_root/usr/lib/systemd/user/gptlock-core.service"
-for file in background.js content.js guard.js manifest.json network-evidence.js network-monitor.js options.css options.html options.js policy.js popup.css popup.html popup.js; do
+for file in background.js content.js guard.js manifest.json native-status.js network-evidence.js network-monitor.js options.css options.html options.js policy.js popup.css popup.html popup.js; do
   install -m 0644 "$repo_root/extension/$file" "$package_root/usr/share/gptlock/extension/$file"
 done
 

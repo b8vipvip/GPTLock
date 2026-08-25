@@ -19,12 +19,15 @@ export function evaluateGuard({ state, policy, settings, inScope = true }) {
   const warnAllowed = !strict;
   const uiMatches = observationMatchesPolicy(state.pageObservation, policy);
   const uiConflicts = observationConflictsPolicy(state.pageObservation, policy);
+  const uiComplete = Boolean(state.pageObservation?.model && state.pageObservation?.reasoning);
   const base = {
     strictMode: strict,
     canSend: warnAllowed,
     allowKind: warnAllowed ? 'warning' : 'blocked',
     status: state.phase,
     uiMatches,
+    uiConflicts,
+    uiComplete,
     reason: null,
   };
 
@@ -74,8 +77,11 @@ export function evaluateGuard({ state, policy, settings, inScope = true }) {
   if (state.probeArmed && !uiConflicts) {
     return { ...base, canSend: true, allowKind: 'probe', status: 'probe_ready' };
   }
-  if (!uiMatches) {
-    return { ...base, status: 'preflight_mismatch', reason: 'page_selection_not_allowed_or_missing' };
+  if (uiConflicts) {
+    return { ...base, status: 'preflight_mismatch', reason: 'page_selection_not_allowed' };
+  }
+  if (!uiComplete) {
+    return { ...base, status: 'preflight_unknown', reason: 'page_selection_missing' };
   }
   if (settings.firstRequestMode === 'allow_once' && !state.probeUsed) {
     return { ...base, canSend: true, allowKind: 'probe', status: 'probe_ready' };

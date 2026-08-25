@@ -1,3 +1,5 @@
+import { classifyNativeError, nativeHelp, RELEASES_URL } from './native-status.js';
+
 const elements = {
   version: document.getElementById('version'),
   verdict: document.getElementById('verdict'),
@@ -11,6 +13,10 @@ const elements = {
   reconnect: document.getElementById('reconnect'),
   options: document.getElementById('options'),
   message: document.getElementById('message'),
+  installHelp: document.getElementById('installHelp'),
+  installTitle: document.getElementById('installTitle'),
+  installDetail: document.getElementById('installDetail'),
+  installCore: document.getElementById('installCore'),
 };
 
 function sendMessage(message) {
@@ -41,6 +47,13 @@ function render(state) {
     : `未连接 / Detached${tab?.monitor?.error ? ` · ${tab.monitor.error}` : ''}`;
   elements.pageState.textContent = valuePair(tab?.pageObservation?.model, tab?.pageObservation?.reasoning);
   elements.responseState.textContent = valuePair(tab?.lastVerification?.model, tab?.lastVerification?.reasoning);
+  const nativeErrorCode = native.errorCode || classifyNativeError(native.lastError);
+  elements.installHelp.hidden = Boolean(native.connected);
+  if (!native.connected) {
+    const help = nativeHelp(nativeErrorCode);
+    elements.installTitle.textContent = help.title;
+    elements.installDetail.textContent = help.detail;
+  }
 
   const states = {
     verified: ['已验证 / Verified', '响应元数据符合锁定策略 / Response metadata matches the policy.', 'good'],
@@ -48,10 +61,13 @@ function render(state) {
     unverified: ['未验证 / Unverified', '响应没有同时提供可信的模型与推理强度元数据。', 'bad'],
     waiting: ['验证中 / Waiting', '本次请求已发送，正在等待完整响应元数据。', 'wait'],
     probe_ready: ['可发送一次探测 / Probe ready', '首次请求无法预先证明后端路由；发送后立即进入等待验证。', 'wait'],
-    preflight_mismatch: ['页面选择不符 / Preflight mismatch', '请先把页面模型与推理强度调整到允许范围。', 'bad'],
+    preflight_mismatch: ['页面选择冲突 / Preflight mismatch', '页面检测到了策略明确禁止的模型或推理强度。', 'bad'],
+    preflight_unknown: ['页面选择未知 / Preflight unknown', '页面没有暴露完整模型与推理强度；可手动授权一次探测。', 'wait'],
     monitor_offline: ['验证器离线 / Verifier offline', 'Chrome 网络调试连接不可用；打开 DevTools 也可能使它断开。', 'off'],
     monitor_disabled: ['网络验证已关闭 / Disabled', '严格模式下关闭网络验证会阻止发送。', 'off'],
-    core_offline: ['本地核心离线 / Core offline', 'Native Messaging 主机不可用；请检查安装并重新连接。', 'off'],
+    core_offline: ['本地核心离线 / Core offline', nativeErrorCode === 'host_not_installed'
+      ? '只加载扩展还不够；请先安装 GPTLock 本地核心。'
+      : 'Native Messaging 主机不可用；请检查安装并重新连接。', 'off'],
     initial_block: ['等待探测授权 / Probe required', '在此窗口允许一次探测，或在设置中更改首次请求策略。', 'bad'],
     error: ['验证错误 / Error', tab?.lastError || 'Verification failed.', 'bad'],
     outside_scope: ['不适用 / Out of scope', 'GPTLock 仅作用于 chatgpt.com。', 'off'],
@@ -61,7 +77,20 @@ function render(state) {
   elements.verdict.className = `verdict ${tone}`;
   elements.guardTitle.textContent = title;
   elements.guardDetail.textContent = guard?.reason ? `${detail} · ${guard.reason}` : detail;
-  elements.armProbe.disabled = !tab || guard?.status === 'verified' || guard?.status === 'waiting';
+  elements.armProbe.disabled = !tab || [
+    'verified', 'waiting', 'core_offline', 'monitor_offline', 'monitor_disabled', 'preflight_mismatch',
+  ].includes(guard?.status);
+}
+
+function armFeedback(guard) {
+  if (guard?.canSend) return '已授权；返回页面发送一次消息 / Armed; send one message.';
+  const messages = {
+    core_offline: '请先安装或修复本地核心 / Install or repair the Local Core first.',
+    monitor_offline: '请先重新连接网络验证器 / Reconnect the network verifier first.',
+    monitor_disabled: '请先在设置中启用网络验证 / Enable network verification first.',
+    preflight_mismatch: '页面存在明确策略冲突，未授权 / Explicit preflight mismatch; not armed.',
+  };
+  return messages[guard?.status] || `未授权 / Not armed${guard?.reason ? ` · ${guard.reason}` : ''}`;
 }
 
 async function load() {
@@ -73,9 +102,7 @@ elements.armProbe.addEventListener('click', () => {
   void sendMessage({ type: 'GPTLOCK_ARM_PROBE' })
     .then(async (tabState) => {
       await load();
-      elements.message.textContent = tabState.guard?.canSend
-        ? '已授权；返回页面发送一次消息 / Armed; send one message.'
-        : '页面存在明确策略冲突，未授权 / Explicit preflight mismatch; not armed.';
+      elements.message.textContent = armFeedback(tabState.guard);
     })
     .catch((error) => { elements.message.textContent = error.message; });
 });
@@ -86,6 +113,10 @@ elements.reconnect.addEventListener('click', () => {
     .then(() => load())
     .then(() => { elements.message.textContent = '连接检查完成 / Reconnect completed.'; })
     .catch((error) => { elements.message.textContent = error.message; });
+});
+
+elements.installCore.addEventListener('click', () => {
+  void chrome.tabs.create({ url: RELEASES_URL }).then(() => window.close());
 });
 
 elements.options.addEventListener('click', () => {

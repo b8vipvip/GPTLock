@@ -20,6 +20,8 @@
 
 ## Windows 10/11 x64
 
+> 只在 `chrome://extensions` 加载源码目录不会安装 Native Core。若弹窗显示 `Specified native messaging host not found`，必须先运行 Windows Setup；0.3.1 起弹窗会直接提供安装入口。
+
 1. 下载 `GPTLockSetup-x64.exe` 和 `SHA256SUMS.txt`。可选地验证哈希：
 
    ```powershell
@@ -53,6 +55,14 @@
    ```
 
 5. 完全退出所有 Chrome/Edge 进程，再重新启动。打开 `chatgpt.com`，点击 GPTLock 图标，确认“本地核心已连接”和“网络验证已连接”。
+
+若仍显示本地核心离线，可从开始菜单运行“修复 GPTLock 浏览器连接”，或执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\GPTLock\tools\Repair-GPTLock.ps1"
+```
+
+修复脚本会重新生成 Native Messaging 清单、登记 Chrome/Edge 当前用户注册表项，并验证核心、路径、扩展 ID 与清单内容。
 
 浏览器不会允许普通本地安装器静默安装未上架商店的扩展，因此仍需手动执行一次“加载已解压”。这是预期行为，不应通过篡改浏览器策略绕过。
 
@@ -125,6 +135,6 @@ Windows：
 
 Download the Windows x64 Setup or Debian/Ubuntu amd64 package from GitHub Releases and verify it against `SHA256SUMS.txt`. Windows installs under `%LOCALAPPDATA%\GPTLock`; Linux installs the core to `/usr/bin` and the extension to `/usr/share/gptlock/extension`.
 
-In the browser, enable Developer mode and use **Load unpacked** on the installed extension directory. Verify the stable ID `bhchcpeodphgjfjoookncemnamdbfcof`, then fully restart the browser. A normal local installer cannot silently install an unpacked, non-store Chromium extension, so this one manual browser step is intentional.
+In the browser, enable Developer mode and use **Load unpacked** on the installed extension directory. Verify the stable ID `bhchcpeodphgjfjoookncemnamdbfcof`, then fully restart the browser. Loading the extension directory alone does not install the Native Core. If Chromium reports `Specified native messaging host not found`, run Setup or the installed `Repair-GPTLock.ps1`. A normal local installer cannot silently install an unpacked, non-store Chromium extension, so this one manual browser step is intentional.
 
 The Linux systemd user unit is optional because Native Messaging launches the core on demand. Enable it only when the loopback HTTP API should stay available. Source installation scripts are also provided for per-user development installs.

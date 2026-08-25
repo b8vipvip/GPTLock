@@ -34,7 +34,7 @@ jobs:
           tar -C native-core/target/release -czf "dist/gptlock-core-${version}-linux-x64.tar.gz" gptlock-core
           cd extension
           zip -9 "../dist/gptlock-extension-${version}.zip" \
-            background.js content.js guard.js manifest.json network-evidence.js network-monitor.js \
+            background.js content.js guard.js manifest.json native-status.js network-evidence.js network-monitor.js \
             options.css options.html options.js policy.js popup.css popup.html popup.js
       - uses: actions/upload-artifact@v4
         with:

@@ -1,6 +1,6 @@
 #define MyAppName "GPTLock"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.3.0"
+  #define MyAppVersion "0.3.1"
 #endif
 #define MyAppPublisher "GPTLock Maintainers"
 #define MyAppURL "https://github.com/b8vipvip/GPTLock"
@@ -37,6 +37,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Source: "..\..\native-core\target\release\gptlock-core.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "..\..\extension\*"; DestDir: "{app}\extension"; Excludes: "tests\*,README.md,package.json"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "Update-GPTLock.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "Repair-GPTLock.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
 
 [Dirs]
 Name: "{app}\native-messaging"
@@ -48,6 +49,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Edge\NativeMessagingHosts\com.gptlock.co
 [Icons]
 Name: "{group}\GPTLock 扩展目录"; Filename: "{sys}\explorer.exe"; Parameters: """{app}\extension"""
 Name: "{group}\检查 GPTLock 更新"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\Update-GPTLock.ps1"""; WorkingDir: "{app}\tools"
+Name: "{group}\修复 GPTLock 浏览器连接"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\Repair-GPTLock.ps1"""; WorkingDir: "{app}\tools"
 Name: "{group}\卸载 GPTLock"; Filename: "{uninstallexe}"
 
 [Run]

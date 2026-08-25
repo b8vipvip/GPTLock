@@ -48,7 +48,7 @@ jobs:
           mkdir -p dist
           cd extension
           zip -9 ../dist/gptlock-extension.zip \
-            background.js content.js guard.js manifest.json network-evidence.js network-monitor.js \
+            background.js content.js guard.js manifest.json native-status.js network-evidence.js network-monitor.js \
             options.css options.html options.js policy.js popup.css popup.html popup.js
       - uses: actions/upload-artifact@v4
         with:
@@ -101,7 +101,11 @@ jobs:
       - name: Parse PowerShell installer
         shell: pwsh
         run: |
-          foreach ($file in @('packaging/windows/Install-GPTLock.ps1', 'packaging/windows/Update-GPTLock.ps1')) {
+          foreach ($file in @(
+            'packaging/windows/Install-GPTLock.ps1',
+            'packaging/windows/Repair-GPTLock.ps1',
+            'packaging/windows/Update-GPTLock.ps1'
+          )) {
             $tokens = $null
             $parseErrors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
@@ -123,6 +127,32 @@ jobs:
             choco install innosetup --yes --no-progress
           }
           & $iscc "/DMyAppVersion=$version" 'packaging\windows\GPTLock.iss'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install and verify Setup registration
+        shell: pwsh
+        run: |
+          & 'dist\windows\GPTLockSetup-x64.exe' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $root = Join-Path $env:LOCALAPPDATA 'GPTLock'
+          $binary = Join-Path $root 'bin\gptlock-core.exe'
+          $repair = Join-Path $root 'tools\Repair-GPTLock.ps1'
+          foreach ($path in @($binary, $repair, (Join-Path $root 'extension\manifest.json'))) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing installed file: $path" }
+          }
+          & $repair
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($registryPath in @(
+            'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.gptlock.core',
+            'HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.gptlock.core'
+          )) {
+            $manifestPath = (Get-Item -LiteralPath $registryPath).GetValue('')
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            if ($manifest.path -ne $binary) { throw "Wrong native binary path: $($manifest.path)" }
+            if ($manifest.allowed_origins[0] -ne 'chrome-extension://bhchcpeodphgjfjoookncemnamdbfcof/') {
+              throw "Wrong allowed origin: $($manifest.allowed_origins[0])"
+            }
+          }
+          & $binary doctor
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:

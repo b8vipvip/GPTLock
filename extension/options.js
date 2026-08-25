@@ -5,8 +5,10 @@ import {
   normalizePolicy,
   normalizeSettings,
 } from './policy.js';
+import { classifyNativeError, nativeHelp, RELEASES_URL } from './native-status.js';
 
 const elements = {
+  extensionVersion: document.getElementById('extensionVersion'),
   modelChoices: document.getElementById('modelChoices'),
   reasoningChoices: document.getElementById('reasoningChoices'),
   customModels: document.getElementById('customModels'),
@@ -20,6 +22,10 @@ const elements = {
   reconnect: document.getElementById('reconnect'),
   save: document.getElementById('save'),
   formMessage: document.getElementById('formMessage'),
+  installHelp: document.getElementById('installHelp'),
+  installTitle: document.getElementById('installTitle'),
+  installDetail: document.getElementById('installDetail'),
+  installCore: document.getElementById('installCore'),
 };
 
 function checkbox(container, name, id, label, detail = '') {
@@ -81,6 +87,12 @@ function renderStatus(nativeStatus = {}) {
   elements.nativeStatus.textContent = connected
     ? `已连接 / Connected${nativeStatus.policyRevision ? ` · ${nativeStatus.policyRevision}` : ''}`
     : nativeStatus.lastError || '未连接 / Not connected';
+  elements.installHelp.hidden = connected;
+  if (!connected) {
+    const help = nativeHelp(nativeStatus.errorCode || classifyNativeError(nativeStatus.lastError));
+    elements.installTitle.textContent = help.title;
+    elements.installDetail.textContent = help.detail;
+  }
 
   const verification = nativeStatus.lastVerification;
   if (!verification) {
@@ -99,6 +111,7 @@ function renderStatus(nativeStatus = {}) {
 
 async function load() {
   const state = await sendMessage({ type: 'GPTLOCK_GET_STATE' });
+  elements.extensionVersion.textContent = state.extensionVersion || '';
   const policy = normalizePolicy(state.policy);
   const settings = normalizeSettings(state.settings);
   setSelected('model', policy.lockedModels);
@@ -157,6 +170,10 @@ elements.reconnect.addEventListener('click', () => {
     .catch((error) => {
       elements.nativeStatus.textContent = `连接失败 / Failed: ${error.message}`;
     });
+});
+
+elements.installCore.addEventListener('click', () => {
+  void chrome.tabs.create({ url: RELEASES_URL });
 });
 
 void load().catch((error) => {

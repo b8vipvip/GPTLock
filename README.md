@@ -4,7 +4,7 @@
 
 GPTLock 是专用于 `chatgpt.com` 官方网页聊天的模型策略锁定与真实状态验证工具，支持 Windows/Linux 上的 Chrome、Chromium 和 Edge。它由 Manifest V3 扩展与 Rust 本地核心组成，不使用 OpenAI API，不代理 HTTPS，也不尝试绕过服务端限制。
 
-当前版本：`0.3.0`。Phase 1–5 的代码已经实现，包括响应元数据采集、严格发送守卫、状态弹窗、Windows Setup、Linux `.deb`、CI 制品、GitHub Release 与校验和更新流程。
+当前版本：`0.3.1`。Phase 1–5 的代码已经实现，包括响应元数据采集、严格发送守卫、状态弹窗、Windows Setup、Linux `.deb`、CI 制品、GitHub Release 与校验和更新流程。0.3.1 新增本地核心缺失诊断、安装/修复入口、Windows 安装注册自检，并将页面字段缺失与明确策略冲突分开显示。
 
 ## 核心能力
 
@@ -67,7 +67,7 @@ CI 在 Ubuntu 和 Windows 编译、测试并上传扩展 ZIP、Linux `.deb`、Wi
 
 GPTLock is a model-policy guard and evidence-based status verifier exclusively for official `chatgpt.com` web chats. It supports Chrome, Chromium, and Edge on Windows and Linux, uses no OpenAI API, performs no TLS interception, and cannot bypass server-side limits or routing.
 
-Version `0.3.0` implements the Rust Native Core, Native Messaging, response-metadata capture through the Chrome DevTools Protocol, per-request correlation, a strict pre-send guard, status popup, bilingual settings, Windows Setup, Linux `.deb`, CI artifacts, tagged releases, checksums, and update scripts.
+Version `0.3.1` implements the Rust Native Core, Native Messaging, response-metadata capture through the Chrome DevTools Protocol, per-request correlation, a strict pre-send guard, status popup, bilingual settings, Windows Setup, Linux `.deb`, CI artifacts, tagged releases, checksums, and update scripts. It also distinguishes a missing Native host from policy mismatch, links directly to installation/repair, validates Windows registration in CI, and reports incomplete page fields as unknown rather than conflicting.
 
 Only current response metadata can produce `verified`. UI text and request metadata are preflight evidence only. Missing or conflicting response metadata produces `unverified`; GPTLock never invents a successful result. Since a first request cannot be verified before a response exists, the default allows one policy-matching probe and then waits for evidence.
 

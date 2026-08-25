@@ -24,7 +24,7 @@ test('allows exactly the configured initial probe precondition', () => {
   assert.equal(guard.allowKind, 'probe');
 });
 
-test('blocks a probe when the page selection is missing or disallowed', () => {
+test('blocks a probe when the page selection is explicitly disallowed', () => {
   const guard = evaluateGuard({
     state: state({ pageObservation: { model: 'gpt-5.5', reasoning: 'high' } }),
     policy: DEFAULT_POLICY,
@@ -32,6 +32,18 @@ test('blocks a probe when the page selection is missing or disallowed', () => {
   });
   assert.equal(guard.canSend, false);
   assert.equal(guard.status, 'preflight_mismatch');
+  assert.equal(guard.reason, 'page_selection_not_allowed');
+});
+
+test('reports missing page fields as unknown instead of an explicit mismatch', () => {
+  const guard = evaluateGuard({
+    state: state({ pageObservation: { model: null, reasoning: null } }),
+    policy: DEFAULT_POLICY,
+    settings: DEFAULT_SETTINGS,
+  });
+  assert.equal(guard.canSend, false);
+  assert.equal(guard.status, 'preflight_unknown');
+  assert.equal(guard.reason, 'page_selection_missing');
 });
 
 test('blocks while waiting and after unverified response metadata', () => {

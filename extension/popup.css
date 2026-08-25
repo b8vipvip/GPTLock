@@ -19,6 +19,11 @@ h1 small { color: #64748b; font-size: 11px; font-weight: 600; }
 .summary { margin: 15px 0 12px; padding: 13px; border: 1px solid #dbe3ef; border-radius: 13px; background: white; }
 .summary strong { display: block; margin-bottom: 4px; font-size: 14px; }
 .summary p { margin: 0; color: #64748b; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.install-help { margin: -4px 0 12px; padding: 12px; border: 1px solid #fed7aa; border-radius: 13px; background: #fff7ed; }
+.install-help[hidden] { display: none; }
+.install-help strong { display: block; color: #9a3412; font-size: 13px; }
+.install-help p { margin: 5px 0 9px; color: #7c2d12; font-size: 11px; line-height: 1.45; }
+.install-help button { width: 100%; color: white; background: #c2410c; }
 dl { display: grid; gap: 1px; margin: 0; overflow: hidden; border: 1px solid #dbe3ef; border-radius: 13px; background: #dbe3ef; }
 dl div { display: grid; grid-template-columns: 130px 1fr; gap: 8px; padding: 10px 11px; background: white; }
 dt { color: #526076; font-size: 12px; }

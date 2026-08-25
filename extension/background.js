@@ -6,6 +6,7 @@ import {
 } from './policy.js';
 import { ChatGptNetworkMonitor } from './network-monitor.js';
 import { evaluateGuard } from './guard.js';
+import { classifyNativeError } from './native-status.js';
 
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
@@ -164,6 +165,9 @@ async function writeNativeStatus(patch) {
     ...nativeStatus,
     ...patch,
   };
+  if (Object.hasOwn(patch, 'lastError')) {
+    next.errorCode = classifyNativeError(patch.lastError);
+  }
   await chrome.storage.local.set({ nativeStatus: next });
   coreConnection = { connected: Boolean(next.connected), error: next.lastError ?? null };
   for (const state of tabStates.values()) {

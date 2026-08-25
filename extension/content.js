@@ -2,11 +2,20 @@
   const MODEL_SELECTORS = [
     '[data-testid="model-switcher-dropdown-button"]',
     'button[data-testid*="model-switcher"]',
+    'button[aria-label*="model" i][aria-haspopup]',
+    'button[aria-label*="模型"][aria-haspopup]',
+    'button[aria-label*="gpt" i]',
+    '[role="banner"] button[aria-haspopup]',
+    'header button[aria-haspopup]',
   ];
   const REASONING_SELECTORS = [
     '[data-testid*="reasoning"] button',
     'button[data-testid*="reasoning"]',
     'button[data-testid*="thinking"]',
+    'button[aria-label*="reasoning" i]',
+    'button[aria-label*="thinking" i]',
+    'button[aria-label*="推理"]',
+    'button[aria-label*="思考"]',
   ];
   const COMPOSER_SELECTORS = [
     '#prompt-textarea',
@@ -35,10 +44,22 @@
   let sendConsumedAt = 0;
   let indicator = null;
 
-  function firstText(selectors) {
+  function elementTexts(element) {
+    return [
+      element?.textContent?.trim(),
+      element?.getAttribute?.('aria-label')?.trim(),
+      element?.getAttribute?.('title')?.trim(),
+    ].filter(Boolean);
+  }
+
+  function firstNormalized(selectors, normalize) {
     for (const selector of selectors) {
-      const value = document.querySelector(selector)?.textContent?.trim();
-      if (value) return value;
+      for (const element of document.querySelectorAll(selector)) {
+        for (const text of elementTexts(element)) {
+          const value = normalize(text);
+          if (value) return value;
+        }
+      }
     }
     return null;
   }
@@ -61,9 +82,12 @@
   }
 
   function collectObservation() {
+    const model = firstNormalized(MODEL_SELECTORS, normalizeDisplayedModel);
+    const reasoning = firstNormalized(REASONING_SELECTORS, normalizeDisplayedReasoning)
+      || firstNormalized(MODEL_SELECTORS, normalizeDisplayedReasoning);
     return {
-      model: normalizeDisplayedModel(firstText(MODEL_SELECTORS)),
-      reasoning: normalizeDisplayedReasoning(firstText(REASONING_SELECTORS)),
+      model,
+      reasoning,
       evidenceSource: 'page_dom',
       capturedAt: new Date().toISOString(),
     };
@@ -83,7 +107,8 @@
   function reasonText(guard) {
     const messages = {
       waiting_for_response_metadata: '正在等待响应元数据 / Waiting for response metadata',
-      page_selection_not_allowed_or_missing: '页面模型或推理强度不符合策略 / Page selection is missing or not allowed',
+      page_selection_not_allowed: '页面模型或推理强度不符合策略 / Page selection is not allowed',
+      page_selection_missing: '页面没有暴露完整选择；请手动授权一次探测 / Page selection is incomplete; arm one probe manually',
       first_probe_not_armed: '首次探测请求尚未授权 / First probe request is not armed',
       network_monitor_disabled: '网络验证已关闭 / Network verification is disabled',
       network_monitor_not_attached: '网络验证器未连接 / Network verifier is not attached',
@@ -125,6 +150,7 @@
       verified: ['已验证', 'good'],
       mismatch: ['不匹配', 'bad'],
       preflight_mismatch: ['选择不符', 'bad'],
+      preflight_unknown: ['选择未知', 'wait'],
       waiting: ['验证中', 'wait'],
       probe_ready: ['可探测', 'wait'],
       unverified: ['未验证', 'bad'],
