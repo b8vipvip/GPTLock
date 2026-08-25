@@ -10,7 +10,7 @@
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\GPTLock\tools\Update-GPTLock.ps1"
 ```
 
-脚本读取 GitHub 最新 Release，下载 `GPTLockSetup-x64.exe` 和 `SHA256SUMS.txt`，校验 SHA-256 后运行安装器。静默更新可添加 `-Silent`。更新完成后完全退出并重启浏览器；如扩展管理页未自动重新加载文件，点击扩展卡片上的“重新加载”。
+脚本读取 GitHub 最新 Release，下载 `GPTLockSetup-x64.exe` 和 `SHA256SUMS.txt`，校验 SHA-256 后运行安装器。静默更新可添加 `-Silent`。脚本会沿用当前安装根目录，所以 `D:\AI\GPTLock` 等自定义位置不会在更新时退回 `%LOCALAPPDATA%`。更新完成后完全退出并重启浏览器；如扩展管理页未自动重新加载文件，点击扩展卡片上的“重新加载”。
 
 也可以手动下载新版 Setup 覆盖安装。策略保存在浏览器同步存储和用户 `.gptlock` 目录，覆盖安装与正常卸载不会自动删除审计数据。
 
@@ -46,7 +46,9 @@ cargo build --locked --release --manifest-path native-core/Cargo.toml
 Windows 重新运行：
 
 ```powershell
-.\packaging\windows\Install-GPTLock.ps1
+cargo test --locked --manifest-path native-core/Cargo.toml --all-targets
+cargo build --locked --release --manifest-path native-core/Cargo.toml
+powershell -NoProfile -ExecutionPolicy Bypass -File .\packaging\windows\Install-GPTLock.ps1 -InstallRoot 'D:\AI\GPTLock'
 ```
 
 固定 manifest public key 保证官方源码/安装包的 unpacked 扩展 ID 不变。如果自行修改或删除 manifest 的 `key`，必须重新登记 Native Messaging 的 `allowed_origins`。
@@ -59,8 +61,8 @@ Windows 重新运行：
 4. 创建与代码版本一致的签名或普通 tag，例如：
 
    ```bash
-   git tag -a v0.3.1 -m "GPTLock v0.3.1"
-   git push origin v0.3.1
+   git tag -a v0.3.2 -m "GPTLock v0.3.2"
+   git push origin v0.3.2
    ```
 
 5. `.github/workflows/release.yml` 会在 Ubuntu/Windows 分别构建 `.deb`、Linux tarball、扩展 ZIP 和 Setup，生成 `SHA256SUMS.txt`，再创建 GitHub Release。
@@ -69,7 +71,7 @@ Release 工作流在 tag、Cargo 与扩展版本不一致时停止，不会发�
 
 ## English
 
-On Windows, run the Start-menu updater or `Update-GPTLock.ps1`. On Debian/Ubuntu, run `gptlock-update`. Both retrieve the latest GitHub Release, download the installer plus `SHA256SUMS.txt`, verify SHA-256, and only then install. Fully restart the browser and reload the unpacked extension if necessary.
+On Windows, run the Start-menu updater or `Update-GPTLock.ps1`. The updater preserves a custom installation root such as `D:\AI\GPTLock`. On Debian/Ubuntu, run `gptlock-update`. Both retrieve the latest GitHub Release, download the installer plus `SHA256SUMS.txt`, verify SHA-256, and only then install. Fully restart the browser and reload the unpacked extension if necessary.
 
 Source installs update by pulling, testing, rebuilding, and rerunning the platform installer. The committed public manifest key keeps the official unpacked extension ID stable.
 

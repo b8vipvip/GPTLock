@@ -12,6 +12,9 @@ test('recognizes the Chromium missing-host error shown to extension-only install
 test('distinguishes origin and startup failures from a missing install', () => {
   assert.equal(classifyNativeError('Access to the specified native messaging host is forbidden.'), 'origin_not_allowed');
   assert.equal(classifyNativeError('Failed to start native messaging host.'), 'host_start_failed');
+  const protocolCode = classifyNativeError('Error when communicating with the native messaging host.');
+  assert.equal(protocolCode, 'protocol_error');
+  assert.match(nativeHelp(protocolCode).detail, /协议握手失败/);
   assert.equal(classifyNativeError('Native host disconnected'), 'connection_failed');
   assert.equal(classifyNativeError(null), null);
 });

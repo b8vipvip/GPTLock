@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
     [ValidatePattern('^[a-p]{32}$')]
@@ -6,6 +6,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [string]$BinaryPath = '',
+
+    [Parameter(Mandatory = $false)]
+    [string]$InstallRoot = '',
 
     [Parameter(Mandatory = $false)]
     [ValidateSet('All', 'Chrome', 'Edge')]
@@ -23,23 +26,43 @@ if (-not (Test-Path -LiteralPath $BinaryPath -PathType Leaf)) {
     throw "找不到二进制文件 / Binary not found: $BinaryPath`n请先运行 / Build first: cargo build --release --manifest-path native-core/Cargo.toml"
 }
 
-$installDirectory = Join-Path $env:LOCALAPPDATA 'GPTLock\bin'
-$manifestDirectory = Join-Path $env:LOCALAPPDATA 'GPTLock\native-messaging'
-$extensionDirectory = Join-Path $env:LOCALAPPDATA 'GPTLock\extension'
-$toolsDirectory = Join-Path $env:LOCALAPPDATA 'GPTLock\tools'
+if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
+    $InstallRoot = Join-Path $env:LOCALAPPDATA 'GPTLock'
+}
+$InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
+
+$installDirectory = Join-Path $InstallRoot 'bin'
+$manifestDirectory = Join-Path $InstallRoot 'native-messaging'
+$extensionDirectory = Join-Path $InstallRoot 'extension'
+$toolsDirectory = Join-Path $InstallRoot 'tools'
 $extensionSource = Join-Path $repositoryRoot 'extension'
 $installedBinary = Join-Path $installDirectory 'gptlock-core.exe'
 New-Item -ItemType Directory -Force -Path $installDirectory, $manifestDirectory, $extensionDirectory, $toolsDirectory | Out-Null
-Copy-Item -LiteralPath $BinaryPath -Destination $installedBinary -Force
+
+function Copy-FileIfDifferent {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    $sourcePath = (Resolve-Path -LiteralPath $Source).Path
+    $destinationPath = [System.IO.Path]::GetFullPath($Destination)
+    if (-not $sourcePath.Equals($destinationPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+    }
+}
+
+Copy-FileIfDifferent -Source $BinaryPath -Destination $installedBinary
 $runtimeFiles = @(
     'background.js', 'content.js', 'guard.js', 'manifest.json', 'native-status.js', 'network-evidence.js', 'network-monitor.js',
     'options.css', 'options.html', 'options.js', 'policy.js', 'popup.css', 'popup.html', 'popup.js'
 )
 foreach ($file in $runtimeFiles) {
-    Copy-Item -LiteralPath (Join-Path $extensionSource $file) -Destination (Join-Path $extensionDirectory $file) -Force
+    Copy-FileIfDifferent -Source (Join-Path $extensionSource $file) -Destination (Join-Path $extensionDirectory $file)
 }
-Copy-Item -LiteralPath (Join-Path $scriptDirectory 'Repair-GPTLock.ps1') -Destination (Join-Path $toolsDirectory 'Repair-GPTLock.ps1') -Force
-Copy-Item -LiteralPath (Join-Path $scriptDirectory 'Update-GPTLock.ps1') -Destination (Join-Path $toolsDirectory 'Update-GPTLock.ps1') -Force
+$installedRepair = Join-Path $toolsDirectory 'Repair-GPTLock.ps1'
+Copy-FileIfDifferent -Source (Join-Path $scriptDirectory 'Repair-GPTLock.ps1') -Destination $installedRepair
+Copy-FileIfDifferent -Source (Join-Path $scriptDirectory 'Update-GPTLock.ps1') -Destination (Join-Path $toolsDirectory 'Update-GPTLock.ps1')
 
 function Install-NativeManifest {
     param(
@@ -69,9 +92,15 @@ if ($Browser -in @('All', 'Edge')) {
     Install-NativeManifest -Name 'edge' -RegistryPath 'HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.gptlock.core'
 }
 
+& $installedRepair -ExtensionId $ExtensionId -Browser $Browser
+if ($LASTEXITCODE -ne 0) {
+    throw "Native Messaging 安装后验证失败 / post-install verification failed with exit code $LASTEXITCODE"
+}
+
 Write-Host 'GPTLock Windows Native Messaging 安装完成 / installation completed.' -ForegroundColor Green
 Write-Host '请完全退出并重新启动 Chrome/Edge / Fully restart Chrome or Edge.'
 Write-Host "扩展目录 / Extension directory: $extensionDirectory"
-Write-Host "修复命令 / Repair command: powershell -NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $toolsDirectory 'Repair-GPTLock.ps1')`""
+Write-Host "安装根目录 / Install root: $InstallRoot"
+Write-Host "修复命令 / Repair command: powershell -NoProfile -ExecutionPolicy Bypass -File `"$installedRepair`""
 Write-Host '本机 API 可按需启动 / Start the optional local API with:'
 Write-Host "  `"$installedBinary`" serve"

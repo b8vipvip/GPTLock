@@ -106,6 +106,10 @@ jobs:
             'packaging/windows/Repair-GPTLock.ps1',
             'packaging/windows/Update-GPTLock.ps1'
           )) {
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $file))
+            if ($bytes.Length -lt 3 -or $bytes[0] -ne 0xEF -or $bytes[1] -ne 0xBB -or $bytes[2] -ne 0xBF) {
+              throw "PowerShell 5.1 requires a UTF-8 BOM for bilingual text: $file"
+            }
             $tokens = $null
             $parseErrors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
@@ -131,9 +135,9 @@ jobs:
       - name: Install and verify Setup registration
         shell: pwsh
         run: |
-          & 'dist\windows\GPTLockSetup-x64.exe' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+          $root = Join-Path $env:RUNNER_TEMP 'GPTLock-Setup-Custom-Root'
+          & 'dist\windows\GPTLockSetup-x64.exe' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/DIR=$root"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $root = Join-Path $env:LOCALAPPDATA 'GPTLock'
           $binary = Join-Path $root 'bin\gptlock-core.exe'
           $repair = Join-Path $root 'tools\Repair-GPTLock.ps1'
           foreach ($path in @($binary, $repair, (Join-Path $root 'extension\manifest.json'))) {
@@ -148,12 +152,21 @@ jobs:
             $manifestPath = (Get-Item -LiteralPath $registryPath).GetValue('')
             $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
             if ($manifest.path -ne $binary) { throw "Wrong native binary path: $($manifest.path)" }
-            if ($manifest.allowed_origins[0] -ne 'chrome-extension://bhchcpeodphgjfjoookncemnamdbfcof/') {
-              throw "Wrong allowed origin: $($manifest.allowed_origins[0])"
+            if (@($manifest.allowed_origins)[0] -ne 'chrome-extension://bhchcpeodphgjfjoookncemnamdbfcof/') {
+              throw "Wrong allowed origin: $(@($manifest.allowed_origins)[0])"
             }
           }
           & $binary doctor
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sourceInstallRoot = Join-Path $env:RUNNER_TEMP 'GPTLock-Source-Custom-Root'
+          & 'packaging\windows\Install-GPTLock.ps1' -BinaryPath $binary -InstallRoot $sourceInstallRoot
+          $sourceBinary = Join-Path $sourceInstallRoot 'bin\gptlock-core.exe'
+          $sourceExtension = Join-Path $sourceInstallRoot 'extension\manifest.json'
+          if (-not (Test-Path -LiteralPath $sourceBinary -PathType Leaf)) { throw "Missing source-installed binary: $sourceBinary" }
+          if (-not (Test-Path -LiteralPath $sourceExtension -PathType Leaf)) { throw "Missing source-installed extension: $sourceExtension" }
+          $chromeManifestPath = (Get-Item -LiteralPath 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.gptlock.core').GetValue('')
+          $chromeManifest = Get-Content -LiteralPath $chromeManifestPath -Raw | ConvertFrom-Json
+          if ($chromeManifest.path -ne $sourceBinary) { throw "Custom source root was not registered: $($chromeManifest.path)" }
       - uses: actions/upload-artifact@v4
         with:
           name: gptlock-windows-setup

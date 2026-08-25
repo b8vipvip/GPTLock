@@ -20,7 +20,7 @@
 
 ## Windows 10/11 x64
 
-> 只在 `chrome://extensions` 加载源码目录不会安装 Native Core。若弹窗显示 `Specified native messaging host not found`，必须先运行 Windows Setup；0.3.1 起弹窗会直接提供安装入口。
+> 只在 `chrome://extensions` 加载源码目录不会安装 Native Core。若弹窗显示 `Specified native messaging host not found`，必须先运行 Windows Setup；弹窗会直接提供安装入口。0.3.2 同时修复了“主机已找到但协议通信失败”的 Windows 问题。
 
 1. 下载 `GPTLockSetup-x64.exe` 和 `SHA256SUMS.txt`。可选地验证哈希：
 
@@ -30,10 +30,10 @@
 
    将结果与 `SHA256SUMS.txt` 对应行比较。
 
-2. 运行安装器。它以当前用户身份安装到：
+2. 运行安装器。默认以当前用户身份安装到 `%LOCALAPPDATA%\GPTLock`。安装向导允许修改目录；若希望插件放在 D 盘，请选择 `D:\AI\GPTLock`。目录结构为：
 
    ```text
-   %LOCALAPPDATA%\GPTLock\
+   <所选安装目录>\
    ├── bin\gptlock-core.exe
    ├── extension\
    ├── native-messaging\
@@ -42,10 +42,11 @@
 
    安装器同时为当前用户登记 Chrome 与 Edge Native Messaging 主机，不需要管理员权限。
 
-3. 打开 `chrome://extensions` 或 `edge://extensions`，开启“开发者模式”，点击“加载已解压的扩展程序”，选择：
+3. 打开 `chrome://extensions` 或 `edge://extensions`，开启“开发者模式”，点击“加载已解压的扩展程序”，选择安装目录下的 `extension`。默认路径与 D 盘示例如下：
 
    ```text
    %LOCALAPPDATA%\GPTLock\extension
+   D:\AI\GPTLock\extension
    ```
 
 4. 确认浏览器显示的扩展 ID 为：
@@ -62,7 +63,13 @@
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\GPTLock\tools\Repair-GPTLock.ps1"
 ```
 
-修复脚本会重新生成 Native Messaging 清单、登记 Chrome/Edge 当前用户注册表项，并验证核心、路径、扩展 ID 与清单内容。
+修复脚本会重新生成 Native Messaging 清单、登记 Chrome/Edge 当前用户注册表项，并验证核心、路径、扩展 ID、清单内容和一次真实的 Native Messaging 消息往返。自定义路径安装时，应运行该目录中的脚本，例如：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\AI\GPTLock\tools\Repair-GPTLock.ps1"
+```
+
+若要把已有默认安装迁移到 `D:\AI\GPTLock`，完全退出浏览器后直接运行 0.3.2 或更新版本的 Setup，在安装目录页选择新路径；然后从扩展管理页移除旧的 unpacked 实例，加载 `D:\AI\GPTLock\extension`，确认固定 ID 后重启浏览器。
 
 浏览器不会允许普通本地安装器静默安装未上架商店的扩展，因此仍需手动执行一次“加载已解压”。这是预期行为，不应通过篡改浏览器策略绕过。
 
@@ -109,13 +116,17 @@ Linux 用户级安装：
 ./packaging/linux/install.sh
 ```
 
-扩展会复制到 `~/.local/share/gptlock/extension`。Windows PowerShell 用户级安装：
+扩展会复制到 `~/.local/share/gptlock/extension`。Windows PowerShell 用户级安装。已配置 GitHub SSH 且希望运行文件位于 `D:\AI` 时，建议把源码与安装目录分开：
 
 ```powershell
-.\packaging\windows\Install-GPTLock.ps1
+Set-Location D:\AI
+git clone git@github.com:b8vipvip/GPTLock.git GPTLock-source
+Set-Location .\GPTLock-source
+cargo build --locked --release --manifest-path native-core/Cargo.toml
+powershell -NoProfile -ExecutionPolicy Bypass -File .\packaging\windows\Install-GPTLock.ps1 -InstallRoot 'D:\AI\GPTLock'
 ```
 
-扩展会复制到 `%LOCALAPPDATA%\GPTLock\extension`。两种脚本默认使用固定扩展 ID；只有维护自定义 manifest key 时才需要传入 `--extension-id` 或 `-ExtensionId`。
+未传 `-InstallRoot` 时，扩展会复制到 `%LOCALAPPDATA%\GPTLock\extension`。上述命令则复制到 `D:\AI\GPTLock\extension`，并立即做协议往返自检。两种脚本默认使用固定扩展 ID；只有维护自定义 manifest key 时才需要传入 `--extension-id` 或 `-ExtensionId`。
 
 ## 安装诊断
 
@@ -133,8 +144,8 @@ Windows：
 
 ## English
 
-Download the Windows x64 Setup or Debian/Ubuntu amd64 package from GitHub Releases and verify it against `SHA256SUMS.txt`. Windows installs under `%LOCALAPPDATA%\GPTLock`; Linux installs the core to `/usr/bin` and the extension to `/usr/share/gptlock/extension`.
+Download the Windows x64 Setup or Debian/Ubuntu amd64 package from GitHub Releases and verify it against `SHA256SUMS.txt`. Windows defaults to `%LOCALAPPDATA%\GPTLock`, but the Setup directory page may be changed to a custom root such as `D:\AI\GPTLock`; Linux installs the core to `/usr/bin` and the extension to `/usr/share/gptlock/extension`.
 
-In the browser, enable Developer mode and use **Load unpacked** on the installed extension directory. Verify the stable ID `bhchcpeodphgjfjoookncemnamdbfcof`, then fully restart the browser. Loading the extension directory alone does not install the Native Core. If Chromium reports `Specified native messaging host not found`, run Setup or the installed `Repair-GPTLock.ps1`. A normal local installer cannot silently install an unpacked, non-store Chromium extension, so this one manual browser step is intentional.
+In the browser, enable Developer mode and use **Load unpacked** on the selected install root's `extension` directory. Verify the stable ID `bhchcpeodphgjfjoookncemnamdbfcof`, then fully restart the browser. Loading the extension directory alone does not install the Native Core. If Chromium reports a missing host or a native-host communication failure, run Setup or the installed `Repair-GPTLock.ps1`; v0.3.2 verifies a real framed protocol round trip. A normal local installer cannot silently install an unpacked, non-store Chromium extension, so this one manual browser step is intentional.
 
 The Linux systemd user unit is optional because Native Messaging launches the core on demand. Enable it only when the loopback HTTP API should stay available. Source installation scripts are also provided for per-user development installs.
