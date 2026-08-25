@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  extension:
+    name: Extension checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate JSON
+        run: |
+          python -m json.tool extension/manifest.json >/dev/null
+          python -m json.tool native-core/config.schema.json >/dev/null
+          python -m json.tool packaging/native-messaging/com.gptlock.core.template.json >/dev/null
+      - name: Test extension policy
+        working-directory: extension
+        run: npm test
+      - name: Check Linux installer syntax
+        run: bash -n packaging/linux/install.sh
+
+  native-core:
+    name: Native Core (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            executable: gptlock-core
+          - os: windows-latest
+            executable: gptlock-core.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native-core
+      - name: Check formatting
+        run: cargo fmt --manifest-path native-core/Cargo.toml --all -- --check
+      - name: Lint
+        run: cargo clippy --locked --manifest-path native-core/Cargo.toml --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked --manifest-path native-core/Cargo.toml --all-targets
+      - name: Build release
+        run: cargo build --locked --release --manifest-path native-core/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gptlock-core-${{ matrix.os }}
+          path: native-core/target/release/${{ matrix.executable }}
+          if-no-files-found: error
+
+  windows-installer:
+    name: Windows installer syntax
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell installer
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'packaging/windows/Install-GPTLock.ps1'),
+            [ref]$tokens,
+            [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | Format-List | Out-String | Write-Error
+            exit 1
+          }

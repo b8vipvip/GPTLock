@@ -1,15 +1,27 @@
 {
   "manifest_version": 3,
   "name": "GPTLock",
-  "version": "0.1.0",
-  "description": "ChatGPT model preference guard and diagnostics extension.",
-  "permissions": ["storage", "tabs", "webRequest"],
+  "version": "0.2.0",
+  "description": "ChatGPT 模型策略锁定与证据化状态验证 / Model policy guard and evidence-based verification.",
+  "minimum_chrome_version": "110",
+  "permissions": ["alarms", "nativeMessaging", "storage"],
   "host_permissions": ["https://chatgpt.com/*"],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
   },
   "action": {
     "default_title": "GPTLock"
-  },
-  "options_page": "options.html"
+  }
 }
