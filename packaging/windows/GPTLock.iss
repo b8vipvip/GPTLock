@@ -31,7 +31,6 @@ VersionInfoProductName=GPTLock
 VersionInfoDescription=GPTLock Installer
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
