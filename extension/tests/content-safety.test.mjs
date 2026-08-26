@@ -15,3 +15,9 @@ test('unknown page model/reasoning values are never force-clicked', () => {
   assert.match(content, /desiredModel && observation\.model && observation\.model !== desiredModel/);
   assert.match(content, /preferred && !changed && afterModel\.reasoning && afterModel\.reasoning !== preferred/);
 });
+
+test('floating status is anchored bottom-right and broad role-button scan is observation-only', () => {
+  assert.match(content, /position:fixed;right:12px;bottom:12px/);
+  assert.match(content, /composerNearbyControls\(\)/);
+  assert.doesNotMatch(content, /chooseExact\(\['button/);
+});

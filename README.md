@@ -1,5 +1,7 @@
 # GPTLock
 
+> v0.3.8: parses nested WebSocket `encoded_item` SSE response metadata (`resolved_model_slug` / `thinking_effort`), improves composer-scoped UI observation, and moves the floating status badge to the bottom-right.
+
 > 默认文档语言：中文；English summary follows.
 
 GPTLock 是专用于 `chatgpt.com` 官方网页聊天的模型请求锁定与响应证据确认工具，支持 Windows/Linux 上的 Chrome、Chromium 和 Edge。它由 Manifest V3 扩展与 Rust 本地核心组成，不使用 OpenAI API，不代理 HTTPS，也不尝试绕过套餐、额度、区域或账号限制。

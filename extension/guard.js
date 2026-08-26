@@ -131,8 +131,8 @@ export function evaluateGuard({ state, policy, settings, inScope = true }) {
   if (!uiComplete) {
     return {
       ...base,
-      allowKind: 'warning',
-      status: 'preflight_unknown',
+      allowKind: 'locked',
+      status: 'lock_ready',
       reason: 'page_selection_missing',
     };
   }

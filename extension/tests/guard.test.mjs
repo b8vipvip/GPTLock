@@ -37,15 +37,16 @@ test('page selection mismatch is warning-only because the formal request is lock
   assert.equal(guard.reason, 'page_selection_not_allowed');
 });
 
-test('missing page fields are warning-only instead of a send gate', () => {
+test('missing page fields keep the network request lock ready', () => {
   const guard = evaluateGuard({
     state: state({ pageObservation: { model: null, reasoning: null } }),
     policy: DEFAULT_POLICY,
     settings: DEFAULT_SETTINGS,
   });
   assert.equal(guard.canSend, true);
-  assert.equal(guard.allowKind, 'warning');
-  assert.equal(guard.status, 'preflight_unknown');
+  assert.equal(guard.allowKind, 'locked');
+  assert.equal(guard.status, 'lock_ready');
+  assert.equal(guard.reason, 'page_selection_missing');
 });
 
 test('waiting, unverified and verification errors do not interrupt chat', () => {
