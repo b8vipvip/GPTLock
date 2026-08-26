@@ -1,12 +1,14 @@
 # GPTLock
 
+> v0.3.9: preserves verified backend model/reasoning evidence for the same turn even when later metadata-empty frames arrive, while scoping that proof so it cannot leak into a newer request.
+
 > v0.3.8: parses nested WebSocket `encoded_item` SSE response metadata (`resolved_model_slug` / `thinking_effort`), improves composer-scoped UI observation, and moves the floating status badge to the bottom-right.
 
 > 默认文档语言：中文；English summary follows.
 
 GPTLock 是专用于 `chatgpt.com` 官方网页聊天的模型请求锁定与响应证据确认工具，支持 Windows/Linux 上的 Chrome、Chromium 和 Edge。它由 Manifest V3 扩展与 Rust 本地核心组成，不使用 OpenAI API，不代理 HTTPS，也不尝试绕过套餐、额度、区域或账号限制。
 
-当前版本：`0.3.6`。本版修复自动验证在新聊天跳转到 `/c/<conversation-id>` 时丢失状态、把已经成功的请求锁定误报为 `requestLockConfirmed=false` 的问题；同时为自动验证加入最多 10 MiB 的原始 SSE 诊断捕获。请求锁定与响应确认仍然分层：模型请求锁定可以成功，而服务端若未暴露可验证模型/推理元数据，响应状态仍保持 `unverified`，不会伪造成功。
+当前版本：`0.3.9`。本版修复同一轮聊天已经取得真实后端模型/推理元数据后，又被后续不含模型字段的 WebSocket/SSE 帧覆盖成“确认不足”的问题；已确认结果只在同一轮请求内保持有效，新一轮请求不会继承上一轮证据。请求锁定与响应确认仍然分层：模型请求锁定可以成功，而服务端若未暴露可验证模型/推理元数据，响应状态仍保持 `unverified`，不会伪造成功。
 
 ## 核心能力
 
@@ -27,7 +29,7 @@ GPTLock 是专用于 `chatgpt.com` 官方网页聊天的模型请求锁定与响
 
 ## “锁定”与“验证”分别是什么
 
-GPTLock 0.3.6 把两件事明确分开：
+GPTLock 0.3.9 把两件事明确分开：
 
 1. **请求锁定**：在网页准备发送正式 ChatGPT conversation POST 时，扩展检查并按策略改写它能够安全识别的顶层模型/已有推理字段，然后立即放行请求。这是日常聊天的主功能。
 2. **响应确认**：请求返回后，扩展尝试从响应头或响应正文元数据中提取模型和推理强度，再交给 Native Core 形成 `verified / mismatch / unverified` 审计结果。这只是附加确认，不再作为日常聊天的前置门禁。
@@ -47,7 +49,7 @@ GPTLock 0.3.6 把两件事明确分开：
 
 如果输入框中已有草稿，自动验证会先保存草稿，并在测试消息发出后尽力恢复。
 
-0.3.6 还会在**自动验证期间**保存固定测试请求对应的原始 SSE 响应，按 UTF-8 字节合计最多 10 MiB，并随“导出诊断包”写入 `autoVerificationSse.entries[].rawSse`。这样当 ChatGPT 没有被现有解析器识别出模型/推理字段时，可以直接查看服务器实际返回了哪些字段，而不是继续猜字段名。普通聊天的响应正文仍不会被打包；原始 SSE 可能包含测试回答、消息/会话 ID 和服务器元数据，因此分享诊断包前应按包含聊天内容的文件处理。
+0.3.9 会在**自动验证期间**保存固定测试请求对应的原始 SSE 响应，按 UTF-8 字节合计最多 10 MiB，并随“导出诊断包”写入 `autoVerificationSse.entries[].rawSse`。这样当 ChatGPT 没有被现有解析器识别出模型/推理字段时，可以直接查看服务器实际返回了哪些字段，而不是继续猜字段名。普通聊天的响应正文仍不会被打包；原始 SSE 可能包含测试回答、消息/会话 ID 和服务器元数据，因此分享诊断包前应按包含聊天内容的文件处理。
 
 ## 必须理解的边界
 
@@ -94,16 +96,15 @@ CI 在 Ubuntu 和 Windows 编译、测试并上传扩展 ZIP、Linux `.deb`、Wi
 
 ## English
 
-GPTLock 0.3.6 is a request-locking and evidence-verification tool for official `chatgpt.com` web chats. It supports Chrome, Chromium, and Edge on Windows and Linux, uses no OpenAI API, performs no TLS interception, and cannot bypass server-side product limits.
+GPTLock 0.3.9 is a request-locking and evidence-verification tool for official `chatgpt.com` web chats. It supports Chrome, Chromium, and Edge on Windows and Linux, uses no OpenAI API, performs no TLS interception, and cannot bypass server-side product limits.
 
-The primary control is now the **formal chat request lock**. GPTLock intercepts only `/backend-api/conversation` and `/backend-api/f/conversation`, checks the top-level model before the POST is sent, rewrites a disallowed model to the configured lock target, and only adjusts an already-existing top-level reasoning field. `prepare` and `init` traffic is auxiliary and is never treated as a formal chat send.
+The primary control is the **formal chat request lock**. GPTLock intercepts only `/backend-api/conversation` and `/backend-api/f/conversation`, checks the top-level model before the POST is sent, rewrites a disallowed model to the configured lock target, and only adjusts an already-existing top-level reasoning field. `prepare` and `init` traffic is auxiliary and is never treated as a formal chat send.
 
-Response metadata is supplementary evidence. Missing fields, Native Core outages, DOM-detection gaps, and verifier errors warn but fail open. In strict mode, only a confirmed response-model mismatch blocks subsequent sends. `gpt-5.6-sol-wm` is recognized as the transport alias for `gpt-5.6-sol`; `gpt-5-6-thinking` remains a separate model identifier.
+Response metadata is supplementary evidence. Missing fields, Native Core outages, DOM-detection gaps, and verifier errors warn but fail open. In strict mode, only a confirmed response-model mismatch blocks subsequent sends. `gpt-5.6-sol-wm` is recognized as the transport alias for `gpt-5.6-sol`; `gpt-5-6-thinking` remains a separate model identifier. A verified backend result remains sticky only for the same request turn, so later metadata-empty frames cannot erase it and a newer request cannot inherit stale proof.
 
-**Auto verify** now performs the whole probe flow itself: it best-effort aligns the page, writes a visible fixed test message into the active ChatGPT composer, clicks Send, and captures request/response diagnostics without asking the user to manually send anything.
+**Auto verify** performs the whole probe flow itself: it best-effort aligns the page, writes a visible fixed test message into the active ChatGPT composer, clicks Send, and captures request/response diagnostics without asking the user to manually send anything.
 
 Request rewriting proves what the official web client sent, not what OpenAI ultimately routed internally. Only response metadata exposed to the browser can provide additional evidence about the served model. See [Installation](docs/INSTALL.md), [Usage](docs/USAGE.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md) for details.
-
 
 ### v0.3.7 stream handoff diagnostics
 Automatic verification now follows ChatGPT `stream_handoff` metadata into matched downstream SSE/WebSocket traffic, shares one 10 MiB diagnostic budget across the chain, and no longer probes generic page buttons when the model/reasoning UI value is unknown. The obsolete conversation-detail GET fallback is disabled.
