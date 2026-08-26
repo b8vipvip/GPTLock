@@ -2,24 +2,17 @@
   const MODEL_SELECTORS = [
     '[data-testid="model-switcher-dropdown-button"]',
     'button[data-testid*="model-switcher"]',
-    'button[aria-label*="model" i][aria-haspopup]',
-    'button[aria-label*="模型"][aria-haspopup]',
-    'button[aria-label*="gpt" i]',
-    '[role="banner"] button[aria-haspopup]',
-    'header button[aria-haspopup]',
-    '[data-testid*="composer"] button',
-    'form button',
+    'button[aria-label*="model" i][aria-haspopup="menu"]',
+    'button[aria-label*="模型"][aria-haspopup="menu"]',
   ];
   const REASONING_SELECTORS = [
     '[data-testid*="reasoning"] button',
     'button[data-testid*="reasoning"]',
     'button[data-testid*="thinking"]',
-    'button[aria-label*="reasoning" i]',
-    'button[aria-label*="thinking" i]',
-    'button[aria-label*="推理"]',
-    'button[aria-label*="思考"]',
-    '[data-testid*="composer"] button',
-    'form button',
+    'button[aria-label*="reasoning" i][aria-haspopup]',
+    'button[aria-label*="thinking" i][aria-haspopup]',
+    'button[aria-label*="推理"][aria-haspopup]',
+    'button[aria-label*="思考"][aria-haspopup]',
   ];
   const COMPOSER_SELECTORS = [
     '#prompt-textarea',
@@ -41,7 +34,6 @@
     'button[aria-label*="停止"]',
   ];
   const AUTO_PROBE_TEXT = 'GPTLock 自动验证测试：请只回复“验证完成”。';
-  const MAX_CONVERSATION_MAPPING_NODES = 5000;
 
   let reportTimer = null;
   let alignTimer = null;
@@ -326,6 +318,8 @@
   async function chooseExact(triggerSelectors, desired, normalize) {
     const trigger = triggerSelectors.map((selector) => document.querySelector(selector)).find((element) => element && visible(element));
     if (!trigger) return false;
+    const triggerValue = elementTexts(trigger).map(normalize).find(Boolean);
+    if (!triggerValue) return false;
     trigger.click();
     await new Promise((resolve) => window.setTimeout(resolve, 350));
     const candidate = menuCandidates().find((element) => {
@@ -356,16 +350,12 @@
     lastAlignAt = Date.now();
 
     let changed = false;
-    if (desiredModel && (force || (observation.model && observation.model !== desiredModel))) {
-      if (observation.model !== desiredModel) {
-        changed = await chooseExact(MODEL_SELECTORS, desiredModel, normalizeDisplayedModel);
-      }
+    if (desiredModel && observation.model && observation.model !== desiredModel) {
+      changed = await chooseExact(MODEL_SELECTORS, desiredModel, normalizeDisplayedModel);
     }
     const afterModel = changed ? collectObservation() : observation;
-    if (preferred && !changed && (force || (afterModel.reasoning && afterModel.reasoning !== preferred))) {
-      if (afterModel.reasoning !== preferred) {
-        changed = await chooseExact(REASONING_SELECTORS, preferred, normalizeDisplayedReasoning);
-      }
+    if (preferred && !changed && afterModel.reasoning && afterModel.reasoning !== preferred) {
+      changed = await chooseExact(REASONING_SELECTORS, preferred, normalizeDisplayedReasoning);
     }
     if (changed) window.setTimeout(() => void report(), 700);
     return changed;
@@ -473,122 +463,6 @@
     if (!idle) throw new Error('ChatGPT is still generating / ChatGPT 仍在生成回复');
   }
 
-  function currentConversationId() {
-    const match = location.pathname.match(/(?:^|\/)c\/([a-zA-Z0-9_-]+)/);
-    return match?.[1] ?? null;
-  }
-
-  function normalizeMetadataModel(value) {
-    if (typeof value !== 'string') return null;
-    const compact = value.trim().toLowerCase();
-    if (!/^[a-z0-9._:-]{1,128}$/.test(compact)) return null;
-    return compact === 'gpt-5.6-sol-wm' ? 'gpt-5.6-sol' : compact;
-  }
-
-  function metadataEvidence(message) {
-    if (!message || message.author?.role !== 'assistant') return null;
-    const metadata = message.metadata && typeof message.metadata === 'object' ? message.metadata : {};
-    const modelKeys = ['served_model', 'resolved_model', 'used_model', 'model_slug', 'model'];
-    const reasoningKeys = ['reasoning_effort', 'reasoning_level', 'thinking_level'];
-    let model = null;
-    let modelField = null;
-    let reasoning = null;
-    let reasoningField = null;
-    for (const key of modelKeys) {
-      model = normalizeMetadataModel(metadata[key]);
-      if (model) {
-        modelField = `message.metadata.${key}`;
-        break;
-      }
-    }
-    for (const key of reasoningKeys) {
-      reasoning = normalizeDisplayedReasoning(metadata[key]);
-      if (reasoning) {
-        reasoningField = `message.metadata.${key}`;
-        break;
-      }
-    }
-    const createdSeconds = Number(message.create_time);
-    const createdAtMs = Number.isFinite(createdSeconds) ? Math.round(createdSeconds * 1000) : null;
-    return {
-      model,
-      reasoning,
-      createdAtMs,
-      diagnostics: {
-        modelField,
-        reasoningField,
-      },
-    };
-  }
-
-  function extractConversationEvidence(payload, expectedAfterMs = null) {
-    if (!payload || typeof payload !== 'object') {
-      throw new Error('Conversation detail is not an object / 会话详情格式无效');
-    }
-    const mapping = payload.mapping && typeof payload.mapping === 'object' ? payload.mapping : null;
-    if (!mapping) throw new Error('Conversation mapping missing / 会话详情缺少 mapping');
-    const mappingEntries = Object.entries(mapping).slice(0, MAX_CONVERSATION_MAPPING_NODES);
-    let selected = null;
-    let selectedBy = null;
-    let nodeId = typeof payload.current_node === 'string' ? payload.current_node : null;
-    const visited = new Set();
-    for (let depth = 0; nodeId && depth < 128 && !visited.has(nodeId); depth += 1) {
-      visited.add(nodeId);
-      const node = mapping[nodeId];
-      const candidate = metadataEvidence(node?.message);
-      if (candidate) {
-        selected = candidate;
-        selectedBy = 'current_node_parent_chain';
-        break;
-      }
-      nodeId = typeof node?.parent === 'string' ? node.parent : null;
-    }
-    if (!selected) {
-      const candidates = mappingEntries
-        .map(([, node]) => metadataEvidence(node?.message))
-        .filter(Boolean)
-        .sort((left, right) => (right.createdAtMs ?? 0) - (left.createdAtMs ?? 0));
-      selected = candidates[0] ?? null;
-      selectedBy = selected ? 'latest_assistant_create_time' : null;
-    }
-    if (!selected) throw new Error('No assistant metadata found / 未找到助手消息元数据');
-    if (
-      Number.isFinite(expectedAfterMs)
-      && Number.isFinite(selected.createdAtMs)
-      && selected.createdAtMs < expectedAfterMs - 5000
-    ) {
-      throw new Error('Conversation detail has not updated to the probe yet / 会话详情尚未更新到本次测试消息');
-    }
-    return {
-      model: selected.model,
-      reasoning: selected.reasoning,
-      evidenceSource: 'conversation_response_metadata',
-      capturedAt: new Date().toISOString(),
-      diagnostics: {
-        selectedBy,
-        assistantCreatedAt: selected.createdAtMs ? new Date(selected.createdAtMs).toISOString() : null,
-        mappingNodeCount: mappingEntries.length,
-        ...selected.diagnostics,
-      },
-    };
-  }
-
-  async function fetchConversationEvidence(expectedAfterMs = null) {
-    const conversationId = currentConversationId();
-    if (!conversationId) throw new Error('Current conversation id missing / 当前会话 ID 缺失');
-    const response = await fetch(`/backend-api/conversation/${encodeURIComponent(conversationId)}`, {
-      method: 'GET',
-      credentials: 'include',
-      cache: 'no-store',
-      headers: { accept: 'application/json' },
-    });
-    if (!response.ok) {
-      throw new Error(`Conversation detail HTTP ${response.status}`);
-    }
-    const payload = await response.json();
-    return extractConversationEvidence(payload, expectedAfterMs);
-  }
-
   async function autoSendProbe(options = {}) {
     if (autoProbeRunning) throw new Error('Automatic verification is already running / 自动验证正在进行');
     autoProbeRunning = true;
@@ -662,16 +536,6 @@
     if (message?.type === 'GPTLOCK_AUTO_SEND_PROBE') {
       void autoSendProbe(message).then(
         (result) => sendResponse({ ok: true, ...result }),
-        (error) => sendResponse({
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      );
-      return true;
-    }
-    if (message?.type === 'GPTLOCK_FETCH_CONVERSATION_EVIDENCE') {
-      void fetchConversationEvidence(Number(message.expectedAfterMs)).then(
-        (evidence) => sendResponse({ ok: true, evidence }),
         (error) => sendResponse({
           ok: false,
           error: error instanceof Error ? error.message : String(error),

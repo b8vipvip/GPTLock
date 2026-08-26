@@ -101,3 +101,7 @@ Response metadata is supplementary evidence. Missing fields, Native Core outages
 **Auto verify** now performs the whole probe flow itself: it best-effort aligns the page, writes a visible fixed test message into the active ChatGPT composer, clicks Send, and captures request/response diagnostics without asking the user to manually send anything.
 
 Request rewriting proves what the official web client sent, not what OpenAI ultimately routed internally. Only response metadata exposed to the browser can provide additional evidence about the served model. See [Installation](docs/INSTALL.md), [Usage](docs/USAGE.md), [Architecture](docs/ARCHITECTURE.md), and [Security](docs/SECURITY.md) for details.
+
+
+### v0.3.7 stream handoff diagnostics
+Automatic verification now follows ChatGPT `stream_handoff` metadata into matched downstream SSE/WebSocket traffic, shares one 10 MiB diagnostic budget across the chain, and no longer probes generic page buttons when the model/reasoning UI value is unknown. The obsolete conversation-detail GET fallback is disabled.

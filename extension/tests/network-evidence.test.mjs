@@ -5,9 +5,12 @@ import {
   extractHeaderEvidence,
   extractRequestEvidence,
   extractResponseEvidence,
+  extractStreamHandoff,
   isChatGptConversationRequest,
+  publicStreamHandoff,
   parseSseObjects,
   rewriteConversationPostData,
+  streamPayloadMatches,
 } from '../network-evidence.js';
 
 test('extracts strong metadata from a JSON response', () => {
@@ -192,4 +195,35 @@ test('fails open for invalid JSON or a missing top-level model field', () => {
   });
   assert.equal(missing.changed, false);
   assert.equal(missing.reason, 'top_level_model_missing');
+});
+
+
+test('extracts ChatGPT stream handoff and matches downstream topic or resume token', () => {
+  const token = 'resume-token-1234567890';
+  const body = [
+    'event: delta_encoding',
+    'data: "v1"',
+    '',
+    `data: {"type":"resume_conversation_token","kind":"topic","token":"${token}","conversation_id":"conv-12345678"}`,
+    '',
+    'data: {"type":"stream_handoff","conversation_id":"conv-12345678","turn_exchange_id":"turn-12345678","options":[{"type":"resume_sse_endpoint","topic_id":"conversation-turn-topic-12345678"},{"type":"subscribe_ws_topic","topic_id":"conversation-turn-topic-12345678"}]}',
+    '',
+    'data: [DONE]',
+    '',
+  ].join('\n');
+  const handoff = extractStreamHandoff(body);
+  assert.equal(handoff.conversationId, 'conv-12345678');
+  assert.equal(handoff.turnExchangeId, 'turn-12345678');
+  assert.deepEqual(handoff.topicIds, ['conversation-turn-topic-12345678']);
+  assert.equal(handoff.resumeToken, token);
+  assert.equal(streamPayloadMatches(`subscribe:${handoff.topicIds[0]}`, handoff), true);
+  assert.equal(streamPayloadMatches(`https://chatgpt.com/stream?token=${token}`, handoff), true);
+  assert.equal(streamPayloadMatches('unrelated-topic', handoff), false);
+  assert.deepEqual(publicStreamHandoff(handoff), {
+    conversationId: 'conv-12345678',
+    turnExchangeId: 'turn-12345678',
+    topicIds: ['conversation-turn-topic-12345678'],
+    transports: ['resume_sse_endpoint', 'subscribe_ws_topic'],
+    resumeTokenPresent: true,
+  });
 });

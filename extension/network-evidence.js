@@ -169,6 +169,66 @@ export function parseSseObjects(body) {
   return objects;
 }
 
+
+export function extractStreamHandoff(body = '') {
+  const objects = parseSseObjects(body);
+  let resumeToken = null;
+  let conversationId = null;
+  let handoff = null;
+  for (const value of objects) {
+    if (value?.type === 'resume_conversation_token') {
+      if (typeof value.token === 'string' && value.token) resumeToken = value.token;
+      if (typeof value.conversation_id === 'string' && value.conversation_id) {
+        conversationId = value.conversation_id;
+      }
+    }
+    if (value?.type === 'stream_handoff') handoff = value;
+  }
+  if (!handoff) return null;
+  const options = Array.isArray(handoff.options) ? handoff.options : [];
+  const topicIds = [...new Set(options
+    .map((option) => (typeof option?.topic_id === 'string' ? option.topic_id : null))
+    .filter(Boolean))];
+  const transports = [...new Set(options
+    .map((option) => (typeof option?.type === 'string' ? option.type : null))
+    .filter(Boolean))];
+  return {
+    conversationId: typeof handoff.conversation_id === 'string'
+      ? handoff.conversation_id
+      : conversationId,
+    turnExchangeId: typeof handoff.turn_exchange_id === 'string'
+      ? handoff.turn_exchange_id
+      : null,
+    topicIds,
+    transports,
+    resumeToken,
+    resumeTokenPresent: Boolean(resumeToken),
+  };
+}
+
+export function publicStreamHandoff(handoff) {
+  if (!handoff) return null;
+  return {
+    conversationId: handoff.conversationId ?? null,
+    turnExchangeId: handoff.turnExchangeId ?? null,
+    topicIds: Array.isArray(handoff.topicIds) ? handoff.topicIds : [],
+    transports: Array.isArray(handoff.transports) ? handoff.transports : [],
+    resumeTokenPresent: Boolean(handoff.resumeTokenPresent || handoff.resumeToken),
+  };
+}
+
+export function streamPayloadMatches(payload, handoff) {
+  const text = typeof payload === 'string' ? payload : String(payload ?? '');
+  if (!text || !handoff) return false;
+  const markers = [
+    handoff.conversationId,
+    handoff.turnExchangeId,
+    handoff.resumeToken,
+    ...(Array.isArray(handoff.topicIds) ? handoff.topicIds : []),
+  ].filter((value) => typeof value === 'string' && value.length >= 8);
+  return markers.some((marker) => text.includes(marker));
+}
+
 function inspectBody(body, mimeType = '') {
   const bodyLength = typeof body === 'string' ? body.length : 0;
   if (typeof body !== 'string' || !body) {
