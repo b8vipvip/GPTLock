@@ -113,10 +113,11 @@ function collectCandidates(value, candidates, path = [], depth = 0) {
 function selectCandidate(candidates) {
   if (!candidates.length) return { value: null, conflict: false, path: null };
   const bestScore = Math.max(...candidates.map((candidate) => candidate.score));
+  const strong = candidates.filter((candidate) => candidate.score >= bestScore - 10);
+  const strongValues = [...new Set(strong.map((candidate) => candidate.value))];
+  if (strongValues.length !== 1) return { value: null, conflict: true, path: null };
   const best = candidates.filter((candidate) => candidate.score === bestScore);
-  const values = [...new Set(best.map((candidate) => candidate.value))];
-  if (values.length !== 1) return { value: null, conflict: true, path: null };
-  return { value: values[0], conflict: false, path: best[best.length - 1].path };
+  return { value: strongValues[0], conflict: false, path: best[best.length - 1].path };
 }
 
 function inspectObjects(values) {
@@ -140,6 +141,8 @@ function inspectObjects(values) {
       reasoningCandidateCount: candidates.reasoning.length,
       modelCandidatePaths: [...new Set(candidates.model.map((candidate) => candidate.path))].slice(-12),
       reasoningCandidatePaths: [...new Set(candidates.reasoning.map((candidate) => candidate.path))].slice(-12),
+      modelCandidateValues: [...new Set(candidates.model.map((candidate) => candidate.value))].slice(-12),
+      reasoningCandidateValues: [...new Set(candidates.reasoning.map((candidate) => candidate.value))].slice(-12),
     },
   };
 }
