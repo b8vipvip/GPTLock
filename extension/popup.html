@@ -11,7 +11,7 @@
     <header>
       <div>
         <p class="eyebrow">GPTLOCK <span id="version"></span></p>
-        <h1>验证状态 <small>Verification</small></h1>
+        <h1>请求锁定 <small>Request lock</small></h1>
       </div>
       <span id="verdict" class="verdict wait">检查中</span>
     </header>
@@ -22,7 +22,7 @@
     </section>
 
     <section class="enable-row">
-      <span><strong>启用 GPTLock</strong><small>Enable protection</small></span>
+      <span><strong>启用 GPTLock</strong><small>Enable request locking</small></span>
       <label class="switch" title="启用或关闭 GPTLock / Enable or disable GPTLock">
         <input id="enabled" type="checkbox">
         <span aria-hidden="true"></span>
@@ -37,16 +37,15 @@
 
     <dl>
       <div><dt>本地核心 <small>Native Core</small></dt><dd id="native">—</dd></div>
-      <div><dt>网络验证 <small>Network verifier</small></dt><dd id="monitor">—</dd></div>
+      <div><dt>请求锁定器 <small>Request interceptor</small></dt><dd id="monitor">—</dd></div>
       <div><dt>页面选择 <small>Page selection</small></dt><dd id="pageState">—</dd></div>
-      <div><dt>响应证据 <small>Response evidence</small></dt><dd id="responseState">—</dd></div>
+      <div><dt>响应确认 <small>Response evidence</small></dt><dd id="responseState">—</dd></div>
     </dl>
 
-    <p class="boundary">页面显示只用于发送前检查；只有响应元数据能显示“已验证”。<br><span>UI text is preflight-only; only response metadata can be Verified.</span></p>
+    <p class="boundary">GPTLock 会在正式聊天 POST 发出前尝试锁定顶层模型/已有推理字段；响应元数据只用于附加确认。缺字段或验证异常不会中断聊天，只有已确认的模型不匹配才会在强制模式下阻断后续发送。<br><span>Formal chat POSTs are locked before send; response metadata is supplementary confirmation.</span></p>
 
     <div class="actions">
-      <button id="autoVerify" type="button" class="primary auto">自动验证<br><small>Prepare automatic verification</small></button>
-      <button id="armProbe" type="button">允许一次探测<br><small>Arm one probe</small></button>
+      <button id="autoVerify" type="button" class="primary auto">自动验证<br><small>自动发送可见测试消息</small></button>
       <button id="reconnect" type="button">重新连接<br><small>Reconnect</small></button>
       <button id="logs" type="button">运行日志<br><small>Runtime logs</small></button>
       <button id="options" type="button">设置<br><small>Settings</small></button>
