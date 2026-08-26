@@ -19,7 +19,18 @@ jobs:
         with:
           node-version: 22
       - name: Apply GPTLock 0.3.7 patch
-        run: python .github/scripts/apply_gptlock_037.py
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/apply_gptlock_037.py')
+          source = path.read_text(encoding='utf-8')
+          old = '''replace_exact(\n    'extension/background.js',\n    "    lastEvidenceDiagnostics: state.lastEvidenceDiagnostics,\\n    evidenceIssue: state.evidenceIssue,",\n    "    lastEvidenceDiagnostics: state.lastEvidenceDiagnostics,\\n    streamTracking: state.streamTracking,\\n    evidenceIssue: state.evidenceIssue,",\n)'''
+          new = '''replace_exact(\n    'extension/background.js',\n    "    lastEvidenceDiagnostics: state.lastEvidenceDiagnostics,\\n    evidenceIssue: state.evidenceIssue,",\n    "    lastEvidenceDiagnostics: state.lastEvidenceDiagnostics,\\n    streamTracking: state.streamTracking,\\n    evidenceIssue: state.evidenceIssue,",\n    count=2,\n)'''
+          if source.count(old) != 1:
+              raise SystemExit('could not patch streamTracking replacement count')
+          source = source.replace(old, new)
+          exec(compile(source, str(path), 'exec'))
+          PY
       - name: Test extension
         working-directory: extension
         run: npm test
