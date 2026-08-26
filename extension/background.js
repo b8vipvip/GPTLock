@@ -1205,6 +1205,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       state.lastRewrite = null;
       state.lastVerification = null;
       state.lastEvidenceDiagnostics = null;
+      state.streamTracking = null;
       state.evidenceIssue = null;
       state.lastError = null;
       state.autoVerification = null;
@@ -1270,6 +1271,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           state.phase = 'initial';
           state.lastVerification = null;
           state.lastEvidenceDiagnostics = null;
+          state.streamTracking = null;
           state.evidenceIssue = null;
           logRuntime('info', 'page', 'selection_changed', {
             tabId: sender.tab.id,
@@ -1323,6 +1325,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         state.phase = 'initial';
         state.probeArmed = false;
         state.lastVerification = null;
+        state.streamTracking = null;
         state.lastError = null;
         state.evidenceIssue = null;
         state.autoVerification = null;
@@ -1357,9 +1360,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           runtimeLogCount: bundle.runtimeLogs?.length ?? 0,
           nativeAuditCount: bundle.nativeDiagnostics?.auditRecords?.length ?? 0,
           nativeDiagnosticsError: bundle.nativeDiagnosticsError,
-          rawSseEntryCount: bundle.autoVerificationSse?.entries?.length ?? 0,
-          rawSseIncludedBytes: bundle.autoVerificationSse?.includedBytes ?? 0,
-          rawSseOverflowed: Boolean(bundle.autoVerificationSse?.overflowed),
+          rawStreamEntryCount: bundle.autoVerificationStream?.entries?.length ?? 0,
+          rawStreamIncludedBytes: bundle.autoVerificationStream?.includedBytes ?? 0,
+          rawStreamOverflowed: Boolean(bundle.autoVerificationStream?.overflowed),
         });
         return bundle;
       }

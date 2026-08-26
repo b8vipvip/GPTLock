@@ -218,7 +218,7 @@ export class ChatGptNetworkMonitor {
         stage: 'handoff_detected',
         streamHandoff: publicStreamHandoff(handoff),
       },
-      streamContext: this.streamContext(handoff, { transport: 'handoff', stage: 'handoff_detected' }),
+      streamContext: this.streamContext(handoff, { isDownstream: false, transport: 'handoff', stage: 'handoff_detected' }),
     });
     return handoff;
   }
