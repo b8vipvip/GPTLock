@@ -324,7 +324,11 @@ mod tests {
         let result = verify(
             &Policy::default(),
             "revision",
-            request(EvidenceSource::NetworkResponseMetadata, "gpt-5.6-sol", "low"),
+            request(
+                EvidenceSource::NetworkResponseMetadata,
+                "gpt-5.6-sol",
+                "low",
+            ),
         );
         assert_eq!(result.verdict, Verdict::Mismatch);
         assert_eq!(result.decision, PolicyDecision::Warn);
