@@ -101,6 +101,22 @@ pub struct VerificationResult {
     pub verified_at: DateTime<Utc>,
 }
 
+fn canonical_model_id(value: &str) -> Option<String> {
+    let normalized = normalize_model_id(value).ok()?;
+    Some(match normalized.as_str() {
+        "gpt-5.6-sol-wm" => "gpt-5.6-sol".to_owned(),
+        _ => normalized,
+    })
+}
+
+fn policy_allows_model(policy: &Policy, model: &str) -> bool {
+    policy
+        .locked_models
+        .iter()
+        .filter_map(|value| canonical_model_id(value))
+        .any(|allowed| allowed == model)
+}
+
 pub fn verify(
     policy: &Policy,
     policy_revision: &str,
@@ -108,10 +124,7 @@ pub fn verify(
 ) -> VerificationResult {
     let now = Utc::now();
     let request_id = request.request_id.as_deref().and_then(normalize_request_id);
-    let model = request
-        .model
-        .as_deref()
-        .and_then(|value| normalize_model_id(value).ok());
+    let model = request.model.as_deref().and_then(canonical_model_id);
     let reasoning = request
         .reasoning
         .as_deref()
@@ -121,7 +134,7 @@ pub fn verify(
 
     match model.as_ref() {
         None => reasons.push(ReasonCode::ModelMissing),
-        Some(model) if !policy.locked_models.contains(model) => {
+        Some(model) if !policy_allows_model(policy, model) => {
             mismatch = true;
             reasons.push(ReasonCode::ModelNotAllowed);
         }
@@ -155,10 +168,11 @@ pub fn verify(
         Verdict::Unverified
     };
 
-    let decision = match (verdict, policy.strict_mode) {
-        (Verdict::Verified, _) => PolicyDecision::Allow,
-        (_, true) => PolicyDecision::Block,
-        (_, false) => PolicyDecision::Warn,
+    let confirmed_model_mismatch = reasons.contains(&ReasonCode::ModelNotAllowed);
+    let decision = match verdict {
+        Verdict::Verified => PolicyDecision::Allow,
+        _ if policy.strict_mode && confirmed_model_mismatch => PolicyDecision::Block,
+        _ => PolicyDecision::Warn,
     };
 
     VerificationResult {
@@ -229,7 +243,8 @@ mod tests {
             request(EvidenceSource::PageDom, "gpt-5.6-sol", "high"),
         );
         assert_eq!(result.verdict, Verdict::Unverified);
-        assert_eq!(result.decision, PolicyDecision::Block);
+        assert_eq!(result.decision, PolicyDecision::Warn);
+        assert!(result.allowed);
         assert!(result
             .reasons
             .contains(&ReasonCode::EvidenceSourceInsufficient));
@@ -247,11 +262,12 @@ mod tests {
             ),
         );
         assert_eq!(result.verdict, Verdict::Unverified);
-        assert_eq!(result.decision, PolicyDecision::Block);
+        assert_eq!(result.decision, PolicyDecision::Warn);
+        assert!(result.allowed);
     }
 
     #[test]
-    fn strict_mode_blocks_mismatch() {
+    fn strict_mode_blocks_confirmed_model_mismatch() {
         let result = verify(
             &Policy::default(),
             "revision",
@@ -287,5 +303,47 @@ mod tests {
         request.request_id = Some("contains spaces and personal text".to_owned());
         let result = verify(&Policy::default(), "revision", request);
         assert_eq!(result.request_id, None);
+    }
+
+    #[test]
+    fn strict_mode_warns_when_response_metadata_is_incomplete() {
+        let mut incomplete = request(
+            EvidenceSource::NetworkResponseMetadata,
+            "gpt-5.6-sol",
+            "high",
+        );
+        incomplete.reasoning = None;
+        let result = verify(&Policy::default(), "revision", incomplete);
+        assert_eq!(result.verdict, Verdict::Unverified);
+        assert_eq!(result.decision, PolicyDecision::Warn);
+        assert!(result.allowed);
+    }
+
+    #[test]
+    fn strict_mode_warns_on_reasoning_only_mismatch() {
+        let result = verify(
+            &Policy::default(),
+            "revision",
+            request(EvidenceSource::NetworkResponseMetadata, "gpt-5.6-sol", "low"),
+        );
+        assert_eq!(result.verdict, Verdict::Mismatch);
+        assert_eq!(result.decision, PolicyDecision::Warn);
+        assert!(result.allowed);
+        assert_eq!(result.reason, Some(ReasonCode::ReasoningNotAllowed));
+    }
+
+    #[test]
+    fn sol_transport_alias_matches_canonical_policy() {
+        let result = verify(
+            &Policy::default(),
+            "revision",
+            request(
+                EvidenceSource::NetworkResponseMetadata,
+                "gpt-5.6-sol-wm",
+                "high",
+            ),
+        );
+        assert_eq!(result.model.as_deref(), Some("gpt-5.6-sol"));
+        assert_eq!(result.verdict, Verdict::Verified);
     }
 }
