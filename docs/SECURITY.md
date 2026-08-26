@@ -5,46 +5,127 @@
 ## 权限与本地攻击面
 
 - 扩展只声明 `https://chatgpt.com/*` 主机范围；
-- `debugger` 权限用于该站点标签页的 CDP `Network` 域。Chromium 不允许把此权限设为 optional，因此安装时会明确展示权限告警；
+- `debugger` 权限用于该站点标签页的 CDP `Fetch` 和 `Network` 域。Chromium 不允许把该权限设为普通站点 optional 权限，因此安装时会明确展示调试权限告警；
+- `Fetch` 只用于正式 ChatGPT conversation POST 的发送前请求锁定；
+- `Network` 只用于关联正式请求与可选响应元数据；
 - Native Messaging 只允许固定扩展 ID `bhchcpeodphgjfjoookncemnamdbfcof`；
 - HTTP API 只接受 loopback，默认 `127.0.0.1:17856`；
-- `/health` 之外要求 256 位随机令牌，请求体上限 64 KiB，不返回宽松 CORS；
-- Linux 状态目录使用 `0700`，配置、令牌、状态和日志使用 `0600`；
+- `/health` 之外要求随机高熵令牌，请求体受大小限制，不返回宽松 CORS；
+- Linux 状态目录和敏感文件使用收紧的本地权限；
 - Native Messaging stdout 只写长度前缀 JSON 帧，诊断写 stderr；
 - 模型、推理强度、请求 ID、条目数和长度均受校验。
 
-manifest 中提交的是稳定 ID 所需的 RSA **公钥**，不是商店签名私钥，也不提供代码签名信任。不要向仓库加入任何私钥、API token、Cookie 或 `.gptlock` 用户数据。
+manifest 中提交的是稳定扩展 ID 所需的 RSA **公钥**，不是商店签名私钥，也不提供代码签名信任。不要向仓库提交私钥、API token、Cookie、浏览器 Profile、`.gptlock` 用户数据或任何真实聊天内容。
 
-## 数据最小化
+## 请求锁定的最小修改范围
 
-CDP 需要浏览器把响应体交给扩展才能从 JSON/SSE 中寻找元数据，但解析器：
+0.3.4 会在正式 conversation POST 发出前短暂读取请求体，因为只有这样才能检查网页实际准备发送的顶层模型字段。修改范围刻意限制为：
 
-- 只接受明确白名单键与响应头；
-- 不把字符串再次当作 JSON 解析，避免聊天正文伪造元数据；
-- 跳过 `content`、`parts`、`text`、`prompt`、`input`、`output_text`、`arguments` 分支；
-- 不持久化请求体、响应体、headers、Cookie 或 Authorization；
-- 提取完成后立即释放正文引用。
+- 只处理 `https://chatgpt.com`；
+- 只处理 `POST`；
+- pathname 只允许：
 
-审计日志允许记录：时间、有限请求 ID、模型、推理强度、证据来源、可信度、判定、原因和策略 revision。禁止记录：提示词、回答正文、上传文件、Cookie、登录令牌、Authorization、本地 API token 或完整网络负载。
+  ```text
+  /backend-api/conversation
+  /backend-api/f/conversation
+  ```
 
-## 真实性边界
+- 请求体必须是 JSON object；
+- 只允许修改顶层 `model`；
+- 只允许修改已经存在、且值能安全规范化的顶层推理强度字段；
+- 不创建缺失的推理字段；
+- 不修改消息正文、附件、会话 ID、父消息 ID、客户端标识、账户信息或其他业务字段；
+- `prepare`、`init` 等辅助流量即使被宽 URL pattern 暂停，也会经过精确谓词后立即原样继续；
+- 任意解析/改写异常都尽力原样放行，而不是把用户聊天卡在暂停状态。
 
-`page_dom`、`user_selection` 和 `network_request_metadata` 永远不足以证明后端实际模型。`verified` 要求当前响应同时暴露匹配的模型与推理强度元数据。互相冲突或缺失的强证据不会被猜测补全。
+改写后的完整 `postData` 只用于当次 `Fetch.continueRequest`，不写入运行日志或诊断包。
 
-这仍不是 OpenAI 内部调度器的密码学证明：GPTLock 只能验证服务器实际交给官方网页的元数据，本地核心也无法独立证明调用它的扩展没有伪造 `evidenceSource`。首次探测请求在响应前天然未验证，文档和 UI 必须持续明确这一点。
+## 响应数据最小化
+
+CDP `Network` 需要浏览器把响应体交给扩展，才能从 JSON/SSE 中寻找响应元数据。解析器采取以下限制：
+
+- 只接受明确白名单模型/推理键与响应头；
+- 不把聊天字符串内容再次当作 JSON 解析；
+- 跳过 `content`、`parts`、`text`、`prompt`、`input`、`output_text`、`arguments` 等正文分支；
+- 不持久化完整请求体、响应体、Cookie、Authorization 或 token；
+- 提取完成后立即释放响应正文引用；
+- 最多保留字段路径、MIME、HTTP 状态、数据长度、解析格式、候选数量等技术诊断。
+
+扩展运行日志的脱敏器会明确屏蔽 `postData`、request/response body、prompt、chat content、answer content、Cookie、Authorization、API key、access/refresh token、password、secret 等字段，同时允许保留 `postDataLength`、端点、模型规范化值、字段路径和错误。
+
+Native Core 审计允许记录：时间、安全请求 ID、模型、推理强度、证据来源、可信度、判定、原因和策略 revision。禁止记录：提示词、回答正文、上传文件内容、Cookie、登录令牌、Authorization、本地 API token 或完整网络负载。
+
+## “请求锁定”不等于后端证明
+
+请求改写能证明的范围是：**在扩展成功附加且改写日志成立的情况下，GPTLock 检查了官方网页准备发送的正式请求，并把可控字段按策略继续发送。**
+
+它不能证明 OpenAI 内部一定使用同一个模型，因为服务端仍可能：
+
+- 因账号或套餐不可用而拒绝模型；
+- 因额度耗尽而降级/替换；
+- 根据产品策略重新路由；
+- 返回与请求不同的服务模型；
+- 不向网页暴露完整内部调度信息。
+
+因此，请求锁定与响应确认是两个不同概念，UI/文档不得把“请求 model 已改写”描述成“后端模型已被密码学强制”。
+
+## 响应证据真实性边界
+
+`page_dom`、`user_selection` 和 `network_request_metadata` 永远不足以单独证明后端实际模型。`verified` 仍要求响应证据本身暴露可验证且符合策略的模型和推理元数据。
+
+- 响应缺失模型或推理字段：`unverified`；
+- 强证据冲突：降级，不猜测补全；
+- 响应推理强度不允许：`mismatch`/告警，但 0.3.4 不因此阻断聊天；
+- 响应明确暴露不允许模型：`mismatch`，严格模式可阻断后续发送。
+
+这仍不是 OpenAI 内部调度器的密码学证明：GPTLock 只能验证服务器实际交给官方网页的元数据，本地核心也无法独立证明调用它的扩展没有伪造 `evidenceSource`。
+
+## Fail-open 的安全取舍
+
+旧版把“验证器是否健康”本身当成发送门禁，容易出现 Core 离线、字段缺失或协议变化时日常聊天完全无法发送。0.3.4 改为：
+
+- 请求锁定器健康时尽量执行锁定；
+- 请求锁定器/Native Core/响应验证失败时清晰告警并记录日志；
+- 不因为验证基础设施自身失败而阻断用户正常聊天；
+- 只有已获得强响应证据并确认**模型**违反策略时，严格模式阻断后续发送。
+
+这个选择优先避免扩展故障造成“ChatGPT 不可用”。代价是：如果浏览器调试连接被 DevTools 或其他调试器抢占，GPTLock 不能声称该次请求被锁定。界面会显示请求锁定器离线/告警，用户可关闭冲突调试器后点击“重新连接”。
+
+## 自动验证与用户可见性
+
+“自动验证”会自动在当前 ChatGPT 对话中发送固定测试消息，因此它是**用户可见的真实聊天消息**，而不是后台隐形请求。这样做的原因是验证需要一条真实正式 conversation POST，同时让用户能够直接看到程序做了什么。
+
+自动验证：
+
+- 不发送隐藏提示词；
+- 测试文本是固定、明确可见的；
+- 尽力保存并恢复已有输入框草稿；
+- 不读取旧聊天内容来生成测试文本；
+- 不把测试消息或回答正文写入诊断日志。
 
 ## 更新安全
 
-更新脚本只从 GitHub HTTPS Release 下载，先验证 `SHA256SUMS.txt` 再执行安装器；它不会下载后直接执行任意脚本。但安装包与校验和来自同一发布渠道，因此 SHA-256 主要检测传输/文件损坏，不能替代独立代码签名。维护者应保护 GitHub 账号、分支和发布权限，未来配置证书后再声明 Authenticode 或 tag 签名保证。
+更新脚本只从 GitHub HTTPS Release 下载，先验证 `SHA256SUMS.txt` 再执行安装器；不会从未知第三方地址下载并直接执行任意脚本。但安装包与校验和仍来自同一发布渠道，因此 SHA-256 主要检测传输/文件损坏，不能替代独立代码签名。
+
+维护者应保护 GitHub 账号、分支、Actions 与 Release 权限。未来只有在实际配置 Authenticode、签名 tag 或独立发布签名后，文档才应声明相应代码签名保证。
 
 ## 威胁模型外
 
-GPTLock 不防御已取得当前操作系统账户或浏览器扩展权限的恶意软件；不能审计 OpenAI 未暴露的内部路由；不能绕过额度、区域、套餐或账号策略；也不能保证 ChatGPT 私有接口和模型标识保持稳定。
+GPTLock 不防御：
+
+- 已取得当前操作系统账户权限的恶意软件；
+- 具备更高浏览器扩展权限的恶意扩展；
+- 能抢占 Chrome debugger 会话的本地调试工具；
+- OpenAI 未暴露给网页的内部路由变化；
+- 套餐、额度、区域、账号、风控或模型可用性限制；
+- ChatGPT 私有接口未来发生不兼容变化。
 
 ## English
 
-The extension is scoped to `chatgpt.com`, but Chromium requires its `debugger` permission to be declared at install time. It uses only the CDP Network domain for scoped tabs. Native Messaging is allow-listed to the stable extension ID, and the optional API is loopback-only, token-protected except for health, size-limited, and non-CORS.
+GPTLock 0.3.4 uses Chromium's `debugger` permission for both CDP **Fetch** and **Network** on `chatgpt.com`. Fetch is the pre-send request-lock layer and is constrained to the two exact formal conversation POST paths. It may modify only the top-level model and already-existing top-level reasoning fields; it does not modify chat content, attachments, conversation identifiers, or unrelated payload fields. Parsing/rewrite errors fail open and attempt to continue the original request.
 
-Response bodies are transiently available to the extractor, which reads only whitelisted metadata, skips chat-content branches, never reparses content strings, and persists no bodies, headers, cookies, credentials, or prompts. Audit logs contain minimal model/reasoning verdict metadata only.
+Full request postData and response bodies are transient. They are not persisted in runtime logs, diagnostics, or Native Core audit files. Redaction removes request/response payloads, prompts, answers, cookies, authorization data, tokens, passwords, and secrets while preserving technical metadata such as endpoint, lengths, normalized model IDs, candidate field paths, HTTP status, and errors.
 
-Response metadata is evidence, not cryptographic attestation of OpenAI's private scheduler. Request/UI state never proves the backend, the first probe is necessarily unverified before its response, and missing/conflicting evidence remains unverified. Release checksums detect integrity problems but are not a substitute for independent code signing.
+A rewritten request proves what GPTLock attempted to send from the official web client; it does **not** cryptographically force or attest OpenAI's internal routing. DOM labels and request metadata never become backend proof. Only response metadata exposed to the browser can provide supplementary served-model evidence.
+
+The guard deliberately fails open for debugger detach, Core outage, missing/unreadable response metadata, DOM gaps, and reasoning mismatches. In strict mode only a confirmed response-model mismatch blocks subsequent sends. Auto verify sends one fixed, visible test message in the active ChatGPT conversation and never hides that action from the user.
