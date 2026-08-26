@@ -2,15 +2,104 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
+  actions: read
   contents: write
 
+concurrency:
+  group: gptlock-release-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
+  metadata:
+    name: Resolve release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      tag_exists: ${{ steps.release.outputs.tag_exists }}
+      should_publish: ${{ steps.release.outputs.should_publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: release
+        name: Validate version and release state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' native-core/Cargo.toml | head -n 1)"
+          manifest_version="$(python -c 'import json; print(json.load(open("extension/manifest.json"))["version"])')"
+          package_version="$(python -c 'import json; print(json.load(open("extension/package.json"))["version"])')"
+          test -n "$version"
+          test "$version" = "$manifest_version"
+          test "$version" = "$package_version"
+          tag="v$version"
+
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match source version $version." >&2
+            exit 1
+          fi
+
+          tag_exists=false
+          if tag_commit="$(git rev-parse -q --verify "refs/tags/$tag^{commit}")"; then
+            tag_exists=true
+            if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+              echo "Existing tag $tag points to $tag_commit instead of $GITHUB_SHA." >&2
+              exit 1
+            fi
+          fi
+
+          should_publish=true
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            should_publish=false
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=$tag_exists" >> "$GITHUB_OUTPUT"
+          echo "should_publish=$should_publish" >> "$GITHUB_OUTPUT"
+
+  wait-for-ci:
+    name: Require successful main CI
+    needs: metadata
+    if: needs.metadata.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for CI on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 60); do
+            run_json="$(gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "/repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=1")"
+            status="$(jq -r '.workflow_runs[0].status // "missing"' <<<"$run_json")"
+            conclusion="$(jq -r '.workflow_runs[0].conclusion // ""' <<<"$run_json")"
+            url="$(jq -r '.workflow_runs[0].html_url // ""' <<<"$run_json")"
+            echo "CI attempt $attempt: status=$status conclusion=${conclusion:-pending} $url"
+            if [[ "$status" == "completed" && "$conclusion" == "success" ]]; then
+              exit 0
+            fi
+            if [[ "$status" == "completed" && "$conclusion" != "success" ]]; then
+              echo "CI did not succeed: $conclusion" >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for CI on $GITHUB_SHA." >&2
+          exit 1
+
   linux:
     name: Linux release assets
+    needs: [metadata, wait-for-ci]
+    if: needs.metadata.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,21 +108,23 @@ jobs:
         with:
           workspaces: native-core
       - name: Validate tag version
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
           cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' native-core/Cargo.toml | head -n 1)"
           manifest_version="$(python -c 'import json; print(json.load(open("extension/manifest.json"))["version"])')"
-          test "$version" = "$cargo_version"
-          test "$version" = "$manifest_version"
+          test "$RELEASE_VERSION" = "$cargo_version"
+          test "$RELEASE_VERSION" = "$manifest_version"
       - name: Build assets
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
           cargo build --locked --release --manifest-path native-core/Cargo.toml
           chmod +x packaging/linux/build-deb.sh
-          GPTLOCK_VERSION="$version" packaging/linux/build-deb.sh dist
-          tar -C native-core/target/release -czf "dist/gptlock-core-${version}-linux-x64.tar.gz" gptlock-core
+          GPTLOCK_VERSION="$RELEASE_VERSION" packaging/linux/build-deb.sh dist
+          tar -C native-core/target/release -czf "dist/gptlock-core-${RELEASE_VERSION}-linux-x64.tar.gz" gptlock-core
           cd extension
-          zip -9 "../dist/gptlock-extension-${version}.zip" \
+          zip -9 "../dist/gptlock-extension-${RELEASE_VERSION}.zip" \
             background.js content.js diagnostics.css diagnostics.html diagnostics.js guard.js manifest.json \
             native-status.js network-evidence.js network-monitor.js options.css options.html options.js \
             policy.js popup.css popup.html popup.js runtime-log.js
@@ -45,6 +136,8 @@ jobs:
 
   windows:
     name: Windows release assets
+    needs: [metadata, wait-for-ci]
+    if: needs.metadata.outputs.should_publish == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,8 +147,10 @@ jobs:
           workspaces: native-core
       - name: Build Setup
         shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $version = $env:RELEASE_VERSION
           $manifest = Get-Content 'extension\manifest.json' -Raw | ConvertFrom-Json
           if ($manifest.version -ne $version) { throw 'Tag and extension version differ.' }
           cargo build --locked --release --manifest-path native-core/Cargo.toml
@@ -74,7 +169,15 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [linux, windows]
+    needs: [metadata, wait-for-ci, linux, windows]
+    if: >-
+      ${{
+        always()
+        && needs.metadata.outputs.should_publish == 'true'
+        && needs.wait-for-ci.result == 'success'
+        && needs.linux.result == 'success'
+        && needs.windows.result == 'success'
+      }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -88,9 +191,15 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+          TAG_EXISTS: ${{ needs.metadata.outputs.tag_exists }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          tag_arguments=(--target "$GITHUB_SHA")
+          if [[ "$TAG_EXISTS" == "true" ]]; then
+            tag_arguments=(--verify-tag)
+          fi
+          gh release create "$RELEASE_TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
+            "${tag_arguments[@]}" \
             --generate-notes \
-            --title "GPTLock $GITHUB_REF_NAME"
+            --title "GPTLock $RELEASE_TAG"

@@ -57,15 +57,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\packaging\windows\Install-
 
 1. 更新 `native-core/Cargo.toml`、`native-core/Cargo.lock`、`extension/manifest.json`、`extension/package.json` 和 Inno 默认版本；
 2. 运行全量测试并让 Pull Request CI 全部通过；
-3. 合并到 `main`；
-4. 创建与代码版本一致的签名或普通 tag，例如：
+3. 合并到 `main`；Release 工作流会等待同一提交的主分支 CI 成功，若 `v<版本>` 尚未发布，则自动创建 tag 和正式 Release；
+4. 如需手工发布，也可创建与代码版本一致的签名或普通 tag，例如：
 
    ```bash
    git tag -a v0.3.3 -m "GPTLock v0.3.3"
    git push origin v0.3.3
    ```
 
-5. `.github/workflows/release.yml` 会在 Ubuntu/Windows 分别构建 `.deb`、Linux tarball、扩展 ZIP 和 Setup，生成 `SHA256SUMS.txt`，再创建 GitHub Release。
+5. `.github/workflows/release.yml` 会在 Ubuntu/Windows 分别构建 `.deb`、Linux tarball、扩展 ZIP 和 Setup，生成 `SHA256SUMS.txt`，再创建 GitHub Release。已存在的同版本 Release 会安全跳过，tag 指向其它提交时会失败而不是覆盖。
 
 Release 工作流在 tag、Cargo 与扩展版本不一致时停止，不会发布混合版本。安装器当前提供 SHA-256 完整性验证；若未来配置代码签名证书，应同时对 Windows Setup 和发布 tag 做签名并在此文档记录验证方式。
 
@@ -75,4 +75,4 @@ On Windows, run the Start-menu updater or `Update-GPTLock.ps1`. The updater pres
 
 Source installs update by pulling, testing, rebuilding, and rerunning the platform installer. The committed public manifest key keeps the official unpacked extension ID stable.
 
-Maintainers update every version field, pass PR CI, merge to `main`, and push a matching `v*` tag. The Release workflow builds platform assets, generates checksums, and publishes them through GitHub Releases; mismatched tag and source versions fail closed.
+Maintainers update every version field, pass PR CI, and merge to `main`. For an unpublished version, the Release workflow waits for successful push CI on the same commit, creates the matching tag, builds platform assets, generates checksums, and publishes them through GitHub Releases. A matching `v*` tag may still be pushed manually. Existing releases are skipped safely, while mismatched tag/source commits fail closed.
