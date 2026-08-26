@@ -1,0 +1,45 @@
+name: One-shot GPTLock 0.3.7 handoff patch
+
+on:
+  push:
+    branches: [fix/handoff-stream-tracking-037]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply GPTLock 0.3.7 patch
+        run: python .github/scripts/apply_gptlock_037.py
+      - name: Test extension
+        working-directory: extension
+        run: npm test
+      - name: Validate versions and JSON
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path('extension/manifest.json').read_text())
+          package = json.loads(Path('extension/package.json').read_text())
+          assert manifest['version'] == package['version'] == '0.3.7'
+          cargo = Path('native-core/Cargo.toml').read_text()
+          lock = Path('native-core/Cargo.lock').read_text()
+          assert 'version = "0.3.7"' in cargo
+          assert 'name = "gptlock-core"\nversion = "0.3.7"' in lock
+          PY
+      - name: Commit patched source
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md docs extension native-core
+          git commit -m 'GPTLock 0.3.7: follow stream handoff and harden UI alignment'
+          git push
