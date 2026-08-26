@@ -3,10 +3,15 @@ import {
   extractRequestEvidence,
   extractResponseEvidence,
   isChatGptConversationRequest,
+  rewriteConversationPostData,
 } from './network-evidence.js';
 
 const CDP_VERSION = '1.3';
 const REQUEST_TTL_MS = 15 * 60 * 1000;
+const FETCH_PATTERNS = [
+  { urlPattern: 'https://chatgpt.com/backend-api/conversation*', requestStage: 'Request' },
+  { urlPattern: 'https://chatgpt.com/backend-api/f/conversation*', requestStage: 'Request' },
+];
 
 function debuggerCall(method, ...args) {
   return new Promise((resolve, reject) => {
@@ -33,12 +38,24 @@ function diagnosticEndpoint(value) {
   }
 }
 
+function encodeUtf8Base64(value) {
+  const bytes = new TextEncoder().encode(String(value));
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
 export class ChatGptNetworkMonitor {
-  constructor({ onStatus, onRequest, onEvidence, onFailure }) {
+  constructor({ onStatus, onRequest, onEvidence, onFailure, onRewrite, getLockConfiguration }) {
     this.onStatus = onStatus;
     this.onRequest = onRequest;
     this.onEvidence = onEvidence;
     this.onFailure = onFailure;
+    this.onRewrite = onRewrite;
+    this.getLockConfiguration = getLockConfiguration;
     this.attachedTabs = new Set();
     this.requests = new Map();
     chrome.debugger.onEvent.addListener((source, method, params) => {
@@ -54,6 +71,14 @@ export class ChatGptNetworkMonitor {
 
   target(tabId) {
     return { tabId };
+  }
+
+  configuration() {
+    try {
+      return this.getLockConfiguration?.() ?? {};
+    } catch {
+      return {};
+    }
   }
 
   async attach(tabId) {
@@ -77,10 +102,18 @@ export class ChatGptNetworkMonitor {
         maxResourceBufferSize: 16 * 1024 * 1024,
         maxPostDataSize: 2 * 1024 * 1024,
       });
+      await debuggerCall('sendCommand', target, 'Fetch.enable', {
+        patterns: FETCH_PATTERNS,
+      });
       this.attachedTabs.add(tabId);
       this.onStatus(tabId, { attached: true, error: null });
       return true;
     } catch (error) {
+      try {
+        await debuggerCall('sendCommand', target, 'Fetch.disable', {});
+      } catch {
+        // Fetch may not have been enabled.
+      }
       try {
         await debuggerCall('detach', target);
       } catch {
@@ -95,6 +128,11 @@ export class ChatGptNetworkMonitor {
   async detach(tabId) {
     this.attachedTabs.delete(tabId);
     this.dropTabRequests(tabId);
+    try {
+      await debuggerCall('sendCommand', this.target(tabId), 'Fetch.disable', {});
+    } catch {
+      // Fetch may already be disabled or the target may have closed.
+    }
     try {
       await debuggerCall('detach', this.target(tabId));
     } catch {
@@ -130,7 +168,9 @@ export class ChatGptNetworkMonitor {
     if (!tabId || !this.attachedTabs.has(tabId)) return;
     this.purgeOldRequests();
 
-    if (method === 'Network.requestWillBeSent') {
+    if (method === 'Fetch.requestPaused') {
+      await this.handlePausedRequest(tabId, params);
+    } else if (method === 'Network.requestWillBeSent') {
       await this.handleRequest(tabId, params);
     } else if (method === 'Network.responseReceived') {
       this.handleResponse(tabId, params);
@@ -141,9 +181,90 @@ export class ChatGptNetworkMonitor {
     }
   }
 
+  async continuePaused(tabId, requestId, postData = null) {
+    const parameters = { requestId };
+    if (typeof postData === 'string') parameters.postData = encodeUtf8Base64(postData);
+    await debuggerCall('sendCommand', this.target(tabId), 'Fetch.continueRequest', parameters);
+  }
+
+  async pausedPostData(tabId, params) {
+    if (typeof params.request?.postData === 'string') return params.request.postData;
+    if (!params.networkId) return '';
+    try {
+      const result = await debuggerCall(
+        'sendCommand',
+        this.target(tabId),
+        'Network.getRequestPostData',
+        { requestId: String(params.networkId) },
+      );
+      return result?.postData ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  async handlePausedRequest(tabId, params) {
+    const requestId = String(params.requestId);
+    const request = params.request ?? {};
+    const endpoint = diagnosticEndpoint(request.url);
+    if (!isChatGptConversationRequest(request.url, request.method)) {
+      try {
+        await this.continuePaused(tabId, requestId);
+      } catch (error) {
+        this.onRewrite?.(tabId, {
+          endpoint,
+          changed: false,
+          reason: 'continue_failed',
+          error: safeError(error),
+        });
+      }
+      return;
+    }
+
+    let rewrite = null;
+    try {
+      const postData = await this.pausedPostData(tabId, params);
+      rewrite = rewriteConversationPostData(postData, this.configuration());
+      await this.continuePaused(tabId, requestId, rewrite.changed ? rewrite.postData : null);
+      this.onRewrite?.(tabId, {
+        endpoint,
+        changed: rewrite.changed,
+        reason: rewrite.reason,
+        modelBefore: rewrite.modelBefore,
+        modelAfter: rewrite.modelAfter,
+        transportModelBefore: rewrite.transportModelBefore,
+        transportModelAfter: rewrite.transportModelAfter,
+        reasoningBefore: rewrite.reasoningBefore,
+        reasoningAfter: rewrite.reasoningAfter,
+        reasoningFields: rewrite.reasoningFields,
+      });
+    } catch (error) {
+      const detail = safeError(error);
+      this.onRewrite?.(tabId, {
+        endpoint,
+        changed: false,
+        reason: 'rewrite_failed_open',
+        modelBefore: rewrite?.modelBefore ?? null,
+        modelAfter: rewrite?.modelAfter ?? null,
+        error: detail,
+      });
+      try {
+        await this.continuePaused(tabId, requestId);
+      } catch (continueError) {
+        this.onRewrite?.(tabId, {
+          endpoint,
+          changed: false,
+          reason: 'continue_after_rewrite_failure_failed',
+          error: safeError(continueError),
+        });
+      }
+    }
+  }
+
   async handleRequest(tabId, params) {
     const request = params.request ?? {};
     if (!isChatGptConversationRequest(request.url, request.method)) return;
+    const configuration = this.configuration();
     const record = {
       tabId,
       requestId: String(params.requestId),
@@ -152,6 +273,7 @@ export class ChatGptNetworkMonitor {
       endpoint: diagnosticEndpoint(request.url),
       mimeType: '',
       responseHeaders: {},
+      responseVerificationEnabled: configuration.responseVerificationEnabled !== false,
     };
     this.requests.set(this.key(tabId, record.requestId), record);
 
@@ -198,6 +320,7 @@ export class ChatGptNetworkMonitor {
     const record = this.requests.get(key);
     if (!record) return;
     this.requests.delete(key);
+    if (!record.responseVerificationEnabled) return;
 
     let body = '';
     let bodyError = null;
@@ -242,6 +365,7 @@ export class ChatGptNetworkMonitor {
     const record = this.requests.get(key);
     if (!record) return;
     this.requests.delete(key);
+    if (!record.responseVerificationEnabled) return;
     this.onFailure(tabId, {
       requestId: record.requestId,
       error: params.errorText || 'network_loading_failed',
