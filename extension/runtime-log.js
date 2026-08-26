@@ -1,11 +1,11 @@
 export const RUNTIME_LOG_STORAGE_KEY = 'runtimeLogs';
-export const MAX_RUNTIME_LOG_ENTRIES = 1200;
+export const MAX_RUNTIME_LOG_ENTRIES = 2000;
 
-const MAX_STRING_LENGTH = 800;
-const MAX_ARRAY_ITEMS = 40;
-const MAX_OBJECT_KEYS = 50;
-const MAX_DEPTH = 5;
-const SENSITIVE_KEY = /(?:authorization|cookie|set-cookie|api[_-]?key|token|password|secret|prompt|postdata|requestbody|responsebody|chat(?:text|content)|message(?:text|content)|answer(?:text|content)|inputtext|outputtext)/i;
+const MAX_STRING_LENGTH = 2000;
+const MAX_ARRAY_ITEMS = 100;
+const MAX_OBJECT_KEYS = 100;
+const MAX_DEPTH = 8;
+const SENSITIVE_KEY = /^(?:authorization|proxy-authorization|cookie|set-cookie|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|password|secret|prompt|postdata|requestbody|responsebody|chat(?:text|content)|message(?:text|content)|answer(?:text|content)|inputtext|outputtext)$/i;
 
 let writeQueue = Promise.resolve();
 
