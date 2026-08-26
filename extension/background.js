@@ -64,6 +64,7 @@ function createTabState(tabId, url = '') {
     probeUsed: false,
     probeArmed: false,
     pageObservation: null,
+    lastRewrite: null,
     lastRequest: null,
     lastVerification: null,
     lastEvidenceDiagnostics: null,
@@ -108,6 +109,7 @@ function publicTabState(state) {
     probeUsed: state.probeUsed,
     probeArmed: state.probeArmed,
     pageObservation: state.pageObservation,
+    lastRewrite: state.lastRewrite,
     lastRequest: state.lastRequest,
     lastVerification: state.lastVerification,
     lastEvidenceDiagnostics: state.lastEvidenceDiagnostics,
@@ -120,20 +122,21 @@ function publicTabState(state) {
 
 async function updateTabBadge(state) {
   const guard = guardFor(state);
-  let text = '?';
-  let color = '#b45309';
+  let text = 'L';
+  let color = '#2563eb';
   if (guard.status === 'verified') {
     text = 'OK';
     color = '#15803d';
-  } else if (guard.status === 'mismatch' || guard.status === 'preflight_mismatch') {
+  } else if (guard.status === 'mismatch' && !guard.canSend) {
     text = '!';
     color = '#b91c1c';
   } else if (guard.status === 'waiting') {
     text = '…';
-  } else if (guard.status === 'probe_ready') {
-    text = '1';
-    color = '#2563eb';
-  } else if (['disabled', 'monitor_offline', 'monitor_disabled', 'core_offline'].includes(guard.status)) {
+    color = '#b45309';
+  } else if (['monitor_offline', 'core_offline', 'error', 'unverified'].includes(guard.status)) {
+    text = '?';
+    color = '#b45309';
+  } else if (guard.status === 'disabled') {
     text = 'OFF';
     color = '#64748b';
   }
@@ -183,9 +186,7 @@ async function writeNativeStatus(patch) {
     ...nativeStatus,
     ...patch,
   };
-  if (Object.hasOwn(patch, 'lastError')) {
-    next.errorCode = classifyNativeError(patch.lastError);
-  }
+  if (Object.hasOwn(patch, 'lastError')) next.errorCode = classifyNativeError(patch.lastError);
   await chrome.storage.local.set({ nativeStatus: next });
   if (
     nativeStatus.connected !== next.connected
@@ -370,17 +371,48 @@ async function applyNetworkEvidence(tabId, evidence) {
 }
 
 const networkMonitor = new ChatGptNetworkMonitor({
+  getLockConfiguration() {
+    return {
+      lockedModels: currentPolicy.lockedModels,
+      allowedReasoningLevels: currentPolicy.allowedReasoningLevels,
+      preferredReasoning: currentSettings.preferredReasoning,
+      responseVerificationEnabled: currentSettings.networkVerificationEnabled,
+    };
+  },
   onStatus(tabId, monitor) {
     const state = ensureTabState(tabId);
     state.monitor = monitor;
-    if (!monitor.attached && state.phase !== 'initial') {
+    if (!monitor.attached && state.phase === 'waiting') {
       state.phase = 'error';
-      state.lastError = monitor.error || 'network_monitor_detached';
+      state.lastError = monitor.error || 'request_lock_monitor_detached';
     }
     logRuntime(monitor.attached ? 'info' : 'warn', 'network', 'monitor_status', {
       tabId,
       attached: monitor.attached,
       error: monitor.error,
+    });
+    void broadcastTabState(tabId);
+  },
+  onRewrite(tabId, rewrite) {
+    const state = ensureTabState(tabId);
+    state.lastRewrite = {
+      capturedAt: new Date().toISOString(),
+      endpoint: rewrite.endpoint ?? null,
+      changed: Boolean(rewrite.changed),
+      reason: rewrite.reason ?? null,
+      modelBefore: rewrite.modelBefore ?? null,
+      modelAfter: rewrite.modelAfter ?? null,
+      transportModelBefore: rewrite.transportModelBefore ?? null,
+      transportModelAfter: rewrite.transportModelAfter ?? null,
+      reasoningBefore: rewrite.reasoningBefore ?? null,
+      reasoningAfter: rewrite.reasoningAfter ?? null,
+      reasoningFields: rewrite.reasoningFields ?? [],
+      error: rewrite.error ?? null,
+    };
+    if (rewrite.error) state.lastError = rewrite.error;
+    logRuntime(rewrite.error ? 'warn' : 'info', 'lock', rewrite.changed ? 'request_lock_rewritten' : 'request_lock_checked', {
+      tabId,
+      ...state.lastRewrite,
     });
     void broadcastTabState(tabId);
   },
@@ -395,19 +427,20 @@ const networkMonitor = new ChatGptNetworkMonitor({
     };
     state.probeUsed = true;
     state.probeArmed = false;
-    state.phase = 'waiting';
+    if (currentSettings.networkVerificationEnabled) state.phase = 'waiting';
     state.lastError = request.conflicts?.model || request.conflicts?.reasoning
       ? 'conflicting_request_metadata'
       : null;
     state.evidenceIssue = null;
     state.lastEvidenceDiagnostics = null;
-    logRuntime('info', 'network', 'conversation_request_detected', {
+    logRuntime('info', 'network', 'formal_conversation_request_detected', {
       tabId,
       model: request.model,
       reasoning: request.reasoning,
       conflicts: request.conflicts,
       fields: request.fields,
       diagnostics: request.diagnostics,
+      responseVerificationEnabled: currentSettings.networkVerificationEnabled,
     });
     void broadcastTabState(tabId);
   },
@@ -443,7 +476,7 @@ const networkMonitor = new ChatGptNetworkMonitor({
 async function configureTab(tab) {
   if (!tab?.id || !isChatGptUrl(tab.url ?? '')) return;
   const state = ensureTabState(tab.id, tab.url);
-  if (currentSettings.enabled && currentSettings.networkVerificationEnabled) await networkMonitor.attach(tab.id);
+  if (currentSettings.enabled) await networkMonitor.attach(tab.id);
   else await networkMonitor.detach(tab.id);
   await broadcastTabState(tab.id);
   return state;
@@ -454,11 +487,7 @@ async function configureOpenTabs() {
   await Promise.all(tabs.map((tab) => configureTab(tab)));
 }
 
-async function initialize() {
-  logRuntime('info', 'extension', 'initialize_started', {
-    version: chrome.runtime.getManifest().version,
-  });
-  await ensureConfiguration();
+async function refreshNativeCore({ tolerateFailure = false } = {}) {
   try {
     await sendNative('ping');
     await syncPolicy();
@@ -471,14 +500,25 @@ async function initialize() {
       policyRevision: status.policyRevision,
       version: status.version,
     });
+    return { connected: true, error: null, status };
   } catch (error) {
     const detail = errorText(error);
     await writeNativeStatus({ connected: false, lastError: detail });
+    if (!tolerateFailure) throw error;
+    return { connected: false, error: detail, status: null };
   }
+}
+
+async function initialize() {
+  logRuntime('info', 'extension', 'initialize_started', {
+    version: chrome.runtime.getManifest().version,
+  });
+  await ensureConfiguration();
+  await refreshNativeCore({ tolerateFailure: true });
   await configureOpenTabs();
   logRuntime('info', 'extension', 'initialize_completed', {
     enabled: currentSettings.enabled,
-    networkVerificationEnabled: currentSettings.networkVerificationEnabled,
+    responseVerificationEnabled: currentSettings.networkVerificationEnabled,
     coreConnected: coreConnection.connected,
   });
 }
@@ -505,6 +545,7 @@ function sendTabMessage(tabId, message) {
     chrome.tabs.sendMessage(tabId, message, (response) => {
       const error = chrome.runtime.lastError;
       if (error) reject(new Error(error.message));
+      else if (response?.ok === false) reject(new Error(response.error || 'Page request failed'));
       else resolve(response);
     });
   });
@@ -516,29 +557,7 @@ function getPlatformInfo() {
   });
 }
 
-async function autoVerify(tabId) {
-  if (!currentSettings.enabled) throw new Error('GPTLock is disabled / GPTLock 已关闭');
-  const tab = await chrome.tabs.get(tabId);
-  if (!isChatGptUrl(tab.url ?? '')) throw new Error('Open chatgpt.com first / 请先打开 chatgpt.com');
-  const state = ensureTabState(tabId, tab.url);
-  logRuntime('info', 'verification', 'auto_verify_started', { tabId });
-
-  await sendNative('ping');
-  await syncPolicy();
-  const coreStatus = await sendNative('get_status');
-  await writeNativeStatus({
-    connected: true,
-    lastError: null,
-    lastSeenAt: new Date().toISOString(),
-    policyRevision: coreStatus.policyRevision,
-    version: coreStatus.version,
-  });
-
-  const monitorAttached = currentSettings.networkVerificationEnabled
-    ? await networkMonitor.attach(tabId)
-    : false;
-  let pageCollected = false;
-  let pageCollectionError = null;
+async function collectPageObservation(tabId, state) {
   try {
     const response = await sendTabMessage(tabId, { type: 'GPTLOCK_COLLECT_PAGE_STATE' });
     if (response?.observation) {
@@ -548,41 +567,88 @@ async function autoVerify(tabId) {
         capturedAt: response.observation.capturedAt ?? new Date().toISOString(),
         evidenceSource: 'page_dom',
       };
-      pageCollected = true;
+      return { collected: true, error: null };
     }
+    return { collected: false, error: 'page_observation_missing' };
   } catch (error) {
-    pageCollectionError = errorText(error);
+    return { collected: false, error: errorText(error) };
   }
+}
+
+async function autoVerify(tabId) {
+  if (!currentSettings.enabled) throw new Error('GPTLock is disabled / GPTLock 已关闭');
+  const tab = await chrome.tabs.get(tabId);
+  if (!isChatGptUrl(tab.url ?? '')) throw new Error('Open chatgpt.com first / 请先打开 chatgpt.com');
+  const state = ensureTabState(tabId, tab.url);
+  logRuntime('info', 'verification', 'auto_verify_started', { tabId });
+
+  const coreCheck = await refreshNativeCore({ tolerateFailure: true });
+  const monitorAttached = await networkMonitor.attach(tabId);
+  const page = await collectPageObservation(tabId, state);
 
   state.phase = 'initial';
   state.probeUsed = false;
-  state.probeArmed = monitorAttached;
+  state.probeArmed = false;
+  state.lastRewrite = null;
   state.lastRequest = null;
   state.lastVerification = null;
   state.lastEvidenceDiagnostics = null;
   state.evidenceIssue = null;
-  state.lastError = pageCollectionError;
+  state.lastError = page.error;
   await broadcastTabState(tabId);
-  const guard = guardFor(state);
-  logRuntime(guard.canSend ? 'info' : 'warn', 'verification', 'auto_verify_prepared', {
-    tabId,
-    coreConnected: coreConnection.connected,
-    monitorAttached,
-    pageCollected,
-    pageCollectionError,
-    pageModel: state.pageObservation?.model ?? null,
-    pageReasoning: state.pageObservation?.reasoning ?? null,
-    guardStatus: guard.status,
-    guardReason: guard.reason,
-    ready: guard.allowKind === 'probe',
-  });
-  return {
-    ready: guard.allowKind === 'probe',
-    checks: {
-      coreConnected: coreConnection.connected,
+
+  if (!monitorAttached) {
+    logRuntime('warn', 'verification', 'auto_verify_request_lock_unavailable', {
+      tabId,
+      monitorError: state.monitor?.error ?? null,
+    });
+  }
+
+  let sendResult;
+  try {
+    sendResult = await sendTabMessage(tabId, {
+      type: 'GPTLOCK_AUTO_SEND_PROBE',
+      preferredReasoning: currentSettings.preferredReasoning,
+    });
+  } catch (error) {
+    state.lastError = errorText(error);
+    await broadcastTabState(tabId);
+    logRuntime('error', 'verification', 'auto_probe_send_failed', {
+      tabId,
+      error: state.lastError,
       monitorAttached,
-      pageCollected,
-      pageCollectionError,
+    });
+    throw error;
+  }
+
+  const sent = Boolean(sendResult?.sent);
+  logRuntime(sent ? 'info' : 'warn', 'verification', 'auto_probe_send_completed', {
+    tabId,
+    sent,
+    method: sendResult?.method ?? null,
+    draftPreserved: Boolean(sendResult?.draftPreserved),
+    draftRestored: Boolean(sendResult?.draftRestored),
+    coreConnected: coreCheck.connected,
+    coreError: coreCheck.error,
+    monitorAttached,
+    pageCollected: page.collected,
+    pageCollectionError: page.error,
+  });
+
+  return {
+    ready: sent,
+    sent,
+    checks: {
+      coreConnected: coreCheck.connected,
+      coreError: coreCheck.error,
+      monitorAttached,
+      pageCollected: page.collected,
+      pageCollectionError: page.error,
+    },
+    send: {
+      method: sendResult?.method ?? null,
+      draftPreserved: Boolean(sendResult?.draftPreserved),
+      draftRestored: Boolean(sendResult?.draftRestored),
     },
     tabState: publicTabState(state),
   };
@@ -592,12 +658,14 @@ function diagnosticTabState(state) {
   return {
     tabId: state.tabId,
     inScope: isChatGptUrl(state.url),
+    contextKey: state.contextKey,
     core: state.core,
     monitor: state.monitor,
     phase: state.phase,
     probeUsed: state.probeUsed,
     probeArmed: state.probeArmed,
     pageObservation: state.pageObservation,
+    lastRewrite: state.lastRewrite,
     lastRequest: state.lastRequest ? {
       capturedAt: state.lastRequest.capturedAt,
       model: state.lastRequest.model,
@@ -622,18 +690,18 @@ async function createDiagnosticBundle() {
   let nativeDiagnostics = null;
   let nativeDiagnosticsError = null;
   try {
-    nativeDiagnostics = await sendNative('get_diagnostics', { auditLimit: 300 });
+    nativeDiagnostics = await sendNative('get_diagnostics', { auditLimit: 1000 });
   } catch (error) {
     nativeDiagnosticsError = errorText(error);
   }
   return sanitizeLogValue({
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     privacy: {
       chatContentIncluded: false,
       credentialsIncluded: false,
-      noteZhCn: '诊断包不包含提示词、回答正文、Cookie、授权头或令牌。',
-      noteEn: 'The bundle excludes prompts, answer bodies, cookies, authorization headers, and tokens.',
+      noteZhCn: '诊断包保留端点、请求锁定结果、模型/推理标识、状态码、字段路径和错误，但不包含提示词、回答正文、Cookie、授权头或令牌。',
+      noteEn: 'The bundle keeps technical request-lock and verification metadata, but excludes prompts, answer bodies, cookies, authorization headers, and tokens.',
     },
     extension: {
       id: chrome.runtime.id,
@@ -688,13 +756,14 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       policyChanged: Boolean(changes.policy),
       settingsChanged: Boolean(changes.settings),
       enabled: currentSettings.enabled,
-      networkVerificationEnabled: currentSettings.networkVerificationEnabled,
+      responseVerificationEnabled: currentSettings.networkVerificationEnabled,
       strictMode: currentPolicy.strictMode,
     });
     for (const state of tabStates.values()) {
       state.phase = 'initial';
       state.probeUsed = false;
       state.probeArmed = false;
+      state.lastRewrite = null;
       state.lastVerification = null;
       state.lastEvidenceDiagnostics = null;
       state.evidenceIssue = null;
@@ -755,13 +824,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           evidenceSource: 'page_dom',
         };
         if (
-          previous?.model && previous?.reasoning
-          && state.pageObservation.model && state.pageObservation.reasoning
-          && (previous.model !== state.pageObservation.model || previous.reasoning !== state.pageObservation.reasoning)
+          previous?.model && state.pageObservation.model
+          && previous.model !== state.pageObservation.model
         ) {
           state.phase = 'initial';
-          state.probeUsed = false;
-          state.probeArmed = false;
           state.lastVerification = null;
           state.lastEvidenceDiagnostics = null;
           state.evidenceIssue = null;
@@ -797,8 +863,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (guard.allowKind === 'disabled' || guard.allowKind === 'outside_scope') {
           return { accepted: true, guard };
         }
-        state.phase = 'waiting';
-        state.probeUsed = state.probeUsed || guard.allowKind === 'probe';
+        if (currentSettings.networkVerificationEnabled) state.phase = 'waiting';
+        state.probeUsed = true;
         state.probeArmed = false;
         state.lastError = null;
         state.evidenceIssue = null;
@@ -815,10 +881,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (tabId === null) throw new Error('No active tab');
         const state = ensureTabState(tabId);
         state.phase = 'initial';
-        state.probeArmed = true;
+        state.probeArmed = false;
+        state.lastVerification = null;
         state.lastError = null;
         state.evidenceIssue = null;
-        logRuntime('info', 'verification', 'manual_probe_armed', { tabId });
+        logRuntime('info', 'verification', 'legacy_probe_reset', { tabId });
         await broadcastTabState(tabId);
         return publicTabState(state);
       }
