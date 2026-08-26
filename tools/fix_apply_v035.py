@@ -14,5 +14,11 @@ if old_call in text:
     text = text.replace(old_call, new_call, 1)
 elif new_call not in text:
     raise RuntimeError('background public state replacement marker missing')
+old_subn = 'next_text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)'
+new_subn = 'next_text, count = re.subn(pattern, lambda _match: replacement, text, count=1, flags=re.S)'
+if old_subn in text:
+    text = text.replace(old_subn, new_subn, 1)
+elif new_subn not in text:
+    raise RuntimeError('regex replacement implementation marker missing')
 path.write_text(text, encoding='utf-8')
 print('Applicator repaired')
