@@ -1,0 +1,96 @@
+name: One-shot GPTLock 0.3.7 stream privacy cleanup
+
+on:
+  push:
+    branches: [fix/handoff-stream-tracking-037]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Keep sent WebSocket subscription frames out of diagnostics
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def patch(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f'{path}: expected {count} matches, got {actual}: {old[:100]!r}')
+              p.write_text(text.replace(old, new, count), encoding='utf-8')
+
+          old = '''    const frameId = `ws-${requestId}-${++this.webSocketSequence}`;
+    if (direction === 'sent') {
+      if (!exact) return;
+      this.onStreamData?.(tabId, {
+        requestId: frameId,
+        capturedAt: new Date().toISOString(),
+        rawStreamData: payload,
+        streamContext,
+        diagnostics: {
+          endpoint: socket.endpoint,
+          httpStatus: 101,
+          mimeType: 'application/websocket',
+          bodyFormat: 'websocket_frame',
+          transport: 'websocket',
+          direction,
+          stage: 'downstream_websocket',
+        },
+      });
+      return;
+    }
+
+    const evidence = extractResponseEvidence({ body: payload, headers: {}, mimeType: 'application/json' });'''
+          new = '''    if (direction === 'sent') return;
+    const frameId = `ws-${requestId}-${++this.webSocketSequence}`;
+    const evidence = extractResponseEvidence({ body: payload, headers: {}, mimeType: 'application/json' });'''
+          patch('extension/network-monitor.js', old, new)
+
+          patch(
+              'extension/background.js',
+              "仅自动验证固定测试消息对应的初始 SSE、handoff 后续 SSE 与已匹配 topic 的 WebSocket 帧进入诊断包",
+              "仅自动验证固定测试消息对应的初始 SSE、handoff 后续 SSE 与已匹配 topic 的服务端 WebSocket 接收帧进入诊断包",
+          )
+          patch(
+              'extension/background.js',
+              "Only the fixed auto-verification probes may contribute initial SSE, post-handoff SSE, and WebSocket frames matched to the handoff topic",
+              "Only the fixed auto-verification probes may contribute initial SSE, post-handoff SSE, and server-to-client WebSocket frames matched to the handoff topic",
+          )
+          patch(
+              'docs/SECURITY.md',
+              "post-handoff SSE or WebSocket frames",
+              "post-handoff SSE or server-to-client WebSocket frames",
+          )
+          patch(
+              'docs/USAGE.md',
+              "post-handoff SSE or WebSocket frames",
+              "post-handoff SSE or server-to-client WebSocket frames",
+              count=0,
+          ) if False else None
+          PY
+      - name: Test extension
+        working-directory: extension
+        run: npm test
+      - name: Verify sent frames are matching-only
+        run: |
+          grep -q "if (direction === 'sent') return;" extension/network-monitor.js
+          ! grep -q "rawStreamData: payload" extension/network-monitor.js
+      - name: Commit privacy cleanup
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add extension docs
+          git commit -m 'Do not persist WebSocket subscription frames'
+          git push
