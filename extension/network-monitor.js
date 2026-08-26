@@ -13,7 +13,6 @@ const CDP_VERSION = '1.3';
 const REQUEST_TTL_MS = 15 * 60 * 1000;
 const STREAM_TTL_MS = 2 * 60 * 1000;
 const PROVISIONAL_STREAM_WINDOW_MS = 12 * 1000;
-const MATCHED_SOCKET_WINDOW_MS = 45 * 1000;
 const FETCH_PATTERNS = [
   { urlPattern: 'https://chatgpt.com/backend-api/conversation*', requestStage: 'Request' },
   { urlPattern: 'https://chatgpt.com/backend-api/f/conversation*', requestStage: 'Request' },
@@ -70,6 +69,19 @@ function encodeUtf8Base64(value) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
   }
   return btoa(binary);
+}
+
+export function hasCompleteResponseEvidence(evidence) {
+  return Boolean(
+    evidence?.model
+      && evidence?.reasoning
+      && !evidence?.conflicts?.model
+      && !evidence?.conflicts?.reasoning,
+  );
+}
+
+export function webSocketFrameMatchesHandoff(payload, handoff) {
+  return Boolean(handoff && streamPayloadMatches(payload, handoff));
 }
 
 export class ChatGptNetworkMonitor {
@@ -485,6 +497,40 @@ export class ChatGptNetworkMonitor {
       mimeType: record.mimeType,
     });
     const streamHandoff = !record.downstream && handoff ? publicStreamHandoff(handoff) : null;
+    const streamContext = handoff
+      ? this.streamContext(handoff, {
+        isDownstream: Boolean(record.downstream),
+        transport: 'sse',
+        direction: 'received',
+        stage: record.downstream ? 'downstream_http' : 'initial_conversation',
+        matchBasis: record.matchBasis ?? (record.downstream ? 'handoff_marker' : 'formal_request'),
+      })
+      : null;
+    const diagnostics = {
+      endpoint: record.endpoint,
+      httpStatus: record.status,
+      encodedDataLength: Number.isFinite(params.encodedDataLength) ? params.encodedDataLength : null,
+      transport: 'sse',
+      direction: 'received',
+      stage: record.downstream ? 'downstream_http' : 'initial_conversation',
+      streamHandoff,
+      ...evidence.diagnostics,
+    };
+
+    if (!bodyError && !hasCompleteResponseEvidence(evidence)) {
+      this.onStreamData?.(tabId, {
+        requestId: record.requestId,
+        capturedAt: new Date().toISOString(),
+        rawStreamData: body,
+        diagnostics: { ...diagnostics, verificationSuppressedReason: evidence.conflicts?.model || evidence.conflicts?.reasoning
+          ? 'conflicting_metadata'
+          : 'incomplete_metadata' },
+        streamContext,
+      });
+      body = '';
+      return;
+    }
+
     this.onEvidence(tabId, {
       requestId: record.requestId,
       capturedAt: new Date().toISOString(),
@@ -497,25 +543,8 @@ export class ChatGptNetworkMonitor {
       rawResponseBody: (/event-stream/i.test(record.mimeType) || String(evidence.diagnostics?.bodyFormat || '').includes('sse'))
         ? body
         : null,
-      streamContext: handoff
-        ? this.streamContext(handoff, {
-          isDownstream: Boolean(record.downstream),
-          transport: 'sse',
-          direction: 'received',
-          stage: record.downstream ? 'downstream_http' : 'initial_conversation',
-          matchBasis: record.matchBasis ?? (record.downstream ? 'handoff_marker' : 'formal_request'),
-        })
-        : null,
-      diagnostics: {
-        endpoint: record.endpoint,
-        httpStatus: record.status,
-        encodedDataLength: Number.isFinite(params.encodedDataLength) ? params.encodedDataLength : null,
-        transport: 'sse',
-        direction: 'received',
-        stage: record.downstream ? 'downstream_http' : 'initial_conversation',
-        streamHandoff,
-        ...evidence.diagnostics,
-      },
+      streamContext,
+      diagnostics,
     });
     body = '';
   }
@@ -572,26 +601,47 @@ export class ChatGptNetworkMonitor {
     }
     socket.lastActivityAt = Date.now();
     const payload = typeof params.response?.payloadData === 'string' ? params.response.payloadData : '';
-    let handoff = socket.handoffId ? this.handoffs.get(socket.handoffId) : null;
     const exact = this.matchHandoff(tabId, payload);
-    if (exact) {
-      handoff = exact;
-      socket.handoffId = exact.id;
-      socket.matchedAt = Date.now();
-      socket.matchBasis = direction === 'sent' ? 'subscription_frame_marker' : 'received_frame_marker';
-    }
-    const inheritedMatch = handoff && socket.matchedAt && Date.now() - socket.matchedAt <= MATCHED_SOCKET_WINDOW_MS;
-    if (!handoff || (!exact && !inheritedMatch)) return;
+    if (!exact) return;
 
+    const handoff = exact;
+    socket.handoffId = exact.id;
+    socket.matchedAt = Date.now();
+    socket.matchBasis = direction === 'sent' ? 'subscription_frame_marker' : 'received_frame_marker';
     const streamContext = this.streamContext(handoff, {
       transport: 'websocket',
       direction,
       stage: 'downstream_websocket',
-      matchBasis: exact ? socket.matchBasis : 'matched_socket_window',
+      matchBasis: socket.matchBasis,
     });
     if (direction === 'sent') return;
     const frameId = `ws-${requestId}-${++this.webSocketSequence}`;
     const evidence = extractResponseEvidence({ body: payload, headers: {}, mimeType: 'application/json' });
+    const diagnostics = {
+      endpoint: socket.endpoint,
+      httpStatus: 101,
+      transport: 'websocket',
+      direction,
+      stage: 'downstream_websocket',
+      ...evidence.diagnostics,
+      bodyFormat: evidence.diagnostics?.bodyFormat === 'unparsed'
+        ? 'websocket_frame'
+        : evidence.diagnostics?.bodyFormat,
+    };
+
+    if (!hasCompleteResponseEvidence(evidence)) {
+      this.onStreamData?.(tabId, {
+        requestId: frameId,
+        capturedAt: new Date().toISOString(),
+        rawStreamData: payload,
+        diagnostics: { ...diagnostics, verificationSuppressedReason: evidence.conflicts?.model || evidence.conflicts?.reasoning
+          ? 'conflicting_metadata'
+          : 'incomplete_metadata' },
+        streamContext,
+      });
+      return;
+    }
+
     this.onEvidence(tabId, {
       requestId: frameId,
       capturedAt: new Date().toISOString(),
@@ -603,17 +653,7 @@ export class ChatGptNetworkMonitor {
       bodyError: null,
       rawResponseBody: payload,
       streamContext,
-      diagnostics: {
-        endpoint: socket.endpoint,
-        httpStatus: 101,
-        transport: 'websocket',
-        direction,
-        stage: 'downstream_websocket',
-        ...evidence.diagnostics,
-        bodyFormat: evidence.diagnostics?.bodyFormat === 'unparsed'
-          ? 'websocket_frame'
-          : evidence.diagnostics?.bodyFormat,
-      },
+      diagnostics,
     });
   }
 }
