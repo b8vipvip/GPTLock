@@ -1,0 +1,79 @@
+name: One-shot GPTLock 0.3.7 cleanup
+
+on:
+  push:
+    branches: [fix/handoff-stream-tracking-037]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply final correctness fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def patch(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f'{path}: expected {count} matches, got {actual}: {old[:120]!r}')
+              p.write_text(text.replace(old, new, count), encoding='utf-8')
+
+          patch(
+              'extension/network-monitor.js',
+              "this.streamContext(handoff, { transport: 'handoff', stage: 'handoff_detected' })",
+              "this.streamContext(handoff, { isDownstream: false, transport: 'handoff', stage: 'handoff_detected' })",
+          )
+
+          patch(
+              'extension/background.js',
+              "          rawSseEntryCount: bundle.autoVerificationSse?.entries?.length ?? 0,\n          rawSseIncludedBytes: bundle.autoVerificationSse?.includedBytes ?? 0,\n          rawSseOverflowed: Boolean(bundle.autoVerificationSse?.overflowed),",
+              "          rawStreamEntryCount: bundle.autoVerificationStream?.entries?.length ?? 0,\n          rawStreamIncludedBytes: bundle.autoVerificationStream?.includedBytes ?? 0,\n          rawStreamOverflowed: Boolean(bundle.autoVerificationStream?.overflowed),",
+          )
+
+          patch(
+              'extension/background.js',
+              "      state.lastEvidenceDiagnostics = null;\n      state.evidenceIssue = null;\n      state.lastError = null;\n      state.autoVerification = null;",
+              "      state.lastEvidenceDiagnostics = null;\n      state.streamTracking = null;\n      state.evidenceIssue = null;\n      state.lastError = null;\n      state.autoVerification = null;",
+          )
+
+          patch(
+              'extension/background.js',
+              "          state.lastVerification = null;\n          state.lastEvidenceDiagnostics = null;\n          state.evidenceIssue = null;",
+              "          state.lastVerification = null;\n          state.lastEvidenceDiagnostics = null;\n          state.streamTracking = null;\n          state.evidenceIssue = null;",
+          )
+
+          patch(
+              'extension/background.js',
+              "        state.lastVerification = null;\n        state.lastError = null;\n        state.evidenceIssue = null;\n        state.autoVerification = null;",
+              "        state.lastVerification = null;\n        state.streamTracking = null;\n        state.lastError = null;\n        state.evidenceIssue = null;\n        state.autoVerification = null;",
+          )
+          PY
+      - name: Test extension
+        working-directory: extension
+        run: npm test
+      - name: Validate no stale fallback/export names
+        run: |
+          ! grep -R "GPTLOCK_FETCH_CONVERSATION_EVIDENCE" extension/content.js extension/background.js
+          ! grep -R "bundle.autoVerificationSse" extension/background.js extension/diagnostics.js
+          grep -q "autoVerificationStream" extension/background.js
+          grep -q "Network.webSocketFrameReceived" extension/network-monitor.js
+      - name: Commit fixes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add extension
+          git commit -m 'Fix v0.3.7 stream tracking cleanup paths'
+          git push
