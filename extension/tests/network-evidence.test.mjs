@@ -121,6 +121,8 @@ test('diagnoses empty and unparseable response bodies without retaining content'
     reasoningCandidateCount: 0,
     modelCandidatePaths: [],
     reasoningCandidatePaths: [],
+    modelCandidateValues: [],
+    reasoningCandidateValues: [],
     matchedHeaderFields: [],
   });
   const unparsed = extractResponseEvidence({ body: 'not-json', mimeType: 'text/plain' });
