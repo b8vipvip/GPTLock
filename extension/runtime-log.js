@@ -7,6 +7,89 @@ const MAX_OBJECT_KEYS = 100;
 const MAX_DEPTH = 8;
 const SENSITIVE_KEY = /^(?:authorization|proxy-authorization|cookie|set-cookie|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|password|secret|prompt|postdata|requestbody|responsebody|chat(?:text|content)|message(?:text|content)|answer(?:text|content)|inputtext|outputtext)$/i;
 
+export const MAX_DIAGNOSTIC_SSE_BYTES = 10 * 1024 * 1024;
+
+export function utf8ByteLength(value) {
+  return new TextEncoder().encode(String(value ?? '')).byteLength;
+}
+
+export function createDiagnosticSseCapture({ tabId = null, startedAt = null } = {}) {
+  return {
+    schemaVersion: 1,
+    captureScope: 'auto_verification_sse_only',
+    maxBytes: MAX_DIAGNOSTIC_SSE_BYTES,
+    tabId,
+    startedAt: startedAt || new Date().toISOString(),
+    completedAt: null,
+    totalBytes: 0,
+    includedBytes: 0,
+    overflowed: false,
+    omittedResponses: 0,
+    omittedBytes: 0,
+    entries: [],
+    omitted: [],
+  };
+}
+
+export function appendDiagnosticSseCapture(capture, entry, maxBytes = MAX_DIAGNOSTIC_SSE_BYTES) {
+  const base = capture && typeof capture === 'object' ? capture : createDiagnosticSseCapture();
+  const next = {
+    ...base,
+    maxBytes,
+    totalBytes: Number(base.totalBytes || 0),
+    includedBytes: Number(base.includedBytes || 0),
+    overflowed: Boolean(base.overflowed),
+    omittedResponses: Number(base.omittedResponses || 0),
+    omittedBytes: Number(base.omittedBytes || 0),
+    entries: Array.isArray(base.entries) ? [...base.entries] : [],
+    omitted: Array.isArray(base.omitted) ? [...base.omitted] : [],
+  };
+  const rawSse = typeof entry?.rawSse === 'string' ? entry.rawSse : '';
+  const bodyBytes = utf8ByteLength(rawSse);
+  next.totalBytes += bodyBytes;
+  if (!rawSse || bodyBytes === 0) return next;
+
+  const projected = next.includedBytes + bodyBytes;
+  if (projected > maxBytes) {
+    next.overflowed = true;
+    next.omittedResponses += 1;
+    next.omittedBytes += bodyBytes;
+    next.omitted.push({
+      attempt: entry?.attempt ?? null,
+      requestId: entry?.requestId ?? null,
+      capturedAt: entry?.capturedAt ?? null,
+      endpoint: entry?.endpoint ?? null,
+      httpStatus: entry?.httpStatus ?? null,
+      mimeType: entry?.mimeType ?? null,
+      bodyFormat: entry?.bodyFormat ?? null,
+      bodyBytes,
+      reason: 'diagnostic_sse_size_limit',
+    });
+    return next;
+  }
+
+  next.entries.push({
+    attempt: entry?.attempt ?? null,
+    requestId: entry?.requestId ?? null,
+    capturedAt: entry?.capturedAt ?? null,
+    endpoint: entry?.endpoint ?? null,
+    httpStatus: entry?.httpStatus ?? null,
+    mimeType: entry?.mimeType ?? null,
+    bodyFormat: entry?.bodyFormat ?? null,
+    requestModel: entry?.requestModel ?? null,
+    rewriteReason: entry?.rewriteReason ?? null,
+    bodyBytes,
+    rawSse,
+  });
+  next.includedBytes = projected;
+  return next;
+}
+
+export function finalizeDiagnosticSseCapture(capture, completedAt = null) {
+  if (!capture || typeof capture !== 'object') return null;
+  return { ...capture, completedAt: completedAt || new Date().toISOString() };
+}
+
 let writeQueue = Promise.resolve();
 
 function clipString(value) {

@@ -341,7 +341,6 @@ export class ChatGptNetworkMonitor {
       headers: record.responseHeaders,
       mimeType: record.mimeType,
     });
-    body = '';
     this.onEvidence(tabId, {
       requestId: record.requestId,
       capturedAt: new Date().toISOString(),
@@ -351,6 +350,9 @@ export class ChatGptNetworkMonitor {
       conflicts: evidence.conflicts,
       fields: evidence.fields,
       bodyError,
+      rawResponseBody: (/event-stream/i.test(record.mimeType) || String(evidence.diagnostics?.bodyFormat || '').includes('sse'))
+        ? body
+        : null,
       diagnostics: {
         endpoint: record.endpoint,
         httpStatus: record.status,
@@ -358,6 +360,7 @@ export class ChatGptNetworkMonitor {
         ...evidence.diagnostics,
       },
     });
+    body = '';
   }
 
   handleFailed(tabId, params) {

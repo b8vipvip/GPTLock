@@ -4,7 +4,7 @@
 
 ## 首次配置
 
-1. 打开扩展“设置”。0.3.5 默认策略：
+1. 打开扩展“设置”。0.3.6 默认策略：
 
    - GPTLock 总开关：开启
    - 锁定模型：`gpt-5.6-sol`
@@ -19,7 +19,7 @@
 
 ## 日常使用：不需要先验证
 
-0.3.5 不再要求“先验证成功才能聊天”。正常流程是：
+0.3.6 不再要求“先验证成功才能聊天”。正常流程是：
 
 1. 打开 `https://chatgpt.com/` 并进入聊天；
 2. GPTLock 自动附加当前标签页的请求锁定器；
@@ -47,7 +47,7 @@
 
 ## 自动验证：程序自动发送测试消息
 
-点击弹窗或设置页的 **“自动验证 / Auto verify”** 后，不需要再人工输入或发送“探针”。0.3.5 会对一次自动验证最多执行 2 次可见测试尝试：第一次响应证据不足时先自动回查当前会话详情，仍不足才自动发送第二条测试消息。程序会自动：
+点击弹窗或设置页的 **“自动验证 / Auto verify”** 后，不需要再人工输入或发送“探针”。0.3.6 会对一次自动验证最多执行 2 次可见测试尝试：第一次响应证据不足时先自动回查当前会话详情，仍不足才自动发送第二条测试消息。程序会自动：
 
 1. 检查 Native Core；失败时记录告警但继续后续可执行步骤；
 2. 确保当前 ChatGPT 标签页的请求锁定器已附加；
@@ -65,6 +65,8 @@
 11. 最终明确显示失败/不足原因与已执行的尝试次数，并将全过程写入运行日志/诊断包。
 
 如果输入框已有草稿，程序会先保留草稿，并在测试消息成功发出后尽力恢复。自动验证不会发送隐藏请求，也不会把页面文字伪造为 `verified`。
+
+从 0.3.6 起，自动验证还会把这两次固定测试请求对应的**原始 SSE 响应**临时保存在扩展本地存储中，并在导出诊断包时写入 `autoVerificationSse`。原始 SSE 按 UTF-8 字节合计最多 10 MiB；超过上限的响应只保留大小/请求 ID 等省略记录，不伪装成完整抓包。该机制只针对自动验证，不抓取普通聊天响应正文。
 
 ## 状态含义
 
@@ -105,7 +107,7 @@
 
 ## `gpt-5.6-sol-wm` 与 `gpt-5-6-thinking`
 
-0.3.5 根据实际观察把 `gpt-5.6-sol-wm` 作为 `gpt-5.6-sol` 的传输别名处理。因此策略中选择 `gpt-5.6-sol` 时，正式请求可能以 `gpt-5.6-sol-wm` 发出，而界面/审计显示规范化后的 `gpt-5.6-sol`。
+0.3.6 根据实际观察把 `gpt-5.6-sol-wm` 作为 `gpt-5.6-sol` 的传输别名处理。因此策略中选择 `gpt-5.6-sol` 时，正式请求可能以 `gpt-5.6-sol-wm` 发出，而界面/审计显示规范化后的 `gpt-5.6-sol`。
 
 `gpt-5-6-thinking` 仍是独立标识，不会被 GPTLock 当成 Sol。如果正式请求顶层模型是该值，而策略只允许 Sol，请求锁定器会尝试改写为 Sol 的已知传输标识。
 
@@ -154,7 +156,7 @@ Native 日志记录时间、请求 ID、模型、推理强度、证据来源、�
 - 自动验证是否成功写入并发送测试消息；
 - 各 ChatGPT 标签页当前状态。
 
-扩展最多保留 2000 条有界运行日志；诊断导出请求最多 1000 条 Native Core 审计尾部记录。日志脱敏器会去除 `postData`、请求/响应正文、提示词、回答、Cookie、Authorization、Token、密码等敏感字段，同时保留 `postDataLength`、端点、字段路径和错误等技术诊断信息。
+扩展最多保留 2000 条有界运行日志；诊断导出请求最多 1000 条 Native Core 审计尾部记录。运行日志脱敏器仍会去除 `postData`、请求/响应正文、提示词、回答、Cookie、Authorization、Token、密码等敏感字段，同时保留 `postDataLength`、端点、字段路径和错误等技术诊断信息。**诊断包中的 `autoVerificationSse` 是唯一正文例外**：它只保存自动验证固定测试消息对应的原始 SSE，合计最多 10 MiB，用于分析 ChatGPT 实际返回字段。
 
 ## 本机 API（可选）
 
@@ -168,7 +170,7 @@ curl -H "Authorization: Bearer $GPTLOCK_TOKEN" http://127.0.0.1:17856/status
 
 ## English
 
-GPTLock 0.3.5 no longer requires verification before ordinary chat. Once enabled, it attaches a CDP request interceptor and locks only the two formal conversation POST endpoints. A disallowed top-level model is rewritten to the configured lock target; an already-existing top-level reasoning field may be aligned to the preferred allowed value, but missing reasoning fields are never invented.
+GPTLock 0.3.6 no longer requires verification before ordinary chat. Once enabled, it attaches a CDP request interceptor and locks only the two formal conversation POST endpoints. A disallowed top-level model is rewritten to the configured lock target; an already-existing top-level reasoning field may be aligned to the preferred allowed value, but missing reasoning fields are never invented.
 
 Response verification is supplementary. Missing DOM fields, Core outages, debugger detaches, unreadable/missing response metadata, reasoning mismatches, and verification errors warn but fail open. In strict mode, only a **confirmed response-model mismatch** blocks subsequent sends.
 
