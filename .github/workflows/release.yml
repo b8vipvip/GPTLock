@@ -47,18 +47,18 @@ jobs:
             exit 1
           fi
 
-          tag_exists=false
-          if tag_commit="$(git rev-parse -q --verify "refs/tags/$tag^{commit}")"; then
-            tag_exists=true
-            if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
-              echo "Existing tag $tag points to $tag_commit instead of $GITHUB_SHA." >&2
-              exit 1
-            fi
-          fi
-
           should_publish=true
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             should_publish=false
+          fi
+
+          tag_exists=false
+          if tag_commit="$(git rev-parse -q --verify "refs/tags/$tag^{commit}")"; then
+            tag_exists=true
+            if [[ "$should_publish" == "true" && "$tag_commit" != "$GITHUB_SHA" ]]; then
+              echo "Existing unpublished tag $tag points to $tag_commit instead of $GITHUB_SHA." >&2
+              exit 1
+            fi
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
