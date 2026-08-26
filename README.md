@@ -62,7 +62,7 @@ cargo build --locked --release --manifest-path native-core/Cargo.toml
 ./packaging/linux/build-deb.sh
 ```
 
-CI 在 Ubuntu 和 Windows 编译、测试并上传扩展 ZIP、Linux `.deb`、Windows Setup 和本地核心制品。推送与版本一致的 `v*` tag 后，Release 工作流生成 SHA-256 校验和并发布安装资产。
+CI 在 Ubuntu 和 Windows 编译、测试并上传扩展 ZIP、Linux `.deb`、Windows Setup 和本地核心制品。合并尚未发布的新版本到 `main` 后，Release 工作流会等待该提交的主分支 CI 成功，再创建与源码版本一致的 tag、生成 SHA-256 校验和并发布安装资产；仍支持手工推送匹配的 `v*` tag。
 
 ## English
 
