@@ -7,6 +7,7 @@ import {
   extractResponseEvidence,
   isChatGptConversationRequest,
   parseSseObjects,
+  rewriteConversationPostData,
 } from '../network-evidence.js';
 
 test('extracts strong metadata from a JSON response', () => {
@@ -87,9 +88,12 @@ test('request metadata stays explicitly non-authoritative', () => {
   assert.equal(result.evidenceSource, 'network_request_metadata');
 });
 
-test('only accepts ChatGPT backend conversation-like POST requests', () => {
+test('only accepts the two formal ChatGPT conversation POST endpoints', () => {
   assert.equal(isChatGptConversationRequest('https://chatgpt.com/backend-api/conversation', 'POST'), true);
-  assert.equal(isChatGptConversationRequest('https://chatgpt.com/backend-api/accounts', 'POST'), false);
+  assert.equal(isChatGptConversationRequest('https://chatgpt.com/backend-api/f/conversation', 'POST'), true);
+  assert.equal(isChatGptConversationRequest('https://chatgpt.com/backend-api/f/conversation/prepare', 'POST'), false);
+  assert.equal(isChatGptConversationRequest('https://chatgpt.com/backend-api/conversation/init', 'POST'), false);
+  assert.equal(isChatGptConversationRequest('https://chatgpt.com/backend-api/messages', 'POST'), false);
   assert.equal(isChatGptConversationRequest('https://evil.example/backend-api/conversation', 'POST'), false);
   assert.equal(isChatGptConversationRequest('https://chatgpt.com/backend-api/conversation', 'GET'), false);
 });
@@ -119,4 +123,73 @@ test('diagnoses empty and unparseable response bodies without retaining content'
   const unparsed = extractResponseEvidence({ body: 'not-json', mimeType: 'text/plain' });
   assert.equal(unparsed.diagnostics.bodyFormat, 'unparsed');
   assert.equal(unparsed.diagnostics.bodyLength, 8);
+});
+
+test('normalizes the observed Sol transport alias but keeps thinking independent', () => {
+  assert.equal(extractRequestEvidence('{"model":"gpt-5.6-sol-wm"}').model, 'gpt-5.6-sol');
+  assert.equal(extractRequestEvidence('{"model":"gpt-5-6-thinking"}').model, 'gpt-5-6-thinking');
+});
+
+test('rewrites a disallowed top-level model to the known Sol transport id', () => {
+  const result = rewriteConversationPostData(
+    JSON.stringify({ model: 'gpt-5-6-thinking', messages: [{ content: 'keep me' }] }),
+    { lockedModels: ['gpt-5.6-sol'], allowedReasoningLevels: ['high'], preferredReasoning: 'high' },
+  );
+  assert.equal(result.changed, true);
+  assert.equal(result.modelBefore, 'gpt-5-6-thinking');
+  assert.equal(result.modelAfter, 'gpt-5.6-sol');
+  assert.equal(result.transportModelAfter, 'gpt-5.6-sol-wm');
+  assert.deepEqual(JSON.parse(result.postData).messages, [{ content: 'keep me' }]);
+});
+
+test('preserves an already allowed Sol transport alias instead of rewriting it', () => {
+  const source = JSON.stringify({ model: 'gpt-5.6-sol-wm' });
+  const result = rewriteConversationPostData(source, {
+    lockedModels: ['gpt-5.6-sol', 'gpt-5.5'],
+    allowedReasoningLevels: ['high'],
+    preferredReasoning: 'high',
+  });
+  assert.equal(result.changed, false);
+  assert.equal(result.reason, 'already_locked');
+  assert.equal(result.postData, source);
+});
+
+test('rewrites only existing top-level reasoning fields to the preferred allowed level', () => {
+  const result = rewriteConversationPostData(
+    JSON.stringify({ model: 'gpt-5.6-sol-wm', reasoning_effort: 'low', metadata: { reasoning_effort: 'low' } }),
+    {
+      lockedModels: ['gpt-5.6-sol'],
+      allowedReasoningLevels: ['medium', 'high'],
+      preferredReasoning: 'high',
+    },
+  );
+  const parsed = JSON.parse(result.postData);
+  assert.equal(parsed.reasoning_effort, 'high');
+  assert.equal(parsed.metadata.reasoning_effort, 'low');
+  assert.deepEqual(result.reasoningFields, ['reasoning_effort']);
+});
+
+test('does not invent absent reasoning fields while locking the model', () => {
+  const result = rewriteConversationPostData(
+    JSON.stringify({ model: 'gpt-5-6-thinking', metadata: { reasoning_effort: 'low' } }),
+    {
+      lockedModels: ['gpt-5.6-sol'],
+      allowedReasoningLevels: ['high'],
+      preferredReasoning: 'high',
+    },
+  );
+  const parsed = JSON.parse(result.postData);
+  assert.equal(Object.hasOwn(parsed, 'reasoning_effort'), false);
+  assert.equal(parsed.metadata.reasoning_effort, 'low');
+});
+
+test('fails open for invalid JSON or a missing top-level model field', () => {
+  const invalid = rewriteConversationPostData('not-json', { lockedModels: ['gpt-5.6-sol'] });
+  assert.equal(invalid.changed, false);
+  assert.equal(invalid.reason, 'request_body_not_json_object');
+  const missing = rewriteConversationPostData('{"metadata":{"model":"gpt-5.5"}}', {
+    lockedModels: ['gpt-5.6-sol'],
+  });
+  assert.equal(missing.changed, false);
+  assert.equal(missing.reason, 'top_level_model_missing');
 });

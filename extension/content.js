@@ -31,6 +31,12 @@
     'button[aria-label="发送提示"]',
     'button[aria-label="发送消息"]',
   ];
+  const GENERATING_SELECTORS = [
+    'button[data-testid="stop-button"]',
+    'button[aria-label*="Stop" i]',
+    'button[aria-label*="停止"]',
+  ];
+  const AUTO_PROBE_TEXT = 'GPTLock 自动验证测试：请只回复“验证完成”。';
 
   let reportTimer = null;
   let alignTimer = null;
@@ -43,6 +49,7 @@
   let lastAlignAt = 0;
   let sendConsumedAt = 0;
   let indicator = null;
+  let autoProbeRunning = false;
 
   function elementTexts(element) {
     return [
@@ -68,7 +75,8 @@
     if (!text) return null;
     const compact = text.trim().toLowerCase().replace(/\s+/g, '-');
     const match = compact.match(/gpt-?\d+(?:\.\d+)*(?:-[a-z0-9]+)*/);
-    return match?.[0] ?? null;
+    if (!match) return null;
+    return match[0] === 'gpt-5.6-sol-wm' ? 'gpt-5.6-sol' : match[0];
   }
 
   function normalizeDisplayedReasoning(text) {
@@ -106,25 +114,24 @@
 
   function reasonText(guard) {
     const messages = {
-      waiting_for_response_metadata: '正在等待响应元数据 / Waiting for response metadata',
-      page_selection_not_allowed: '页面模型或推理强度不符合策略 / Page selection is not allowed',
-      page_selection_missing: '页面没有暴露完整选择；请手动授权一次探测 / Page selection is incomplete; arm one probe manually',
-      first_probe_not_armed: '首次探测请求尚未授权 / First probe request is not armed',
-      network_monitor_disabled: '网络验证已关闭 / Network verification is disabled',
-      network_monitor_not_attached: '网络验证器未连接 / Network verifier is not attached',
-      native_core_offline: '本地核心离线 / Native Core is offline',
-      metadata_missing: '响应缺少可验证元数据 / Verifiable response metadata is missing',
+      waiting_for_response_metadata: '请求已锁定，正在等待响应确认 / Request locked; waiting for response metadata',
+      page_selection_not_allowed: '页面选择与策略不同；正式请求仍会尝试锁定 / UI differs; the formal request will still be locked',
+      page_selection_missing: '页面没有暴露完整选择；正式请求仍会尝试锁定 / UI selection is incomplete; request locking still applies',
+      response_verification_disabled: '响应确认已关闭；请求锁定仍启用 / Response verification is off; request locking remains active',
+      network_monitor_not_attached: '请求锁定器未连接；聊天不会因此被阻断 / Request lock is not attached; chat remains fail-open',
+      native_core_offline: '本地核心离线；请求锁定仍由扩展尝试执行 / Native Core is offline; extension request locking remains active',
+      metadata_missing: '响应确认元数据不完整；不会因此阻断聊天 / Response metadata is incomplete; chat remains available',
       model_missing: '响应未暴露可验证模型字段 / Response did not expose a verifiable model field',
       reasoning_missing: '响应未暴露可验证推理强度字段 / Response did not expose a verifiable reasoning field',
-      model_not_allowed: '响应模型不在允许列表 / Response model is not allowed',
-      reasoning_not_allowed: '响应推理强度不在允许列表 / Response reasoning is not allowed',
+      model_not_allowed: '响应确认模型与锁定策略不一致 / Confirmed response model mismatches the lock policy',
+      reasoning_not_allowed: '响应推理强度与策略不一致；仅告警 / Response reasoning mismatches policy; warning only',
       evidence_source_insufficient: '证据来源不足 / Evidence source is insufficient',
       evidence_stale: '响应证据已过期 / Response evidence is stale',
       gptlock_disabled: 'GPTLock 已关闭 / GPTLock is disabled',
       policy_mismatch: '响应元数据与策略不匹配 / Response metadata mismatches policy',
-      verification_error: '验证发生错误 / Verification error',
+      verification_error: '响应确认发生错误；聊天保持可用 / Response verification failed; chat remains available',
     };
-    return messages[guard?.reason] || guard?.reason || '状态尚未验证 / State is not verified';
+    return messages[guard?.reason] || guard?.reason || '请求锁定准备中 / Request lock is preparing';
   }
 
   function ensureIndicator() {
@@ -138,7 +145,8 @@
         button{border:1px solid rgba(15,23,42,.16);border-radius:999px;padding:7px 10px;
           color:#fff;background:#64748b;font:700 12px/1.2 system-ui,sans-serif;box-shadow:0 5px 18px rgba(15,23,42,.16);cursor:pointer}
         button[data-tone="good"]{background:#15803d} button[data-tone="bad"]{background:#b91c1c}
-        button[data-tone="wait"]{background:#b45309} button:focus{outline:3px solid #bfdbfe}
+        button[data-tone="wait"]{background:#b45309} button[data-tone="lock"]{background:#2563eb}
+        button:focus{outline:3px solid #bfdbfe}
       </style>
       <button type="button" title="打开 GPTLock 设置 / Open GPTLock settings">GPTLock · 检查中</button>`;
     root.querySelector('button').addEventListener('click', () => {
@@ -154,18 +162,17 @@
     const button = host.shadowRoot.querySelector('button');
     const guard = cachedState?.guard;
     const labels = {
-      verified: ['已验证', 'good'],
-      mismatch: ['不匹配', 'bad'],
-      preflight_mismatch: ['选择不符', 'bad'],
-      preflight_unknown: ['选择未知', 'wait'],
-      waiting: ['验证中', 'wait'],
-      probe_ready: ['可探测', 'wait'],
-      unverified: ['未验证', 'bad'],
-      error: ['错误', 'bad'],
-      monitor_offline: ['验证器离线', 'bad'],
-      monitor_disabled: ['验证已关闭', 'bad'],
-      core_offline: ['核心离线', 'bad'],
-      initial_block: ['已阻断', 'bad'],
+      lock_ready: ['请求已锁', 'lock'],
+      verified: ['已确认', 'good'],
+      mismatch: [guard?.canSend ? '有告警' : '模型不符', guard?.canSend ? 'wait' : 'bad'],
+      preflight_mismatch: ['页面不同', 'wait'],
+      preflight_unknown: ['页面未知', 'wait'],
+      waiting: ['等待确认', 'wait'],
+      unverified: ['确认不足', 'wait'],
+      error: ['确认错误', 'wait'],
+      monitor_offline: ['锁定器离线', 'wait'],
+      verification_disabled: ['仅请求锁', 'lock'],
+      core_offline: ['核心离线', 'wait'],
       disabled: ['已关闭', 'off'],
     };
     const [label, tone] = labels[guard?.status] || ['检查中', 'wait'];
@@ -201,15 +208,16 @@
     scheduleAlign();
   }
 
-  function locallyConsumeGuard() {
-    if (!cachedState?.guard || ['warning', 'disabled', 'outside_scope'].includes(cachedState.guard.allowKind)) return;
+  function locallyMarkSendStarted() {
+    if (!cachedState?.guard || !cachedSettings?.networkVerificationEnabled) return;
+    if (['disabled', 'outside_scope'].includes(cachedState.guard.allowKind)) return;
     cachedState = {
       ...cachedState,
       phase: 'waiting',
       guard: {
         ...cachedState.guard,
-        canSend: false,
-        allowKind: 'blocked',
+        canSend: true,
+        allowKind: 'locked',
         status: 'waiting',
         reason: 'waiting_for_response_metadata',
       },
@@ -233,7 +241,7 @@
       return false;
     }
     sendConsumedAt = Date.now();
-    locallyConsumeGuard();
+    locallyMarkSendStarted();
     void sendMessage({ type: 'GPTLOCK_SEND_STARTED' }).catch(() => {});
     return true;
   }
@@ -291,39 +299,51 @@
   }
 
   async function chooseExact(triggerSelectors, desired, normalize) {
-    const trigger = triggerSelectors.map((selector) => document.querySelector(selector)).find(Boolean);
-    if (!trigger || !visible(trigger)) return false;
+    const trigger = triggerSelectors.map((selector) => document.querySelector(selector)).find((element) => element && visible(element));
+    if (!trigger) return false;
     trigger.click();
-    await new Promise((resolve) => window.setTimeout(resolve, 300));
-    const candidate = menuCandidates().find((element) => normalize(element.textContent) === desired);
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+    const candidate = menuCandidates().find((element) => {
+      for (const text of elementTexts(element)) {
+        if (normalize(text) === desired) return true;
+      }
+      return false;
+    });
     if (!candidate) {
       document.body.click();
       return false;
     }
     candidate.click();
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
     return true;
   }
 
-  async function alignSelection() {
-    if (!cachedSettings?.enabled || !cachedSettings.autoAlignSelection || !cachedPolicy || document.querySelector('button[data-testid="stop-button"]')) return;
+  async function alignSelection({ force = false } = {}) {
+    if (!cachedSettings?.enabled || !cachedSettings.autoAlignSelection || !cachedPolicy || document.querySelector(GENERATING_SELECTORS.join(','))) return false;
     const observation = collectObservation();
     const desiredModel = cachedPolicy.lockedModels?.[0];
     const preferred = cachedPolicy.allowedReasoningLevels?.includes(cachedSettings.preferredReasoning)
       ? cachedSettings.preferredReasoning
       : cachedPolicy.allowedReasoningLevels?.[0];
-    const signature = JSON.stringify([location.pathname, desiredModel, preferred, observation.model, observation.reasoning]);
-    if (signature === lastAlignAttempt && Date.now() - lastAlignAt < 30000) return;
+    const signature = JSON.stringify([location.pathname, desiredModel, preferred, observation.model, observation.reasoning, force]);
+    if (!force && signature === lastAlignAttempt && Date.now() - lastAlignAt < 30000) return false;
     lastAlignAttempt = signature;
     lastAlignAt = Date.now();
 
     let changed = false;
-    if (desiredModel && observation.model && observation.model !== desiredModel) {
-      changed = await chooseExact(MODEL_SELECTORS, desiredModel, normalizeDisplayedModel);
+    if (desiredModel && (force || (observation.model && observation.model !== desiredModel))) {
+      if (observation.model !== desiredModel) {
+        changed = await chooseExact(MODEL_SELECTORS, desiredModel, normalizeDisplayedModel);
+      }
     }
-    if (!changed && preferred && observation.reasoning && observation.reasoning !== preferred) {
-      changed = await chooseExact(REASONING_SELECTORS, preferred, normalizeDisplayedReasoning);
+    const afterModel = changed ? collectObservation() : observation;
+    if (preferred && !changed && (force || (afterModel.reasoning && afterModel.reasoning !== preferred))) {
+      if (afterModel.reasoning !== preferred) {
+        changed = await chooseExact(REASONING_SELECTORS, preferred, normalizeDisplayedReasoning);
+      }
     }
     if (changed) window.setTimeout(() => void report(), 700);
+    return changed;
   }
 
   function scheduleAlign() {
@@ -346,6 +366,142 @@
     }, 900);
   }
 
+  function findComposer() {
+    return COMPOSER_SELECTORS
+      .map((selector) => document.querySelector(selector))
+      .find((element) => element && visible(element)) || null;
+  }
+
+  function composerText(composer) {
+    if (!composer) return '';
+    if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) return composer.value || '';
+    return composer.innerText || composer.textContent || '';
+  }
+
+  function dispatchComposerInput(composer, text) {
+    try {
+      composer.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertText',
+        data: text,
+      }));
+    } catch {
+      composer.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    composer.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function setComposerText(composer, text) {
+    if (composer instanceof HTMLTextAreaElement) {
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+      descriptor?.set?.call(composer, text);
+      dispatchComposerInput(composer, text);
+      return;
+    }
+    if (composer instanceof HTMLInputElement) {
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+      descriptor?.set?.call(composer, text);
+      dispatchComposerInput(composer, text);
+      return;
+    }
+
+    composer.focus();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(composer);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    let inserted = false;
+    try {
+      inserted = document.execCommand('insertText', false, text);
+    } catch {
+      inserted = false;
+    }
+    if (!inserted) {
+      composer.textContent = text;
+      dispatchComposerInput(composer, text);
+    }
+  }
+
+  function findSendButton() {
+    return SEND_SELECTORS
+      .map((selector) => document.querySelector(selector))
+      .find((element) => element && visible(element) && !element.disabled && element.getAttribute('aria-disabled') !== 'true') || null;
+  }
+
+  async function waitUntil(predicate, timeoutMs, intervalMs = 100) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const value = predicate();
+      if (value) return value;
+      await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+    }
+    return null;
+  }
+
+  async function waitForIdle() {
+    const idle = await waitUntil(
+      () => !document.querySelector(GENERATING_SELECTORS.join(',')),
+      30000,
+      250,
+    );
+    if (!idle) throw new Error('ChatGPT is still generating / ChatGPT 仍在生成回复');
+  }
+
+  async function autoSendProbe() {
+    if (autoProbeRunning) throw new Error('Automatic verification is already running / 自动验证正在进行');
+    autoProbeRunning = true;
+    try {
+      await waitForIdle();
+      await alignSelection({ force: true });
+      await new Promise((resolve) => window.setTimeout(resolve, 450));
+
+      const composer = await waitUntil(findComposer, 5000, 100);
+      if (!composer) throw new Error('ChatGPT composer not found / 未找到 ChatGPT 输入框');
+      const originalDraft = composerText(composer);
+      const draftPreserved = Boolean(originalDraft.trim());
+
+      setComposerText(composer, AUTO_PROBE_TEXT);
+      const filled = await waitUntil(() => composerText(composer).includes('GPTLock 自动验证测试'), 2500, 80);
+      if (!filled) throw new Error('Failed to write visible test message / 无法写入可见测试消息');
+
+      const sendButton = await waitUntil(findSendButton, 5000, 100);
+      if (!sendButton) {
+        if (draftPreserved) setComposerText(composer, originalDraft);
+        throw new Error('ChatGPT send button is unavailable / ChatGPT 发送按钮不可用');
+      }
+      sendButton.click();
+
+      const sent = await waitUntil(() => {
+        const currentComposer = findComposer();
+        const current = composerText(currentComposer);
+        return !current.includes('GPTLock 自动验证测试') || Boolean(document.querySelector(GENERATING_SELECTORS.join(',')));
+      }, 5000, 100);
+      if (!sent) {
+        if (draftPreserved) setComposerText(composer, originalDraft);
+        throw new Error('Visible test message was not accepted by ChatGPT / 可见测试消息未被 ChatGPT 接收');
+      }
+
+      let draftRestored = false;
+      if (draftPreserved) {
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
+        const restoreComposer = await waitUntil(findComposer, 3000, 100);
+        if (restoreComposer) {
+          setComposerText(restoreComposer, originalDraft);
+          draftRestored = composerText(restoreComposer).trim() === originalDraft.trim();
+        }
+      }
+      return {
+        sent: true,
+        method: 'visible_composer_click',
+        draftPreserved,
+        draftRestored,
+      };
+    } finally {
+      autoProbeRunning = false;
+    }
+  }
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === 'GPTLOCK_COLLECT_PAGE_STATE') {
       sendResponse({ ok: true, observation: collectObservation() });
@@ -355,6 +511,16 @@
       updateCache(message);
       sendResponse({ ok: true });
       return false;
+    }
+    if (message?.type === 'GPTLOCK_AUTO_SEND_PROBE') {
+      void autoSendProbe().then(
+        (result) => sendResponse({ ok: true, ...result }),
+        (error) => sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      return true;
     }
     return false;
   });

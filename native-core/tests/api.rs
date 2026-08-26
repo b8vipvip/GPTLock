@@ -81,7 +81,7 @@ async fn dom_evidence_cannot_become_verified() {
     let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
     let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(result["verdict"], "unverified");
-    assert_eq!(result["decision"], "block");
+    assert_eq!(result["decision"], "warn");
 }
 
 #[tokio::test]

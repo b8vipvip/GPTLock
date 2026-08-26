@@ -20,7 +20,7 @@
 
 ## Windows 10/11 x64
 
-> 只在 `chrome://extensions` 加载源码目录不会安装 Native Core。若弹窗显示 `Specified native messaging host not found`，必须先运行 Windows Setup；弹窗会直接提供安装入口。0.3.3 的安装/修复流程会验证真实 Native Messaging 协议往返。
+> 只在 `chrome://extensions` 加载源码目录不会安装 Native Core。若弹窗显示 `Specified native messaging host not found`，必须先运行 Windows Setup；弹窗会直接提供安装入口。0.3.4 的安装/修复流程会验证真实 Native Messaging 协议往返。
 
 1. 下载 `GPTLockSetup-x64.exe` 和 `SHA256SUMS.txt`。可选地验证哈希：
 
@@ -55,7 +55,7 @@
    bhchcpeodphgjfjoookncemnamdbfcof
    ```
 
-5. 完全退出所有 Chrome/Edge 进程，再重新启动。打开 `chatgpt.com`，点击 GPTLock 图标，确认“本地核心已连接”和“网络验证已连接”。
+5. 完全退出所有 Chrome/Edge 进程，再重新启动。打开 `chatgpt.com`，点击 GPTLock 图标，确认“本地核心已连接”和“请求锁定器已连接”。
 
 若仍显示本地核心离线，可从开始菜单运行“修复 GPTLock 浏览器连接”，或执行：
 
@@ -69,7 +69,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\GPTLock\t
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\AI\GPTLock\tools\Repair-GPTLock.ps1"
 ```
 
-若要把已有默认安装迁移到 `D:\AI\GPTLock`，完全退出浏览器后直接运行 0.3.3 或更新版本的 Setup，在安装目录页选择新路径；然后从扩展管理页移除旧的 unpacked 实例，加载 `D:\AI\GPTLock\extension`，确认固定 ID 后重启浏览器。
+若要把已有默认安装迁移到 `D:\AI\GPTLock`，完全退出浏览器后直接运行 0.3.4 或更新版本的 Setup，在安装目录页选择新路径；然后从扩展管理页移除旧的 unpacked 实例，加载 `D:\AI\GPTLock\extension`，确认固定 ID 后重启浏览器。
 
 浏览器不会允许普通本地安装器静默安装未上架商店的扩展，因此仍需手动执行一次“加载已解压”。这是预期行为，不应通过篡改浏览器策略绕过。
 
@@ -142,10 +142,20 @@ Windows：
 
 诊断输出不包含 API 令牌或聊天正文。用户数据位于 Linux `~/.gptlock` 或 Windows `%USERPROFILE%\.gptlock`。
 
+## 安装后的 0.3.4 使用要点
+
+安装完成后不需要先“验证成功”才能聊天。GPTLock 0.3.4 的主功能是正式 conversation POST 的发送前请求锁定；Native Core 的响应验证是附加确认。
+
+如果弹窗显示 Native Core 离线，但“请求锁定器”仍在线，浏览器侧会继续尝试锁定正式请求，同时对响应审计能力给出告警。若请求锁定器也离线，通常是同一 ChatGPT 标签页被 DevTools 或其他调试器占用；关闭冲突调试器后点击“重新连接”。
+
+“自动验证”会在当前 ChatGPT 对话自动发送一条可见测试消息，不需要人工再点击发送。
+
 ## English
 
 Download the Windows x64 Setup or Debian/Ubuntu amd64 package from GitHub Releases and verify it against `SHA256SUMS.txt`. Windows defaults to `%LOCALAPPDATA%\GPTLock`, but the Setup directory page may be changed to a custom root such as `D:\AI\GPTLock`; Linux installs the core to `/usr/bin` and the extension to `/usr/share/gptlock/extension`.
 
-In the browser, enable Developer mode and use **Load unpacked** on the selected install root's `extension` directory. Verify the stable ID `bhchcpeodphgjfjoookncemnamdbfcof`, then fully restart the browser. Loading the extension directory alone does not install the Native Core. If Chromium reports a missing host or a native-host communication failure, run Setup or the installed `Repair-GPTLock.ps1`; v0.3.3 verifies a real framed protocol round trip. A normal local installer cannot silently install an unpacked, non-store Chromium extension, so this one manual browser step is intentional.
+In the browser, enable Developer mode and use **Load unpacked** on the selected install root's `extension` directory. Verify the stable ID `bhchcpeodphgjfjoookncemnamdbfcof`, then fully restart the browser. Loading the extension directory alone does not install the Native Core. If Chromium reports a missing host or a native-host communication failure, run Setup or the installed `Repair-GPTLock.ps1`; v0.3.4 verifies a real framed protocol round trip. A normal local installer cannot silently install an unpacked, non-store Chromium extension, so this one manual browser step is intentional.
+
+GPTLock 0.3.4 does not require a successful response verification before normal chat. The browser-side formal-request lock is the primary control; Native Core response verification is supplementary. If DevTools detaches the request interceptor, close DevTools and click Reconnect. Auto verify sends its visible test message automatically.
 
 The Linux systemd user unit is optional because Native Messaging launches the core on demand. Enable it only when the loopback HTTP API should stay available. Source installation scripts are also provided for per-user development installs.

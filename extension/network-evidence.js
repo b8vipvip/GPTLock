@@ -1,4 +1,8 @@
-import { normalizeModelId, normalizeReasoningLevel } from './policy.js';
+import {
+  modelTransportId,
+  normalizeModelId,
+  normalizeReasoningLevel,
+} from './policy.js';
 
 const MODEL_KEYS = new Set([
   'model_slug',
@@ -38,6 +42,10 @@ const REASONING_HEADERS = [
   'x-reasoning-effort',
   'x-reasoning-level',
 ];
+const OFFICIAL_CONVERSATION_PATHS = new Set([
+  '/backend-api/conversation',
+  '/backend-api/f/conversation',
+]);
 const MAX_WALK_DEPTH = 14;
 const MAX_BODY_CHARS = 16 * 1024 * 1024;
 
@@ -293,13 +301,100 @@ export function extractRequestEvidence(postData = '') {
   };
 }
 
+function normalizedUnique(values, normalize) {
+  return [...new Set((Array.isArray(values) ? values : []).map(normalize).filter(Boolean))];
+}
+
+function reasoningTransportValue(level, rawKey) {
+  if (level !== 'extra-high') return level;
+  return canonicalKey(rawKey).includes('thinking') ? 'xhigh' : 'extra_high';
+}
+
+export function rewriteConversationPostData(postData = '', configuration = {}) {
+  const result = {
+    postData: typeof postData === 'string' ? postData : '',
+    changed: false,
+    reason: null,
+    modelBefore: null,
+    modelAfter: null,
+    transportModelBefore: null,
+    transportModelAfter: null,
+    reasoningBefore: null,
+    reasoningAfter: null,
+    reasoningFields: [],
+  };
+  const parsed = typeof postData === 'string' ? parseJson(postData) : null;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    result.reason = 'request_body_not_json_object';
+    return result;
+  }
+
+  const lockedModels = normalizedUnique(configuration.lockedModels, normalizeModelId);
+  if (!lockedModels.length) {
+    result.reason = 'no_locked_model';
+    return result;
+  }
+  if (typeof parsed.model !== 'string') {
+    result.reason = 'top_level_model_missing';
+    return result;
+  }
+
+  result.transportModelBefore = parsed.model;
+  result.modelBefore = normalizeModelId(parsed.model);
+  const targetModel = result.modelBefore && lockedModels.includes(result.modelBefore)
+    ? result.modelBefore
+    : lockedModels[0];
+  const targetTransport = result.modelBefore === targetModel
+    ? parsed.model
+    : modelTransportId(targetModel);
+  if (!targetTransport) {
+    result.reason = 'locked_model_invalid';
+    return result;
+  }
+  if (parsed.model !== targetTransport) {
+    parsed.model = targetTransport;
+    result.changed = true;
+  }
+  result.transportModelAfter = parsed.model;
+  result.modelAfter = normalizeModelId(parsed.model);
+
+  const allowedReasoning = normalizedUnique(
+    configuration.allowedReasoningLevels,
+    normalizeReasoningLevel,
+  );
+  const preferredReasoning = normalizeReasoningLevel(configuration.preferredReasoning);
+  const targetReasoning = preferredReasoning && allowedReasoning.includes(preferredReasoning)
+    ? preferredReasoning
+    : allowedReasoning[0] ?? null;
+
+  const reasoningValues = [];
+  for (const [rawKey, rawValue] of Object.entries(parsed)) {
+    if (!REASONING_KEYS.has(canonicalKey(rawKey)) || typeof rawValue !== 'string') continue;
+    result.reasoningFields.push(rawKey);
+    const current = normalizeReasoningLevel(rawValue);
+    reasoningValues.push(current);
+    if (targetReasoning && current !== targetReasoning) {
+      parsed[rawKey] = reasoningTransportValue(targetReasoning, rawKey);
+      result.changed = true;
+    }
+  }
+  result.reasoningBefore = reasoningValues.find(Boolean) ?? null;
+  result.reasoningAfter = result.reasoningFields.length
+    ? normalizeReasoningLevel(parsed[result.reasoningFields[0]])
+    : null;
+
+  if (result.changed) result.postData = JSON.stringify(parsed);
+  result.reason = result.changed ? 'rewritten' : 'already_locked';
+  return result;
+}
+
 export function isChatGptConversationRequest(url, method = 'GET') {
   if (String(method).toUpperCase() !== 'POST') return false;
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== 'https:' || parsed.hostname !== 'chatgpt.com') return false;
-    if (!parsed.pathname.startsWith('/backend-api/')) return false;
-    return /(?:conversation|responses?|messages?|codex)/i.test(parsed.pathname);
+    return parsed.protocol === 'https:'
+      && parsed.hostname === 'chatgpt.com'
+      && OFFICIAL_CONVERSATION_PATHS.has(parsed.pathname);
   } catch {
     return false;
   }

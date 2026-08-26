@@ -24,13 +24,27 @@ export const REASONING_LEVELS = Object.freeze([
   { id: 'extra-high', labelZh: '超高', labelEn: 'Extra High' },
 ]);
 
+const MODEL_ALIASES = Object.freeze({
+  'gpt-5.6-sol-wm': 'gpt-5.6-sol',
+});
+
+const MODEL_TRANSPORT_IDS = Object.freeze({
+  'gpt-5.6-sol': 'gpt-5.6-sol-wm',
+});
+
 function unique(values) {
   return [...new Set(values)];
 }
 
 export function normalizeModelId(value) {
   const model = String(value ?? '').trim().toLowerCase();
-  return /^[a-z0-9._:-]{1,128}$/.test(model) ? model : null;
+  if (!/^[a-z0-9._:-]{1,128}$/.test(model)) return null;
+  return MODEL_ALIASES[model] ?? model;
+}
+
+export function modelTransportId(value) {
+  const model = normalizeModelId(value);
+  return model ? MODEL_TRANSPORT_IDS[model] ?? model : null;
 }
 
 export function normalizeReasoningLevel(value) {

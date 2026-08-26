@@ -31,6 +31,8 @@ const elements = {
   installCore: document.getElementById('installCore'),
 };
 
+let loadedSettings = normalizeSettings();
+
 function checkbox(container, name, id, label, detail = '') {
   const row = document.createElement('label');
   row.className = 'check-row';
@@ -89,12 +91,12 @@ function renderStatus(nativeStatus = {}) {
     : '本地核心离线 / Core offline';
   elements.nativeStatus.textContent = connected
     ? `已连接 / Connected${nativeStatus.policyRevision ? ` · ${nativeStatus.policyRevision}` : ''}`
-    : nativeStatus.lastError || '未连接 / Not connected';
+    : `${nativeStatus.lastError || '未连接 / Not connected'} · 请求锁定器可独立运行`;
   elements.installHelp.hidden = connected;
   if (!connected) {
     const help = nativeHelp(nativeStatus.errorCode || classifyNativeError(nativeStatus.lastError));
     elements.installTitle.textContent = help.title;
-    elements.installDetail.textContent = help.detail;
+    elements.installDetail.textContent = `${help.detail} 本地核心离线不会把日常聊天卡死；扩展仍会尝试网络层请求锁定。`;
   }
 
   const verification = nativeStatus.lastVerification;
@@ -116,17 +118,16 @@ async function load() {
   const state = await sendMessage({ type: 'GPTLOCK_GET_STATE' });
   elements.extensionVersion.textContent = state.extensionVersion || '';
   const policy = normalizePolicy(state.policy);
-  const settings = normalizeSettings(state.settings);
+  loadedSettings = normalizeSettings(state.settings);
   setSelected('model', policy.lockedModels);
   setSelected('reasoning', policy.allowedReasoningLevels);
   const known = new Set(KNOWN_MODELS.map((model) => model.id));
   elements.customModels.value = policy.lockedModels.filter((model) => !known.has(model)).join(', ');
   document.querySelector(`input[name="mode"][value="${policy.strictMode}"]`).checked = true;
-  elements.preferredReasoning.value = settings.preferredReasoning;
-  elements.enabled.checked = settings.enabled;
-  elements.networkVerification.checked = settings.networkVerificationEnabled;
-  elements.autoAlignSelection.checked = settings.autoAlignSelection;
-  document.querySelector(`input[name="firstRequestMode"][value="${settings.firstRequestMode}"]`).checked = true;
+  elements.preferredReasoning.value = loadedSettings.preferredReasoning;
+  elements.enabled.checked = loadedSettings.enabled;
+  elements.networkVerification.checked = loadedSettings.networkVerificationEnabled;
+  elements.autoAlignSelection.checked = loadedSettings.autoAlignSelection;
   renderStatus(state.nativeStatus);
 }
 
@@ -152,13 +153,14 @@ async function save() {
     preferredReasoning,
     networkVerificationEnabled: elements.networkVerification.checked,
     autoAlignSelection: elements.autoAlignSelection.checked,
-    firstRequestMode: document.querySelector('input[name="firstRequestMode"]:checked')?.value || 'allow_once',
+    firstRequestMode: loadedSettings.firstRequestMode,
   };
   await chrome.storage.sync.set({
     policy: { lockedModels, allowedReasoningLevels, strictMode },
     settings,
   });
-  elements.formMessage.textContent = '已保存，正在同步本地核心 / Saved; syncing with the local core.';
+  loadedSettings = normalizeSettings(settings);
+  elements.formMessage.textContent = '已保存；请求锁定策略已同步 / Saved; request-lock policy synced.';
   window.setTimeout(() => void load().catch(() => {}), 700);
 }
 
@@ -178,15 +180,20 @@ elements.reconnect.addEventListener('click', () => {
 });
 
 elements.autoVerify.addEventListener('click', () => {
-  elements.formMessage.textContent = '正在准备自动验证 / Preparing automatic verification…';
+  elements.formMessage.textContent = '正在自动对齐并发送可见测试消息 / Sending visible verification message…';
+  elements.autoVerify.disabled = true;
   void sendMessage({ type: 'GPTLOCK_AUTO_VERIFY' })
-    .then((result) => {
-      elements.formMessage.textContent = result.ready
-        ? '已准备；切回 ChatGPT 正常发送一条消息 / Ready; return to ChatGPT and send one normal message.'
-        : `尚未就绪 / Not ready · ${result.tabState?.guard?.reason || result.tabState?.guard?.status || 'unknown'}`;
+    .then(async (result) => {
+      await load();
+      elements.formMessage.textContent = result.sent
+        ? '已自动发送可见测试消息；无需人工发送，响应完成后自动确认 / Visible test sent automatically.'
+        : `自动验证未发送 / Not sent · ${result.tabState?.guard?.reason || result.tabState?.guard?.status || 'unknown'}`;
     })
     .catch((error) => {
       elements.formMessage.textContent = `自动验证失败 / Auto verification failed: ${error.message}`;
+    })
+    .finally(() => {
+      elements.autoVerify.disabled = false;
     });
 });
 
