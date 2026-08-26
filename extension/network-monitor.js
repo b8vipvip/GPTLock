@@ -589,27 +589,8 @@ export class ChatGptNetworkMonitor {
       stage: 'downstream_websocket',
       matchBasis: exact ? socket.matchBasis : 'matched_socket_window',
     });
+    if (direction === 'sent') return;
     const frameId = `ws-${requestId}-${++this.webSocketSequence}`;
-    if (direction === 'sent') {
-      if (!exact) return;
-      this.onStreamData?.(tabId, {
-        requestId: frameId,
-        capturedAt: new Date().toISOString(),
-        rawStreamData: payload,
-        streamContext,
-        diagnostics: {
-          endpoint: socket.endpoint,
-          httpStatus: 101,
-          mimeType: 'application/websocket',
-          bodyFormat: 'websocket_frame',
-          transport: 'websocket',
-          direction,
-          stage: 'downstream_websocket',
-        },
-      });
-      return;
-    }
-
     const evidence = extractResponseEvidence({ body: payload, headers: {}, mimeType: 'application/json' });
     this.onEvidence(tabId, {
       requestId: frameId,

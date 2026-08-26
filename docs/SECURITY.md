@@ -135,4 +135,4 @@ The guard deliberately fails open for debugger detach, Core outage, missing/unre
 
 
 ## v0.3.7 automatic-verification stream capture
-Only the fixed automatic-verification probes may capture post-handoff SSE or WebSocket frames, and WebSocket capture begins only after an exact handoff topic/token marker matches the socket subscription. The aggregate raw stream budget remains 10 MiB. Raw handoff SSE can contain short-lived resume tokens; account cookies, Authorization headers, request/response headers, and ordinary chat bodies remain excluded.
+Only the fixed automatic-verification probes may capture post-handoff SSE or server-to-client WebSocket frames, and WebSocket capture begins only after an exact handoff topic/token marker matches the socket subscription. The aggregate raw stream budget remains 10 MiB. Raw handoff SSE can contain short-lived resume tokens; account cookies, Authorization headers, request/response headers, and ordinary chat bodies remain excluded.
