@@ -14,6 +14,7 @@ function state(patch = {}) {
     probeArmed: false,
     lastVerification: null,
     lastError: null,
+    autoVerification: null,
     ...patch,
   };
 }
@@ -89,6 +90,70 @@ test('verified response remains sendable', () => {
   assert.equal(guard.canSend, true);
   assert.equal(guard.allowKind, 'locked');
   assert.equal(guard.status, 'verified');
+});
+
+test('completed network-backed auto verification survives later metadata-empty frames', () => {
+  const guard = evaluateGuard({
+    state: state({
+      phase: 'unverified',
+      lastVerification: {
+        verdict: 'unverified',
+        reason: 'model_missing',
+        reasons: ['model_missing', 'reasoning_missing'],
+      },
+      autoVerification: {
+        running: false,
+        outcome: 'verified',
+        responseModel: 'gpt-5.6-sol',
+        responseReasoning: 'high',
+        evidenceSource: 'network_response_metadata',
+      },
+    }),
+    policy: DEFAULT_POLICY,
+    settings: DEFAULT_SETTINGS,
+  });
+  assert.equal(guard.canSend, true);
+  assert.equal(guard.allowKind, 'locked');
+  assert.equal(guard.status, 'verified');
+});
+
+test('sticky auto verification requires complete allowed backend evidence', () => {
+  const guard = evaluateGuard({
+    state: state({
+      phase: 'unverified',
+      lastVerification: { reason: 'model_missing', reasons: ['model_missing'] },
+      autoVerification: {
+        running: false,
+        outcome: 'verified',
+        responseModel: 'gpt-5.6-sol',
+        responseReasoning: null,
+        evidenceSource: 'network_response_metadata',
+      },
+    }),
+    policy: DEFAULT_POLICY,
+    settings: DEFAULT_SETTINGS,
+  });
+  assert.equal(guard.status, 'unverified');
+});
+
+test('confirmed mismatch overrides an earlier successful auto verification', () => {
+  const guard = evaluateGuard({
+    state: state({
+      phase: 'mismatch',
+      lastVerification: { reason: 'model_not_allowed', reasons: ['model_not_allowed'] },
+      autoVerification: {
+        running: false,
+        outcome: 'verified',
+        responseModel: 'gpt-5.6-sol',
+        responseReasoning: 'high',
+        evidenceSource: 'network_response_metadata',
+      },
+    }),
+    policy: DEFAULT_POLICY,
+    settings: DEFAULT_SETTINGS,
+  });
+  assert.equal(guard.canSend, false);
+  assert.equal(guard.status, 'mismatch');
 });
 
 test('monitor or Native Core outage warns but does not block normal chat', () => {
