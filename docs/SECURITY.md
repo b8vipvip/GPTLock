@@ -132,3 +132,7 @@ Ordinary-chat request postData and response bodies remain transient and are not 
 A rewritten request proves what GPTLock attempted to send from the official web client; it does **not** cryptographically force or attest OpenAI's internal routing. DOM labels and request metadata never become backend proof. Only response metadata exposed to the browser can provide supplementary served-model evidence.
 
 The guard deliberately fails open for debugger detach, Core outage, missing/unreadable response metadata, DOM gaps, and reasoning mismatches. In strict mode only a confirmed response-model mismatch blocks subsequent sends. Auto verify sends one fixed, visible test message in the active ChatGPT conversation and never hides that action from the user.
+
+
+## v0.3.7 automatic-verification stream capture
+Only the fixed automatic-verification probes may capture post-handoff SSE or WebSocket frames, and WebSocket capture begins only after an exact handoff topic/token marker matches the socket subscription. The aggregate raw stream budget remains 10 MiB. Raw handoff SSE can contain short-lived resume tokens; account cookies, Authorization headers, request/response headers, and ordinary chat bodies remain excluded.

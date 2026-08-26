@@ -68,12 +68,14 @@ test('keeps auto-verification SSE byte-for-byte when the aggregate stays under t
       endpoint: '/backend-api/f/conversation',
       mimeType: 'text/event-stream',
       bodyFormat: 'sse',
-      rawSse: body,
+      transport: 'sse',
+      rawData: body,
     },
     1024,
   );
   assert.equal(capture.entries.length, 1);
   assert.equal(capture.entries[0].rawSse, body);
+  assert.equal(capture.entries[0].transport, 'sse');
   assert.equal(capture.entries[0].bodyBytes, Buffer.byteLength(body));
   assert.equal(capture.includedBytes, Buffer.byteLength(body));
   assert.equal(capture.overflowed, false);
@@ -81,14 +83,35 @@ test('keeps auto-verification SSE byte-for-byte when the aggregate stays under t
 
 test('does not persist a partial raw SSE body when the aggregate size limit would be exceeded', () => {
   let capture = createDiagnosticSseCapture({ tabId: 7 });
-  capture = appendDiagnosticSseCapture(capture, { attempt: 1, requestId: 'a', rawSse: '123456' }, 10);
-  capture = appendDiagnosticSseCapture(capture, { attempt: 2, requestId: 'b', rawSse: 'abcdef' }, 10);
+  capture = appendDiagnosticSseCapture(capture, { attempt: 1, requestId: 'a', transport: 'sse', rawData: '123456' }, 10);
+  capture = appendDiagnosticSseCapture(capture, { attempt: 2, requestId: 'b', transport: 'websocket', rawData: 'abcdef' }, 10);
   assert.equal(capture.entries.length, 1);
   assert.equal(capture.entries[0].rawSse, '123456');
   assert.equal(capture.overflowed, true);
   assert.equal(capture.omittedResponses, 1);
   assert.equal(capture.omittedBytes, 6);
   assert.equal(capture.omitted[0].requestId, 'b');
-  assert.equal(capture.omitted[0].reason, 'diagnostic_sse_size_limit');
+  assert.equal(capture.omitted[0].reason, 'diagnostic_stream_size_limit');
+  assert.equal(capture.captureScope, 'auto_verification_stream_only');
 });
 
+
+
+test('stores matched WebSocket frames under the same aggregate stream budget', () => {
+  const capture = appendDiagnosticSseCapture(
+    createDiagnosticSseCapture({ tabId: 9 }),
+    {
+      attempt: 1,
+      requestId: 'ws-1',
+      transport: 'websocket',
+      direction: 'received',
+      stage: 'downstream_websocket',
+      rawData: '{"type":"message","metadata":{"model_slug":"gpt-5.6-sol"}}',
+    },
+    1024,
+  );
+  assert.equal(capture.entries.length, 1);
+  assert.equal(capture.entries[0].transport, 'websocket');
+  assert.match(capture.entries[0].rawFrame, /model_slug/);
+  assert.equal(capture.entries[0].rawSse, undefined);
+});

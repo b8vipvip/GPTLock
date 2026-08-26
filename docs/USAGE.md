@@ -177,3 +177,7 @@ Response verification is supplementary. Missing DOM fields, Core outages, debugg
 Auto verify is fully automatic: it best-effort aligns the UI, writes a fixed visible test message to the active ChatGPT composer, clicks Send, captures the formal request lock result, then evaluates any response metadata that ChatGPT exposes. Existing drafts are preserved and restored on a best-effort basis.
 
 `gpt-5.6-sol-wm` is normalized as the transport alias of `gpt-5.6-sol`; `gpt-5-6-thinking` remains distinct. Request rewriting shows what the official web client sent, not what OpenAI ultimately routed internally.
+
+
+## v0.3.7 diagnostics
+After automatic verification, export diagnostics and inspect `autoVerificationStream.entries`. Entries identify `transport` (`sse` or `websocket`), direction/stage, handoff context, byte count, and the raw matched stream payload. If the page does not expose a model/reasoning selector, GPTLock does not click unknown UI controls; request locking remains network-layer based.

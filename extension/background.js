@@ -23,7 +23,8 @@ const REQUEST_TIMEOUT_MS = 7000;
 const AUTO_VERIFY_MAX_ATTEMPTS = 2;
 const AUTO_VERIFY_RESPONSE_TIMEOUT_MS = 45000;
 const AUTO_VERIFY_POLL_MS = 200;
-const AUTO_VERIFY_FALLBACK_DELAY_MS = 700;
+const AUTO_VERIFY_HANDOFF_MIN_WAIT_MS = 9000;
+const AUTO_VERIFY_HANDOFF_IDLE_MS = 1200;
 const DIAGNOSTIC_SSE_STORAGE_KEY = 'autoVerificationSseCapture';
 
 let nativePort = null;
@@ -42,19 +43,25 @@ function logRuntime(level, component, event, details = {}) {
   void appendRuntimeLog(level, component, event, details).catch(() => {});
 }
 
-async function startAutoVerificationSseCapture(tabId, startedAt) {
+async function startAutoVerificationStreamCapture(tabId, startedAt) {
   const capture = createDiagnosticSseCapture({ tabId, startedAt });
   await chrome.storage.local.set({ [DIAGNOSTIC_SSE_STORAGE_KEY]: capture });
   return capture;
 }
 
-async function captureAutoVerificationSse(tabId, state, evidence) {
-  const rawSse = evidence?.rawResponseBody;
+async function captureAutoVerificationStream(tabId, state, evidence) {
+  const rawData = typeof evidence?.rawStreamData === 'string'
+    ? evidence.rawStreamData
+    : evidence?.rawResponseBody;
   const mimeType = String(evidence?.diagnostics?.mimeType || '');
   const bodyFormat = String(evidence?.diagnostics?.bodyFormat || '');
-  if (!state.autoVerification?.running || typeof rawSse !== 'string' || !rawSse) return null;
-  if (!/event-stream/i.test(mimeType) && !bodyFormat.includes('sse')) return null;
-  if (state.lastRequest?.requestId && state.lastRequest.requestId !== evidence.requestId) return null;
+  const transport = evidence?.streamContext?.transport
+    || evidence?.diagnostics?.transport
+    || (/event-stream/i.test(mimeType) || bodyFormat.includes('sse') ? 'sse' : 'unknown');
+  const isDownstream = Boolean(evidence?.streamContext?.isDownstream);
+  if (!state.autoVerification?.running || typeof rawData !== 'string' || !rawData) return null;
+  if (transport === 'unknown' && !isDownstream) return null;
+  if (!isDownstream && state.lastRequest?.requestId && state.lastRequest.requestId !== evidence.requestId) return null;
 
   const stored = await chrome.storage.local.get(DIAGNOSTIC_SSE_STORAGE_KEY);
   let capture = stored[DIAGNOSTIC_SSE_STORAGE_KEY];
@@ -70,15 +77,22 @@ async function captureAutoVerificationSse(tabId, state, evidence) {
     httpStatus: evidence.diagnostics?.httpStatus ?? evidence.status ?? null,
     mimeType,
     bodyFormat,
+    transport,
+    direction: evidence?.streamContext?.direction ?? evidence?.diagnostics?.direction ?? 'received',
+    stage: evidence?.streamContext?.stage ?? evidence?.diagnostics?.stage ?? null,
+    streamContext: evidence?.streamContext ?? null,
     requestModel: state.lastRequest?.model ?? null,
     rewriteReason: state.lastRewrite?.reason ?? null,
-    rawSse,
+    rawData,
   });
   await chrome.storage.local.set({ [DIAGNOSTIC_SSE_STORAGE_KEY]: next });
-  logRuntime(next.overflowed ? 'warn' : 'info', 'diagnostics', 'auto_verify_sse_captured', {
+  logRuntime(next.overflowed ? 'warn' : 'info', 'diagnostics', 'auto_verify_stream_captured', {
     tabId,
     attempt: state.autoVerification.attempt ?? null,
     requestId: evidence.requestId ?? null,
+    transport,
+    direction: evidence?.streamContext?.direction ?? evidence?.diagnostics?.direction ?? 'received',
+    stage: evidence?.streamContext?.stage ?? evidence?.diagnostics?.stage ?? null,
     addedBytes: Math.max(0, Number(next.includedBytes || 0) - beforeIncludedBytes),
     includedBytes: next.includedBytes,
     totalBytes: next.totalBytes,
@@ -89,7 +103,7 @@ async function captureAutoVerificationSse(tabId, state, evidence) {
   return next;
 }
 
-async function finalizeAutoVerificationSseCapture(tabId, completedAt) {
+async function finalizeAutoVerificationStreamCapture(tabId, completedAt) {
   const stored = await chrome.storage.local.get(DIAGNOSTIC_SSE_STORAGE_KEY);
   let capture = stored[DIAGNOSTIC_SSE_STORAGE_KEY];
   const state = tabStates.get(tabId);
@@ -101,7 +115,7 @@ async function finalizeAutoVerificationSseCapture(tabId, completedAt) {
   return finalized;
 }
 
-async function clearAutoVerificationSseCapture() {
+async function clearAutoVerificationStreamCapture() {
   await chrome.storage.local.remove(DIAGNOSTIC_SSE_STORAGE_KEY);
 }
 
@@ -140,6 +154,7 @@ function createTabState(tabId, url = '') {
     lastRequest: null,
     lastVerification: null,
     lastEvidenceDiagnostics: null,
+    streamTracking: null,
     evidenceIssue: null,
     lastError: null,
     autoVerification: null,
@@ -203,6 +218,7 @@ function publicTabState(state) {
     lastRequest: state.lastRequest,
     lastVerification: state.lastVerification,
     lastEvidenceDiagnostics: state.lastEvidenceDiagnostics,
+    streamTracking: state.streamTracking,
     evidenceIssue: state.evidenceIssue,
     lastError: state.lastError,
     autoVerification: state.autoVerification,
@@ -421,10 +437,35 @@ function diagnoseEvidenceIssue(evidence, result) {
 
 async function applyNetworkEvidence(tabId, evidence) {
   const state = ensureTabState(tabId);
+  const handoff = evidence?.diagnostics?.streamHandoff;
+  if (handoff) {
+    state.streamTracking = {
+      detectedAt: Date.now(),
+      lastActivityAt: Date.now(),
+      downstreamEvidenceCount: 0,
+      transports: [],
+      handoff,
+    };
+    logRuntime('info', 'network', 'stream_handoff_detected', { tabId, handoff });
+  }
+  if (evidence?.streamContext?.isDownstream) {
+    const tracking = state.streamTracking || {
+      detectedAt: Date.now(),
+      lastActivityAt: Date.now(),
+      downstreamEvidenceCount: 0,
+      transports: [],
+      handoff: null,
+    };
+    tracking.lastActivityAt = Date.now();
+    tracking.downstreamEvidenceCount += 1;
+    const transport = evidence.streamContext.transport || evidence?.diagnostics?.transport || 'unknown';
+    if (!tracking.transports.includes(transport)) tracking.transports.push(transport);
+    state.streamTracking = tracking;
+  }
   try {
-    await captureAutoVerificationSse(tabId, state, evidence);
+    await captureAutoVerificationStream(tabId, state, evidence);
   } catch (error) {
-    logRuntime('warn', 'diagnostics', 'auto_verify_sse_capture_failed', { tabId, error: errorText(error) });
+    logRuntime('warn', 'diagnostics', 'auto_verify_stream_capture_failed', { tabId, error: errorText(error) });
   } finally {
     evidence.rawResponseBody = null;
   }
@@ -545,6 +586,25 @@ const networkMonitor = new ChatGptNetworkMonitor({
   onEvidence(tabId, evidence) {
     void applyNetworkEvidence(tabId, evidence);
   },
+  onStreamData(tabId, streamData) {
+    const state = ensureTabState(tabId);
+    if (streamData?.streamContext?.isDownstream) {
+      const tracking = state.streamTracking || {
+        detectedAt: Date.now(),
+        lastActivityAt: Date.now(),
+        downstreamEvidenceCount: 0,
+        transports: [],
+        handoff: null,
+      };
+      tracking.lastActivityAt = Date.now();
+      const transport = streamData.streamContext.transport || streamData?.diagnostics?.transport || 'unknown';
+      if (!tracking.transports.includes(transport)) tracking.transports.push(transport);
+      state.streamTracking = tracking;
+    }
+    void captureAutoVerificationStream(tabId, state, streamData).catch((error) => {
+      logRuntime('warn', 'diagnostics', 'auto_verify_stream_capture_failed', { tabId, error: errorText(error) });
+    });
+  },
   onFailure(tabId, failure) {
     logRuntime('error', 'network', 'response_loading_failed', {
       tabId,
@@ -553,6 +613,7 @@ const networkMonitor = new ChatGptNetworkMonitor({
       canceled: failure.canceled,
       error: failure.error,
     });
+    if (failure.downstream) return;
     void applyNetworkEvidence(tabId, {
       requestId: failure.requestId,
       capturedAt: new Date().toISOString(),
@@ -685,6 +746,7 @@ function resetVerificationAttempt(state) {
   state.lastRequest = null;
   state.lastVerification = null;
   state.lastEvidenceDiagnostics = null;
+  state.streamTracking = null;
   state.evidenceIssue = null;
   state.lastError = null;
 }
@@ -696,32 +758,30 @@ function requestLockConfirmed(state) {
   );
 }
 
-function verificationOutcome(state, { timedOut = false, fallbackError = null } = {}) {
+function verificationOutcome(state, { timedOut = false } = {}) {
   const verification = state.lastVerification;
   const reasons = Array.isArray(verification?.reasons) ? verification.reasons : [];
   const modelAllowed = Boolean(
     verification?.model && currentPolicy.lockedModels.includes(verification.model),
   );
-  if (verification?.verdict === 'verified') {
-    return { outcome: 'verified', reason: null };
-  }
+  if (verification?.verdict === 'verified') return { outcome: 'verified', reason: null };
   if (reasons.includes('model_not_allowed')) {
     return { outcome: 'model_mismatch', reason: 'confirmed_model_mismatch' };
   }
   if (modelAllowed && reasons.includes('reasoning_missing')) {
-    return {
-      outcome: 'model_verified_reasoning_unconfirmed',
-      reason: 'reasoning_not_exposed',
-    };
+    return { outcome: 'model_verified_reasoning_unconfirmed', reason: 'reasoning_not_exposed' };
   }
-  if (timedOut) {
-    return { outcome: 'unverified', reason: 'response_verification_timeout' };
-  }
-  if (fallbackError) {
-    return { outcome: 'unverified', reason: 'conversation_evidence_fetch_failed' };
-  }
+  if (timedOut) return { outcome: 'unverified', reason: 'response_verification_timeout' };
   if (state.evidenceIssue === 'response_body_read_failed') {
     return { outcome: 'unverified', reason: 'response_body_read_failed' };
+  }
+  if (state.streamTracking?.handoff) {
+    if ((state.streamTracking.downstreamEvidenceCount || 0) === 0) {
+      return { outcome: 'unverified', reason: 'stream_handoff_followup_not_observed' };
+    }
+    if (state.evidenceIssue === 'response_model_not_exposed' || reasons.includes('model_missing')) {
+      return { outcome: 'unverified', reason: 'downstream_model_not_exposed' };
+    }
   }
   if (state.evidenceIssue === 'response_model_not_exposed' || reasons.includes('model_missing')) {
     return { outcome: 'unverified', reason: 'model_not_exposed' };
@@ -729,9 +789,7 @@ function verificationOutcome(state, { timedOut = false, fallbackError = null } =
   if (state.evidenceIssue === 'response_reasoning_not_exposed' || reasons.includes('reasoning_missing')) {
     return { outcome: 'unverified', reason: 'reasoning_not_exposed' };
   }
-  if (state.phase === 'error') {
-    return { outcome: 'error', reason: state.lastError || 'verification_error' };
-  }
+  if (state.phase === 'error') return { outcome: 'error', reason: state.lastError || 'verification_error' };
   return { outcome: 'unverified', reason: state.evidenceIssue || verification?.reason || 'metadata_incomplete' };
 }
 
@@ -745,10 +803,28 @@ async function waitForAttemptVerification(tabId, startedAtMs) {
       state.lastRequest?.requestId
       && Number.isFinite(requestTime)
       && requestTime >= startedAtMs - 1500
-    ) {
-      requestId = state.lastRequest.requestId;
+    ) requestId = state.lastRequest.requestId;
+
+    if (requestId && state.lastVerification?.verdict === 'verified') {
+      return { timedOut: false, requestId, verified: true };
     }
-    if (
+    const tracking = state.streamTracking;
+    if (requestId && tracking?.handoff) {
+      const detectedAt = Number(tracking.detectedAt || 0);
+      const lastActivityAt = Number(tracking.lastActivityAt || detectedAt);
+      if (
+        detectedAt
+        && Date.now() - detectedAt >= AUTO_VERIFY_HANDOFF_MIN_WAIT_MS
+        && Date.now() - lastActivityAt >= AUTO_VERIFY_HANDOFF_IDLE_MS
+      ) {
+        return {
+          timedOut: false,
+          requestId,
+          handoffSettled: true,
+          downstreamEvidenceCount: tracking.downstreamEvidenceCount || 0,
+        };
+      }
+    } else if (
       requestId
       && state.lastVerification?.requestId === `cdp-${tabId}-${requestId}`
     ) {
@@ -760,65 +836,6 @@ async function waitForAttemptVerification(tabId, startedAtMs) {
     await sleep(AUTO_VERIFY_POLL_MS);
   }
   return { timedOut: true, requestId };
-}
-
-async function collectConversationEvidence(tabId, expectedAfterMs) {
-  const response = await sendTabMessage(tabId, {
-    type: 'GPTLOCK_FETCH_CONVERSATION_EVIDENCE',
-    expectedAfterMs,
-  });
-  return response?.evidence ?? null;
-}
-
-async function applyConversationEvidence(tabId, evidence, attempt) {
-  if (!evidence) return null;
-  const state = ensureTabState(tabId);
-  try {
-    const result = await verifyObservation({
-      model: evidence.model ?? null,
-      reasoning: evidence.reasoning ?? null,
-      evidenceSource: 'conversation_response_metadata',
-      capturedAt: evidence.capturedAt ?? new Date().toISOString(),
-      requestId: `conversation-${tabId}-${attempt}-${Date.now()}`,
-    });
-    state.lastVerification = result;
-    state.phase = result.verdict;
-    state.evidenceIssue = result.reason === 'model_missing'
-      ? 'conversation_model_not_exposed'
-      : result.reason === 'reasoning_missing'
-        ? 'conversation_reasoning_not_exposed'
-        : result.verdict === 'verified'
-          ? null
-          : 'conversation_metadata_incomplete';
-    state.lastEvidenceDiagnostics = {
-      ...(state.lastEvidenceDiagnostics ?? {}),
-      conversationFallback: evidence.diagnostics ?? null,
-    };
-    logRuntime(result.verdict === 'verified' ? 'info' : 'warn', 'verification', 'conversation_fallback_evaluated', {
-      tabId,
-      attempt,
-      verdict: result.verdict,
-      decision: result.decision,
-      reason: result.reason,
-      reasons: result.reasons,
-      model: result.model,
-      reasoning: result.reasoning,
-      evidenceSource: result.evidenceSource,
-      diagnostics: evidence.diagnostics ?? null,
-    });
-    await broadcastTabState(tabId);
-    return result;
-  } catch (error) {
-    state.lastError = errorText(error);
-    logRuntime('error', 'verification', 'conversation_fallback_failed', {
-      tabId,
-      attempt,
-      error: state.lastError,
-      diagnostics: evidence.diagnostics ?? null,
-    });
-    await broadcastTabState(tabId);
-    return null;
-  }
 }
 
 function probeText(attempt) {
@@ -860,9 +877,9 @@ async function autoVerify(tabId) {
     attempts: [],
   };
   try {
-    await startAutoVerificationSseCapture(tabId, startedAt);
+    await startAutoVerificationStreamCapture(tabId, startedAt);
   } catch (error) {
-    logRuntime('warn', 'diagnostics', 'auto_verify_sse_capture_start_failed', { tabId, error: errorText(error) });
+    logRuntime('warn', 'diagnostics', 'auto_verify_stream_capture_start_failed', { tabId, error: errorText(error) });
   }
   resetVerificationAttempt(state);
   state.lastError = page.error;
@@ -940,8 +957,6 @@ async function autoVerify(tabId) {
     });
 
     const waited = await waitForAttemptVerification(tabId, attemptStartedMs);
-    let fallbackAttempted = false;
-    let fallbackError = null;
     if (waited.timedOut) {
       state.phase = 'unverified';
       state.evidenceIssue = 'auto_verify_response_timeout';
@@ -954,26 +969,17 @@ async function autoVerify(tabId) {
       });
       await broadcastTabState(tabId);
     } else if (state.lastVerification?.verdict !== 'verified') {
-      fallbackAttempted = true;
-      await sleep(AUTO_VERIFY_FALLBACK_DELAY_MS);
-      try {
-        const evidence = await collectConversationEvidence(tabId, attemptStartedMs);
-        if (evidence) await applyConversationEvidence(tabId, evidence, attempt);
-      } catch (error) {
-        fallbackError = errorText(error);
-        logRuntime('warn', 'verification', 'conversation_fallback_unavailable', {
-          tabId,
-          attempt,
-          error: fallbackError,
-        });
-      }
+      logRuntime('info', 'verification', 'conversation_fallback_skipped', {
+        tabId,
+        attempt,
+        reason: 'deprecated_after_stream_handoff_tracking',
+        handoffSettled: Boolean(waited.handoffSettled),
+        downstreamEvidenceCount: state.streamTracking?.downstreamEvidenceCount || 0,
+      });
     }
 
     const requestLocked = requestLockConfirmed(state);
-    const outcome = verificationOutcome(state, {
-      timedOut: waited.timedOut,
-      fallbackError,
-    });
+    const outcome = verificationOutcome(state, { timedOut: waited.timedOut });
     const attemptSummary = {
       attempt,
       sent: true,
@@ -985,8 +991,7 @@ async function autoVerify(tabId) {
       evidenceSource: state.lastVerification?.evidenceSource ?? null,
       verdict: state.lastVerification?.verdict ?? null,
       evidenceIssue: state.evidenceIssue ?? null,
-      fallbackAttempted,
-      fallbackError,
+      streamTracking: state.streamTracking ? { ...state.streamTracking } : null,
       timedOut: waited.timedOut,
       outcome: outcome.outcome,
       reason: outcome.reason,
@@ -1029,9 +1034,9 @@ async function autoVerify(tabId) {
   state.autoVerification.responseReasoning = lastAttempt?.responseReasoning ?? null;
   state.autoVerification.evidenceSource = lastAttempt?.evidenceSource ?? null;
   try {
-    await finalizeAutoVerificationSseCapture(tabId, state.autoVerification.completedAt);
+    await finalizeAutoVerificationStreamCapture(tabId, state.autoVerification.completedAt);
   } catch (error) {
-    logRuntime('warn', 'diagnostics', 'auto_verify_sse_capture_finalize_failed', { tabId, error: errorText(error) });
+    logRuntime('warn', 'diagnostics', 'auto_verify_stream_capture_finalize_failed', { tabId, error: errorText(error) });
   }
   await broadcastTabState(tabId);
 
@@ -1094,6 +1099,7 @@ function diagnosticTabState(state) {
     } : null,
     lastVerification: state.lastVerification,
     lastEvidenceDiagnostics: state.lastEvidenceDiagnostics,
+    streamTracking: state.streamTracking,
     evidenceIssue: state.evidenceIssue,
     lastError: state.lastError,
     autoVerification: state.autoVerification,
@@ -1115,9 +1121,9 @@ async function createDiagnosticBundle() {
   } catch (error) {
     nativeDiagnosticsError = errorText(error);
   }
-  const rawSseCapture = stored[DIAGNOSTIC_SSE_STORAGE_KEY] ?? null;
+  const rawStreamCapture = stored[DIAGNOSTIC_SSE_STORAGE_KEY] ?? null;
   const safeBundle = sanitizeLogValue({
-    schemaVersion: 3,
+    schemaVersion: 4,
     generatedAt: new Date().toISOString(),
     extension: {
       id: chrome.runtime.id,
@@ -1136,16 +1142,19 @@ async function createDiagnosticBundle() {
   return {
     ...safeBundle,
     privacy: {
-      chatContentIncluded: Boolean(rawSseCapture?.entries?.length),
-      autoVerificationSseIncluded: Boolean(rawSseCapture?.entries?.length),
-      autoVerificationSseOnly: true,
-      credentialsIncluded: false,
+      chatContentIncluded: Boolean(rawStreamCapture?.entries?.length),
+      autoVerificationStreamIncluded: Boolean(rawStreamCapture?.entries?.length),
+      autoVerificationSseIncluded: Boolean(rawStreamCapture?.entries?.some((entry) => entry.transport === 'sse')),
+      autoVerificationWebSocketIncluded: Boolean(rawStreamCapture?.entries?.some((entry) => entry.transport === 'websocket')),
+      autoVerificationOnly: true,
+      accountCredentialsIncluded: false,
       requestHeadersIncluded: false,
       responseHeadersIncluded: false,
-      noteZhCn: '普通聊天仍不打包请求/响应正文。仅自动验证固定测试消息对应的原始 SSE 响应可进入诊断包，合计上限 10 MiB；其中可能包含测试回答、消息 ID、会话 ID 和服务器元数据。Cookie、Authorization、请求头、响应头和浏览器凭据不采集。',
-      noteEn: 'Ordinary chat request/response bodies remain excluded. Only raw SSE responses for the fixed automatic-verification probes may be included, capped at 10 MiB total; those streams can contain probe answers, message/conversation IDs, and server metadata. Cookies, Authorization, request/response headers, and browser credentials are not captured.',
+      streamResumeTokensMayBeIncluded: Boolean(rawStreamCapture?.entries?.some((entry) => typeof entry.rawSse === 'string' && entry.rawSse.includes('resume_conversation_token'))),
+      noteZhCn: '普通聊天仍不打包请求/响应正文。仅自动验证固定测试消息对应的初始 SSE、handoff 后续 SSE 与已匹配 topic 的 WebSocket 帧进入诊断包，合计上限 10 MiB。原始 handoff SSE 可能包含短期 resume token、消息/会话 ID 和服务器元数据；不采集 Cookie、Authorization、请求头、响应头或浏览器账号凭据。',
+      noteEn: 'Ordinary chat bodies remain excluded. Only the fixed auto-verification probes may contribute initial SSE, post-handoff SSE, and WebSocket frames matched to the handoff topic, with one 10 MiB aggregate cap. Raw handoff SSE can contain short-lived resume tokens, message/conversation IDs, and server metadata; cookies, Authorization, request/response headers, and browser account credentials are not captured.',
     },
-    autoVerificationSse: rawSseCapture,
+    autoVerificationStream: rawStreamCapture,
   };
 }
 
@@ -1339,7 +1348,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'GPTLOCK_GET_RUNTIME_LOGS':
         return { logs: await getRuntimeLogs() };
       case 'GPTLOCK_CLEAR_RUNTIME_LOGS':
-        await Promise.all([clearRuntimeLogs(), clearAutoVerificationSseCapture()]);
+        await Promise.all([clearRuntimeLogs(), clearAutoVerificationStreamCapture()]);
         logRuntime('info', 'diagnostics', 'runtime_logs_cleared');
         return { cleared: true };
       case 'GPTLOCK_EXPORT_DIAGNOSTICS': {

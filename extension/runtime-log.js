@@ -8,6 +8,7 @@ const MAX_DEPTH = 8;
 const SENSITIVE_KEY = /^(?:authorization|proxy-authorization|cookie|set-cookie|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|password|secret|prompt|postdata|requestbody|responsebody|chat(?:text|content)|message(?:text|content)|answer(?:text|content)|inputtext|outputtext)$/i;
 
 export const MAX_DIAGNOSTIC_SSE_BYTES = 10 * 1024 * 1024;
+export const MAX_DIAGNOSTIC_STREAM_BYTES = MAX_DIAGNOSTIC_SSE_BYTES;
 
 export function utf8ByteLength(value) {
   return new TextEncoder().encode(String(value ?? '')).byteLength;
@@ -15,9 +16,9 @@ export function utf8ByteLength(value) {
 
 export function createDiagnosticSseCapture({ tabId = null, startedAt = null } = {}) {
   return {
-    schemaVersion: 1,
-    captureScope: 'auto_verification_sse_only',
-    maxBytes: MAX_DIAGNOSTIC_SSE_BYTES,
+    schemaVersion: 2,
+    captureScope: 'auto_verification_stream_only',
+    maxBytes: MAX_DIAGNOSTIC_STREAM_BYTES,
     tabId,
     startedAt: startedAt || new Date().toISOString(),
     completedAt: null,
@@ -31,10 +32,12 @@ export function createDiagnosticSseCapture({ tabId = null, startedAt = null } = 
   };
 }
 
-export function appendDiagnosticSseCapture(capture, entry, maxBytes = MAX_DIAGNOSTIC_SSE_BYTES) {
+export function appendDiagnosticSseCapture(capture, entry, maxBytes = MAX_DIAGNOSTIC_STREAM_BYTES) {
   const base = capture && typeof capture === 'object' ? capture : createDiagnosticSseCapture();
   const next = {
     ...base,
+    schemaVersion: 2,
+    captureScope: 'auto_verification_stream_only',
     maxBytes,
     totalBytes: Number(base.totalBytes || 0),
     includedBytes: Number(base.includedBytes || 0),
@@ -44,10 +47,16 @@ export function appendDiagnosticSseCapture(capture, entry, maxBytes = MAX_DIAGNO
     entries: Array.isArray(base.entries) ? [...base.entries] : [],
     omitted: Array.isArray(base.omitted) ? [...base.omitted] : [],
   };
-  const rawSse = typeof entry?.rawSse === 'string' ? entry.rawSse : '';
-  const bodyBytes = utf8ByteLength(rawSse);
+  const rawData = typeof entry?.rawData === 'string'
+    ? entry.rawData
+    : typeof entry?.rawSse === 'string'
+      ? entry.rawSse
+      : typeof entry?.rawFrame === 'string'
+        ? entry.rawFrame
+        : '';
+  const bodyBytes = utf8ByteLength(rawData);
   next.totalBytes += bodyBytes;
-  if (!rawSse || bodyBytes === 0) return next;
+  if (!rawData || bodyBytes === 0) return next;
 
   const projected = next.includedBytes + bodyBytes;
   if (projected > maxBytes) {
@@ -62,13 +71,17 @@ export function appendDiagnosticSseCapture(capture, entry, maxBytes = MAX_DIAGNO
       httpStatus: entry?.httpStatus ?? null,
       mimeType: entry?.mimeType ?? null,
       bodyFormat: entry?.bodyFormat ?? null,
+      transport: entry?.transport ?? null,
+      direction: entry?.direction ?? null,
+      stage: entry?.stage ?? null,
       bodyBytes,
-      reason: 'diagnostic_sse_size_limit',
+      reason: 'diagnostic_stream_size_limit',
     });
     return next;
   }
 
-  next.entries.push({
+  const transport = entry?.transport || (/event-stream/i.test(entry?.mimeType || '') ? 'sse' : 'unknown');
+  const stored = {
     attempt: entry?.attempt ?? null,
     requestId: entry?.requestId ?? null,
     capturedAt: entry?.capturedAt ?? null,
@@ -76,11 +89,17 @@ export function appendDiagnosticSseCapture(capture, entry, maxBytes = MAX_DIAGNO
     httpStatus: entry?.httpStatus ?? null,
     mimeType: entry?.mimeType ?? null,
     bodyFormat: entry?.bodyFormat ?? null,
+    transport,
+    direction: entry?.direction ?? 'received',
+    stage: entry?.stage ?? null,
     requestModel: entry?.requestModel ?? null,
     rewriteReason: entry?.rewriteReason ?? null,
+    streamContext: entry?.streamContext ?? null,
     bodyBytes,
-    rawSse,
-  });
+  };
+  if (transport === 'websocket') stored.rawFrame = rawData;
+  else stored.rawSse = rawData;
+  next.entries.push(stored);
   next.includedBytes = projected;
   return next;
 }
