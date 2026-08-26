@@ -36,7 +36,14 @@ function valuePair(model, reasoning) {
   return model || reasoning ? `${model || 'model ?'} · ${reasoning || 'reasoning ?'}` : '无 / None';
 }
 
-function hasConfirmedAutoEvidence(auto, policy) {
+function autoVerificationAppliesToLatestRequest(auto, tab) {
+  const completedAt = Date.parse(auto?.completedAt || '');
+  const latestRequestAt = Date.parse(tab?.lastRequest?.capturedAt || '');
+  if (!Number.isFinite(completedAt)) return false;
+  return !Number.isFinite(latestRequestAt) || latestRequestAt <= completedAt;
+}
+
+function hasConfirmedAutoEvidence(auto, policy, tab) {
   return Boolean(
     auto
       && !auto.running
@@ -45,7 +52,8 @@ function hasConfirmedAutoEvidence(auto, policy) {
       && auto.responseModel
       && auto.responseReasoning
       && policy?.lockedModels?.includes(auto.responseModel)
-      && policy?.allowedReasoningLevels?.includes(auto.responseReasoning),
+      && policy?.allowedReasoningLevels?.includes(auto.responseReasoning)
+      && autoVerificationAppliesToLatestRequest(auto, tab),
   );
 }
 
@@ -69,7 +77,8 @@ function render(state) {
   const tab = state.tabState;
   const guard = tab?.guard;
   const auto = tab?.autoVerification;
-  const autoEvidenceConfirmed = hasConfirmedAutoEvidence(auto, state.policy);
+  const autoApplies = autoVerificationAppliesToLatestRequest(auto, tab);
+  const autoEvidenceConfirmed = hasConfirmedAutoEvidence(auto, state.policy, tab);
   const enabled = state.settings?.enabled !== false;
   elements.enabled.checked = enabled;
   elements.native.textContent = native.connected
@@ -115,7 +124,7 @@ function render(state) {
     title = `自动验证中 ${auto.attempt || 1}/${auto.maxAttempts || 2} / Auto verifying`;
     detail = '正在等待本次真实聊天响应；如果响应证据不足，程序会自动跟踪 handoff 后续流并最多再发送一次测试消息。';
     tone = 'wait';
-  } else if (auto?.completedAt) {
+  } else if (auto?.completedAt && autoApplies) {
     if (autoEvidenceConfirmed) {
       title = '自动验证通过 / Verified';
       detail = `已完成 ${auto.attempts?.length || 1} 次尝试；后端流响应元数据确认 ${auto.responseModel} · ${auto.responseReasoning}。后续无模型字段的流帧不会抹掉这条已确认结果。`;
