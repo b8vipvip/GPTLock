@@ -4,7 +4,7 @@
 
 GPTLock 是专用于 `chatgpt.com` 官方网页聊天的模型请求锁定与响应证据确认工具，支持 Windows/Linux 上的 Chrome、Chromium 和 Edge。它由 Manifest V3 扩展与 Rust 本地核心组成，不使用 OpenAI API，不代理 HTTPS，也不尝试绕过套餐、额度、区域或账号限制。
 
-当前版本：`0.3.5`。本版延续“正式聊天请求先锁定，响应验证作为附加确认”的主流程，并修复 0.3.4 自动验证在 `model_missing / reasoning_missing` 后直接停在“确认不足”的问题：自动验证现在会等待本次真实响应、回查当前会话详情元数据，并在证据仍不足时自动再发送一次可见测试消息；最终明确反馈是模型未暴露、推理强度未暴露、会话回查失败还是等待超时。页面底部 `5.6 Sol 高` 这类不带 `GPT-` 前缀的选择标签也会被识别。
+当前版本：`0.3.6`。本版修复自动验证在新聊天跳转到 `/c/<conversation-id>` 时丢失状态、把已经成功的请求锁定误报为 `requestLockConfirmed=false` 的问题；同时为自动验证加入最多 10 MiB 的原始 SSE 诊断捕获。请求锁定与响应确认仍然分层：模型请求锁定可以成功，而服务端若未暴露可验证模型/推理元数据，响应状态仍保持 `unverified`，不会伪造成功。
 
 ## 核心能力
 
@@ -25,7 +25,7 @@ GPTLock 是专用于 `chatgpt.com` 官方网页聊天的模型请求锁定与响
 
 ## “锁定”与“验证”分别是什么
 
-GPTLock 0.3.5 把两件事明确分开：
+GPTLock 0.3.6 把两件事明确分开：
 
 1. **请求锁定**：在网页准备发送正式 ChatGPT conversation POST 时，扩展检查并按策略改写它能够安全识别的顶层模型/已有推理字段，然后立即放行请求。这是日常聊天的主功能。
 2. **响应确认**：请求返回后，扩展尝试从响应头或响应正文元数据中提取模型和推理强度，再交给 Native Core 形成 `verified / mismatch / unverified` 审计结果。这只是附加确认，不再作为日常聊天的前置门禁。
@@ -44,6 +44,8 @@ GPTLock 0.3.5 把两件事明确分开：
 6. 将结果写入运行日志与诊断包。
 
 如果输入框中已有草稿，自动验证会先保存草稿，并在测试消息发出后尽力恢复。
+
+0.3.6 还会在**自动验证期间**保存固定测试请求对应的原始 SSE 响应，按 UTF-8 字节合计最多 10 MiB，并随“导出诊断包”写入 `autoVerificationSse.entries[].rawSse`。这样当 ChatGPT 没有被现有解析器识别出模型/推理字段时，可以直接查看服务器实际返回了哪些字段，而不是继续猜字段名。普通聊天的响应正文仍不会被打包；原始 SSE 可能包含测试回答、消息/会话 ID 和服务器元数据，因此分享诊断包前应按包含聊天内容的文件处理。
 
 ## 必须理解的边界
 
@@ -90,7 +92,7 @@ CI 在 Ubuntu 和 Windows 编译、测试并上传扩展 ZIP、Linux `.deb`、Wi
 
 ## English
 
-GPTLock 0.3.5 is a request-locking and evidence-verification tool for official `chatgpt.com` web chats. It supports Chrome, Chromium, and Edge on Windows and Linux, uses no OpenAI API, performs no TLS interception, and cannot bypass server-side product limits.
+GPTLock 0.3.6 is a request-locking and evidence-verification tool for official `chatgpt.com` web chats. It supports Chrome, Chromium, and Edge on Windows and Linux, uses no OpenAI API, performs no TLS interception, and cannot bypass server-side product limits.
 
 The primary control is now the **formal chat request lock**. GPTLock intercepts only `/backend-api/conversation` and `/backend-api/f/conversation`, checks the top-level model before the POST is sent, rewrites a disallowed model to the configured lock target, and only adjusts an already-existing top-level reasoning field. `prepare` and `init` traffic is auxiliary and is never treated as a formal chat send.
 

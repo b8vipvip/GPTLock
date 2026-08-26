@@ -16,4 +16,5 @@ test('manifest public key matches the stable packaging extension ID', async () =
   const packagedId = (await readFile(new URL('../../packaging/EXTENSION_ID', import.meta.url), 'utf8')).trim();
   assert.equal(extensionIdFromKey(manifest.key), packagedId);
   assert.match(packagedId, /^[a-p]{32}$/);
+  assert.ok(manifest.permissions.includes('unlimitedStorage'));
 });

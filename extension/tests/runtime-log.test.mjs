@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { boundRuntimeLogs, sanitizeLogValue } from '../runtime-log.js';
+import {
+  appendDiagnosticSseCapture,
+  boundRuntimeLogs,
+  createDiagnosticSseCapture,
+  sanitizeLogValue,
+} from '../runtime-log.js';
 
 test('redacts secrets and chat payload fields while preserving safe technical diagnostics', () => {
   const result = sanitizeLogValue({
@@ -52,3 +57,38 @@ test('clips overly long strings without dropping diagnostic context', () => {
   assert.match(value.error, /^x+…\[truncated:2500\]$/);
   assert.ok(value.error.length < 2100);
 });
+
+test('keeps auto-verification SSE byte-for-byte when the aggregate stays under the cap', () => {
+  const body = 'event: message\ndata: {"type":"debug","model_slug":"gpt-5.6-sol"}\n\n';
+  const capture = appendDiagnosticSseCapture(
+    createDiagnosticSseCapture({ tabId: 7, startedAt: '2026-08-26T00:00:00.000Z' }),
+    {
+      attempt: 1,
+      requestId: 'req-1',
+      endpoint: '/backend-api/f/conversation',
+      mimeType: 'text/event-stream',
+      bodyFormat: 'sse',
+      rawSse: body,
+    },
+    1024,
+  );
+  assert.equal(capture.entries.length, 1);
+  assert.equal(capture.entries[0].rawSse, body);
+  assert.equal(capture.entries[0].bodyBytes, Buffer.byteLength(body));
+  assert.equal(capture.includedBytes, Buffer.byteLength(body));
+  assert.equal(capture.overflowed, false);
+});
+
+test('does not persist a partial raw SSE body when the aggregate size limit would be exceeded', () => {
+  let capture = createDiagnosticSseCapture({ tabId: 7 });
+  capture = appendDiagnosticSseCapture(capture, { attempt: 1, requestId: 'a', rawSse: '123456' }, 10);
+  capture = appendDiagnosticSseCapture(capture, { attempt: 2, requestId: 'b', rawSse: 'abcdef' }, 10);
+  assert.equal(capture.entries.length, 1);
+  assert.equal(capture.entries[0].rawSse, '123456');
+  assert.equal(capture.overflowed, true);
+  assert.equal(capture.omittedResponses, 1);
+  assert.equal(capture.omittedBytes, 6);
+  assert.equal(capture.omitted[0].requestId, 'b');
+  assert.equal(capture.omitted[0].reason, 'diagnostic_sse_size_limit');
+});
+

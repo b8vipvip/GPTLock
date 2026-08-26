@@ -8,8 +8,11 @@ import { ChatGptNetworkMonitor } from './network-monitor.js';
 import { evaluateGuard } from './guard.js';
 import { classifyNativeError } from './native-status.js';
 import {
+  appendDiagnosticSseCapture,
   appendRuntimeLog,
   clearRuntimeLogs,
+  createDiagnosticSseCapture,
+  finalizeDiagnosticSseCapture,
   getRuntimeLogs,
   sanitizeLogValue,
 } from './runtime-log.js';
@@ -21,6 +24,7 @@ const AUTO_VERIFY_MAX_ATTEMPTS = 2;
 const AUTO_VERIFY_RESPONSE_TIMEOUT_MS = 45000;
 const AUTO_VERIFY_POLL_MS = 200;
 const AUTO_VERIFY_FALLBACK_DELAY_MS = 700;
+const DIAGNOSTIC_SSE_STORAGE_KEY = 'autoVerificationSseCapture';
 
 let nativePort = null;
 let requestSequence = 0;
@@ -37,6 +41,70 @@ function errorText(error) {
 function logRuntime(level, component, event, details = {}) {
   void appendRuntimeLog(level, component, event, details).catch(() => {});
 }
+
+async function startAutoVerificationSseCapture(tabId, startedAt) {
+  const capture = createDiagnosticSseCapture({ tabId, startedAt });
+  await chrome.storage.local.set({ [DIAGNOSTIC_SSE_STORAGE_KEY]: capture });
+  return capture;
+}
+
+async function captureAutoVerificationSse(tabId, state, evidence) {
+  const rawSse = evidence?.rawResponseBody;
+  const mimeType = String(evidence?.diagnostics?.mimeType || '');
+  const bodyFormat = String(evidence?.diagnostics?.bodyFormat || '');
+  if (!state.autoVerification?.running || typeof rawSse !== 'string' || !rawSse) return null;
+  if (!/event-stream/i.test(mimeType) && !bodyFormat.includes('sse')) return null;
+  if (state.lastRequest?.requestId && state.lastRequest.requestId !== evidence.requestId) return null;
+
+  const stored = await chrome.storage.local.get(DIAGNOSTIC_SSE_STORAGE_KEY);
+  let capture = stored[DIAGNOSTIC_SSE_STORAGE_KEY];
+  if (!capture || capture.tabId !== tabId || capture.startedAt !== state.autoVerification.startedAt) {
+    capture = createDiagnosticSseCapture({ tabId, startedAt: state.autoVerification.startedAt });
+  }
+  const beforeIncludedBytes = Number(capture.includedBytes || 0);
+  const next = appendDiagnosticSseCapture(capture, {
+    attempt: state.autoVerification.attempt ?? null,
+    requestId: evidence.requestId ?? null,
+    capturedAt: evidence.capturedAt ?? new Date().toISOString(),
+    endpoint: evidence.diagnostics?.endpoint ?? null,
+    httpStatus: evidence.diagnostics?.httpStatus ?? evidence.status ?? null,
+    mimeType,
+    bodyFormat,
+    requestModel: state.lastRequest?.model ?? null,
+    rewriteReason: state.lastRewrite?.reason ?? null,
+    rawSse,
+  });
+  await chrome.storage.local.set({ [DIAGNOSTIC_SSE_STORAGE_KEY]: next });
+  logRuntime(next.overflowed ? 'warn' : 'info', 'diagnostics', 'auto_verify_sse_captured', {
+    tabId,
+    attempt: state.autoVerification.attempt ?? null,
+    requestId: evidence.requestId ?? null,
+    addedBytes: Math.max(0, Number(next.includedBytes || 0) - beforeIncludedBytes),
+    includedBytes: next.includedBytes,
+    totalBytes: next.totalBytes,
+    maxBytes: next.maxBytes,
+    overflowed: next.overflowed,
+    omittedResponses: next.omittedResponses,
+  });
+  return next;
+}
+
+async function finalizeAutoVerificationSseCapture(tabId, completedAt) {
+  const stored = await chrome.storage.local.get(DIAGNOSTIC_SSE_STORAGE_KEY);
+  let capture = stored[DIAGNOSTIC_SSE_STORAGE_KEY];
+  const state = tabStates.get(tabId);
+  if (!capture || capture.tabId !== tabId) {
+    capture = createDiagnosticSseCapture({ tabId, startedAt: state?.autoVerification?.startedAt ?? null });
+  }
+  const finalized = finalizeDiagnosticSseCapture(capture, completedAt);
+  await chrome.storage.local.set({ [DIAGNOSTIC_SSE_STORAGE_KEY]: finalized });
+  return finalized;
+}
+
+async function clearAutoVerificationSseCapture() {
+  await chrome.storage.local.remove(DIAGNOSTIC_SSE_STORAGE_KEY);
+}
+
 
 function isChatGptUrl(value) {
   try {
@@ -85,10 +153,27 @@ function ensureTabState(tabId, url = '') {
     state = createTabState(tabId, url);
     tabStates.set(tabId, state);
   } else if (url && state.contextKey !== contextKey(url)) {
-    const monitor = state.monitor;
-    state = createTabState(tabId, url);
-    state.monitor = monitor;
-    tabStates.set(tabId, state);
+    const nextContextKey = contextKey(url);
+    const preserveVerificationState = Boolean(
+      state.autoVerification?.running
+        || (state.autoVerification && !state.contextKey.startsWith('conversation:') && nextContextKey.startsWith('conversation:')),
+    );
+    if (preserveVerificationState) {
+      const previousContextKey = state.contextKey;
+      state.url = url;
+      state.contextKey = nextContextKey;
+      logRuntime('info', 'verification', 'auto_verify_context_migrated', {
+        tabId,
+        previousContextKey,
+        nextContextKey,
+        running: Boolean(state.autoVerification?.running),
+      });
+    } else {
+      const monitor = state.monitor;
+      state = createTabState(tabId, url);
+      state.monitor = monitor;
+      tabStates.set(tabId, state);
+    }
   } else if (url) {
     state.url = url;
   }
@@ -336,6 +421,13 @@ function diagnoseEvidenceIssue(evidence, result) {
 
 async function applyNetworkEvidence(tabId, evidence) {
   const state = ensureTabState(tabId);
+  try {
+    await captureAutoVerificationSse(tabId, state, evidence);
+  } catch (error) {
+    logRuntime('warn', 'diagnostics', 'auto_verify_sse_capture_failed', { tabId, error: errorText(error) });
+  } finally {
+    evidence.rawResponseBody = null;
+  }
   state.lastEvidenceDiagnostics = evidence.diagnostics ?? null;
   try {
     const result = await verifyObservation({
@@ -767,6 +859,11 @@ async function autoVerify(tabId) {
     evidenceSource: null,
     attempts: [],
   };
+  try {
+    await startAutoVerificationSseCapture(tabId, startedAt);
+  } catch (error) {
+    logRuntime('warn', 'diagnostics', 'auto_verify_sse_capture_start_failed', { tabId, error: errorText(error) });
+  }
   resetVerificationAttempt(state);
   state.lastError = page.error;
   await broadcastTabState(tabId);
@@ -931,6 +1028,11 @@ async function autoVerify(tabId) {
   state.autoVerification.responseModel = lastAttempt?.responseModel ?? null;
   state.autoVerification.responseReasoning = lastAttempt?.responseReasoning ?? null;
   state.autoVerification.evidenceSource = lastAttempt?.evidenceSource ?? null;
+  try {
+    await finalizeAutoVerificationSseCapture(tabId, state.autoVerification.completedAt);
+  } catch (error) {
+    logRuntime('warn', 'diagnostics', 'auto_verify_sse_capture_finalize_failed', { tabId, error: errorText(error) });
+  }
   await broadcastTabState(tabId);
 
   logRuntime(finalOutcome === 'verified' ? 'info' : 'warn', 'verification', 'auto_verify_completed', {
@@ -1002,7 +1104,7 @@ function diagnosticTabState(state) {
 
 async function createDiagnosticBundle() {
   const [stored, runtimeLogs, platform] = await Promise.all([
-    chrome.storage.local.get('nativeStatus'),
+    chrome.storage.local.get(['nativeStatus', DIAGNOSTIC_SSE_STORAGE_KEY]),
     getRuntimeLogs(),
     getPlatformInfo(),
   ]);
@@ -1013,15 +1115,10 @@ async function createDiagnosticBundle() {
   } catch (error) {
     nativeDiagnosticsError = errorText(error);
   }
-  return sanitizeLogValue({
-    schemaVersion: 2,
+  const rawSseCapture = stored[DIAGNOSTIC_SSE_STORAGE_KEY] ?? null;
+  const safeBundle = sanitizeLogValue({
+    schemaVersion: 3,
     generatedAt: new Date().toISOString(),
-    privacy: {
-      chatContentIncluded: false,
-      credentialsIncluded: false,
-      noteZhCn: '诊断包保留端点、请求锁定结果、模型/推理标识、状态码、字段路径和错误，但不包含提示词、回答正文、Cookie、授权头或令牌。',
-      noteEn: 'The bundle keeps technical request-lock and verification metadata, but excludes prompts, answer bodies, cookies, authorization headers, and tokens.',
-    },
     extension: {
       id: chrome.runtime.id,
       version: chrome.runtime.getManifest().version,
@@ -1036,6 +1133,20 @@ async function createDiagnosticBundle() {
     nativeDiagnostics,
     nativeDiagnosticsError,
   });
+  return {
+    ...safeBundle,
+    privacy: {
+      chatContentIncluded: Boolean(rawSseCapture?.entries?.length),
+      autoVerificationSseIncluded: Boolean(rawSseCapture?.entries?.length),
+      autoVerificationSseOnly: true,
+      credentialsIncluded: false,
+      requestHeadersIncluded: false,
+      responseHeadersIncluded: false,
+      noteZhCn: '普通聊天仍不打包请求/响应正文。仅自动验证固定测试消息对应的原始 SSE 响应可进入诊断包，合计上限 10 MiB；其中可能包含测试回答、消息 ID、会话 ID 和服务器元数据。Cookie、Authorization、请求头、响应头和浏览器凭据不采集。',
+      noteEn: 'Ordinary chat request/response bodies remain excluded. Only raw SSE responses for the fixed automatic-verification probes may be included, capped at 10 MiB total; those streams can contain probe answers, message/conversation IDs, and server metadata. Cookies, Authorization, request/response headers, and browser credentials are not captured.',
+    },
+    autoVerificationSse: rawSseCapture,
+  };
 }
 
 chrome.runtime.onInstalled.addListener(() => void initialize());
@@ -1228,7 +1339,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'GPTLOCK_GET_RUNTIME_LOGS':
         return { logs: await getRuntimeLogs() };
       case 'GPTLOCK_CLEAR_RUNTIME_LOGS':
-        await clearRuntimeLogs();
+        await Promise.all([clearRuntimeLogs(), clearAutoVerificationSseCapture()]);
         logRuntime('info', 'diagnostics', 'runtime_logs_cleared');
         return { cleared: true };
       case 'GPTLOCK_EXPORT_DIAGNOSTICS': {
@@ -1237,6 +1348,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           runtimeLogCount: bundle.runtimeLogs?.length ?? 0,
           nativeAuditCount: bundle.nativeDiagnostics?.auditRecords?.length ?? 0,
           nativeDiagnosticsError: bundle.nativeDiagnosticsError,
+          rawSseEntryCount: bundle.autoVerificationSse?.entries?.length ?? 0,
+          rawSseIncludedBytes: bundle.autoVerificationSse?.includedBytes ?? 0,
+          rawSseOverflowed: Boolean(bundle.autoVerificationSse?.overflowed),
         });
         return bundle;
       }

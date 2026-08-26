@@ -6,6 +6,7 @@
 
 - 扩展只声明 `https://chatgpt.com/*` 主机范围；
 - `debugger` 权限用于该站点标签页的 CDP `Fetch` 和 `Network` 域。Chromium 不允许把该权限设为普通站点 optional 权限，因此安装时会明确展示调试权限告警；
+- `unlimitedStorage` 仅用于可靠保存一次自动验证最多 10 MiB 的原始 SSE 诊断缓存，避免与正常运行日志共同占用 `storage.local` 默认配额；
 - `Fetch` 只用于正式 ChatGPT conversation POST 的发送前请求锁定；
 - `Network` 只用于关联正式请求与可选响应元数据；
 - Native Messaging 只允许固定扩展 ID `bhchcpeodphgjfjoookncemnamdbfcof`；
@@ -19,7 +20,7 @@ manifest 中提交的是稳定扩展 ID 所需的 RSA **公钥**，不是商店�
 
 ## 请求锁定的最小修改范围
 
-0.3.5 会在正式 conversation POST 发出前短暂读取请求体，因为只有这样才能检查网页实际准备发送的顶层模型字段。修改范围刻意限制为：
+0.3.6 会在正式 conversation POST 发出前短暂读取请求体，因为只有这样才能检查网页实际准备发送的顶层模型字段。修改范围刻意限制为：
 
 - 只处理 `https://chatgpt.com`；
 - 只处理 `POST`；
@@ -47,8 +48,9 @@ CDP `Network` 需要浏览器把响应体交给扩展，才能从 JSON/SSE 中�
 - 只接受明确白名单模型/推理键与响应头；
 - 不把聊天字符串内容再次当作 JSON 解析；
 - 跳过 `content`、`parts`、`text`、`prompt`、`input`、`output_text`、`arguments` 等正文分支；
-- 不持久化完整请求体、响应体、Cookie、Authorization 或 token；
-- 提取完成后立即释放响应正文引用；
+- 普通聊天不持久化完整请求体、响应体、Cookie、Authorization 或 token；
+- **唯一正文例外是自动验证**：仅固定测试消息对应的原始 SSE response body 可临时保存并随诊断包导出，按 UTF-8 字节合计最多 10 MiB；
+- 自动验证之外的响应在元数据提取完成后立即释放正文引用；自动验证原始 SSE 在完成有界复制后也立即释放网络事件中的正文引用；
 - 最多保留字段路径、MIME、HTTP 状态、数据长度、解析格式、候选数量等技术诊断。
 
 扩展运行日志的脱敏器会明确屏蔽 `postData`、request/response body、prompt、chat content、answer content、Cookie、Authorization、API key、access/refresh token、password、secret 等字段，同时允许保留 `postDataLength`、端点、模型规范化值、字段路径和错误。
@@ -75,14 +77,14 @@ Native Core 审计允许记录：时间、安全请求 ID、模型、推理强�
 
 - 响应缺失模型或推理字段：`unverified`；
 - 强证据冲突：降级，不猜测补全；
-- 响应推理强度不允许：`mismatch`/告警，但 0.3.5 不因此阻断聊天；
+- 响应推理强度不允许：`mismatch`/告警，但 0.3.6 不因此阻断聊天；
 - 响应明确暴露不允许模型：`mismatch`，严格模式可阻断后续发送。
 
 这仍不是 OpenAI 内部调度器的密码学证明：GPTLock 只能验证服务器实际交给官方网页的元数据，本地核心也无法独立证明调用它的扩展没有伪造 `evidenceSource`。
 
 ## Fail-open 的安全取舍
 
-旧版把“验证器是否健康”本身当成发送门禁，容易出现 Core 离线、字段缺失或协议变化时日常聊天完全无法发送。0.3.5 改为：
+旧版把“验证器是否健康”本身当成发送门禁，容易出现 Core 离线、字段缺失或协议变化时日常聊天完全无法发送。0.3.6 改为：
 
 - 请求锁定器健康时尽量执行锁定；
 - 请求锁定器/Native Core/响应验证失败时清晰告警并记录日志；
@@ -101,7 +103,8 @@ Native Core 审计允许记录：时间、安全请求 ID、模型、推理强�
 - 测试文本是固定、明确可见的；
 - 尽力保存并恢复已有输入框草稿；
 - 不读取旧聊天内容来生成测试文本；
-- 不把测试消息或回答正文写入诊断日志。
+- 运行日志和 Native Core audit 仍不写测试消息/回答正文；
+- 用户主动导出的诊断包可以包含自动验证固定测试请求的原始 SSE，这是用于协议分析的显式例外，最多 10 MiB，并在 `privacy` 字段明确标记。
 
 ## 更新安全
 
@@ -122,9 +125,9 @@ GPTLock 不防御：
 
 ## English
 
-GPTLock 0.3.5 uses Chromium's `debugger` permission for both CDP **Fetch** and **Network** on `chatgpt.com`. Fetch is the pre-send request-lock layer and is constrained to the two exact formal conversation POST paths. It may modify only the top-level model and already-existing top-level reasoning fields; it does not modify chat content, attachments, conversation identifiers, or unrelated payload fields. Parsing/rewrite errors fail open and attempt to continue the original request.
+GPTLock 0.3.6 uses Chromium's `debugger` permission for both CDP **Fetch** and **Network** on `chatgpt.com`. Fetch is the pre-send request-lock layer and is constrained to the two exact formal conversation POST paths. It may modify only the top-level model and already-existing top-level reasoning fields; it does not modify chat content, attachments, conversation identifiers, or unrelated payload fields. Parsing/rewrite errors fail open and attempt to continue the original request.
 
-Full request postData and response bodies are transient. They are not persisted in runtime logs, diagnostics, or Native Core audit files. Redaction removes request/response payloads, prompts, answers, cookies, authorization data, tokens, passwords, and secrets while preserving technical metadata such as endpoint, lengths, normalized model IDs, candidate field paths, HTTP status, and errors.
+Ordinary-chat request postData and response bodies remain transient and are not persisted in runtime logs or Native Core audit files. GPTLock 0.3.6 adds one explicit diagnostic exception: raw SSE response bodies for the fixed automatic-verification probes may be retained locally and exported under `autoVerificationSse`, capped at 10 MiB total. Runtime-log redaction still removes request/response payloads, prompts, answers, cookies, authorization data, tokens, passwords, and secrets. The raw SSE export never includes browser cookies, Authorization headers, request headers, or response headers, but the SSE body itself may contain the probe answer, message/conversation IDs, and server metadata.
 
 A rewritten request proves what GPTLock attempted to send from the official web client; it does **not** cryptographically force or attest OpenAI's internal routing. DOM labels and request metadata never become backend proof. Only response metadata exposed to the browser can provide supplementary served-model evidence.
 

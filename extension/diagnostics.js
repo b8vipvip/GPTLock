@@ -117,7 +117,10 @@ async function exportDiagnostics() {
     link.download = `gptlock-diagnostics-${stamp}.json`;
     link.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    elements.message.textContent = '诊断包已导出 / Diagnostic bundle exported.';
+    const sse = bundle.autoVerificationSse;
+    elements.message.textContent = sse?.entries?.length
+      ? `诊断包已导出；包含 ${sse.entries.length} 条自动验证原始 SSE，共 ${sse.includedBytes || 0} 字节${sse.overflowed ? '，另有超限响应未完整打包' : ''}。`
+      : '诊断包已导出；本次没有可打包的自动验证原始 SSE / Diagnostic bundle exported.';
   } finally {
     elements.export.disabled = false;
   }
@@ -130,7 +133,7 @@ elements.export.addEventListener('click', () => {
   void exportDiagnostics().catch((error) => { elements.message.textContent = `导出失败 / Export failed: ${error.message}`; });
 });
 elements.clear.addEventListener('click', () => {
-  if (!window.confirm('确认清空扩展运行日志？本地核心 audit.jsonl 不会被删除。\nClear extension runtime logs? Native audit.jsonl will be kept.')) return;
+  if (!window.confirm('确认清空扩展运行日志和自动验证 SSE 诊断缓存？本地核心 audit.jsonl 不会被删除。\nClear extension runtime logs and auto-verification SSE cache? Native audit.jsonl will be kept.')) return;
   void sendMessage({ type: 'GPTLOCK_CLEAR_RUNTIME_LOGS' })
     .then(load)
     .catch((error) => { elements.message.textContent = error.message; });
