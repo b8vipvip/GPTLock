@@ -22,6 +22,20 @@ function hasConfirmedModelMismatch(state) {
   return state.phase === 'mismatch' && verificationReasons(state).includes('model_not_allowed');
 }
 
+function hasConfirmedAutoVerification(state, policy) {
+  const auto = state.autoVerification;
+  return Boolean(
+    auto
+      && !auto.running
+      && auto.outcome === 'verified'
+      && auto.evidenceSource === 'network_response_metadata'
+      && auto.responseModel
+      && auto.responseReasoning
+      && policy.lockedModels.includes(auto.responseModel)
+      && policy.allowedReasoningLevels.includes(auto.responseReasoning),
+  );
+}
+
 export function evaluateGuard({ state, policy, settings, inScope = true }) {
   const strict = policy.strictMode;
   const uiMatches = observationMatchesPolicy(state.pageObservation, policy);
@@ -50,6 +64,7 @@ export function evaluateGuard({ state, policy, settings, inScope = true }) {
     };
   }
 
+  // A later metadata-empty frame must never erase a backend model mismatch.
   if (strict && hasConfirmedModelMismatch(state)) {
     return {
       ...base,
@@ -83,6 +98,14 @@ export function evaluateGuard({ state, policy, settings, inScope = true }) {
       status: 'core_offline',
       reason: state.core?.error || 'native_core_offline',
     };
+  }
+
+  // Auto verification is a turn-level result. ChatGPT can emit additional WebSocket
+  // frames after the model-bearing frame; those frames often contain no model fields.
+  // Keep the verified result sticky only when it was backed by network response
+  // metadata and both the model and reasoning still satisfy the active policy.
+  if (hasConfirmedAutoVerification(state, policy)) {
+    return { ...base, allowKind: 'locked', status: 'verified' };
   }
 
   if (state.phase === 'verified') {
