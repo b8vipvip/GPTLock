@@ -17,6 +17,10 @@ import {
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
+const AUTO_VERIFY_MAX_ATTEMPTS = 2;
+const AUTO_VERIFY_RESPONSE_TIMEOUT_MS = 45000;
+const AUTO_VERIFY_POLL_MS = 200;
+const AUTO_VERIFY_FALLBACK_DELAY_MS = 700;
 
 let nativePort = null;
 let requestSequence = 0;
@@ -70,6 +74,7 @@ function createTabState(tabId, url = '') {
     lastEvidenceDiagnostics: null,
     evidenceIssue: null,
     lastError: null,
+    autoVerification: null,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -115,6 +120,7 @@ function publicTabState(state) {
     lastEvidenceDiagnostics: state.lastEvidenceDiagnostics,
     evidenceIssue: state.evidenceIssue,
     lastError: state.lastError,
+    autoVerification: state.autoVerification,
     updatedAt: state.updatedAt,
     guard: guardFor(state),
   };
@@ -575,17 +581,11 @@ async function collectPageObservation(tabId, state) {
   }
 }
 
-async function autoVerify(tabId) {
-  if (!currentSettings.enabled) throw new Error('GPTLock is disabled / GPTLock 已关闭');
-  const tab = await chrome.tabs.get(tabId);
-  if (!isChatGptUrl(tab.url ?? '')) throw new Error('Open chatgpt.com first / 请先打开 chatgpt.com');
-  const state = ensureTabState(tabId, tab.url);
-  logRuntime('info', 'verification', 'auto_verify_started', { tabId });
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-  const coreCheck = await refreshNativeCore({ tolerateFailure: true });
-  const monitorAttached = await networkMonitor.attach(tabId);
-  const page = await collectPageObservation(tabId, state);
-
+function resetVerificationAttempt(state) {
   state.phase = 'initial';
   state.probeUsed = false;
   state.probeArmed = false;
@@ -594,6 +594,180 @@ async function autoVerify(tabId) {
   state.lastVerification = null;
   state.lastEvidenceDiagnostics = null;
   state.evidenceIssue = null;
+  state.lastError = null;
+}
+
+function requestLockConfirmed(state) {
+  return Boolean(
+    state.lastRequest?.model
+      && currentPolicy.lockedModels.includes(state.lastRequest.model),
+  );
+}
+
+function verificationOutcome(state, { timedOut = false, fallbackError = null } = {}) {
+  const verification = state.lastVerification;
+  const reasons = Array.isArray(verification?.reasons) ? verification.reasons : [];
+  const modelAllowed = Boolean(
+    verification?.model && currentPolicy.lockedModels.includes(verification.model),
+  );
+  if (verification?.verdict === 'verified') {
+    return { outcome: 'verified', reason: null };
+  }
+  if (reasons.includes('model_not_allowed')) {
+    return { outcome: 'model_mismatch', reason: 'confirmed_model_mismatch' };
+  }
+  if (modelAllowed && reasons.includes('reasoning_missing')) {
+    return {
+      outcome: 'model_verified_reasoning_unconfirmed',
+      reason: 'reasoning_not_exposed',
+    };
+  }
+  if (timedOut) {
+    return { outcome: 'unverified', reason: 'response_verification_timeout' };
+  }
+  if (fallbackError) {
+    return { outcome: 'unverified', reason: 'conversation_evidence_fetch_failed' };
+  }
+  if (state.evidenceIssue === 'response_body_read_failed') {
+    return { outcome: 'unverified', reason: 'response_body_read_failed' };
+  }
+  if (state.evidenceIssue === 'response_model_not_exposed' || reasons.includes('model_missing')) {
+    return { outcome: 'unverified', reason: 'model_not_exposed' };
+  }
+  if (state.evidenceIssue === 'response_reasoning_not_exposed' || reasons.includes('reasoning_missing')) {
+    return { outcome: 'unverified', reason: 'reasoning_not_exposed' };
+  }
+  if (state.phase === 'error') {
+    return { outcome: 'error', reason: state.lastError || 'verification_error' };
+  }
+  return { outcome: 'unverified', reason: state.evidenceIssue || verification?.reason || 'metadata_incomplete' };
+}
+
+async function waitForAttemptVerification(tabId, startedAtMs) {
+  const deadline = Date.now() + AUTO_VERIFY_RESPONSE_TIMEOUT_MS;
+  let requestId = null;
+  while (Date.now() < deadline) {
+    const state = ensureTabState(tabId);
+    const requestTime = Date.parse(state.lastRequest?.capturedAt || '');
+    if (
+      state.lastRequest?.requestId
+      && Number.isFinite(requestTime)
+      && requestTime >= startedAtMs - 1500
+    ) {
+      requestId = state.lastRequest.requestId;
+    }
+    if (
+      requestId
+      && state.lastVerification?.requestId === `cdp-${tabId}-${requestId}`
+    ) {
+      return { timedOut: false, requestId };
+    }
+    if (state.phase === 'error' && state.lastError) {
+      return { timedOut: false, requestId, error: state.lastError };
+    }
+    await sleep(AUTO_VERIFY_POLL_MS);
+  }
+  return { timedOut: true, requestId };
+}
+
+async function collectConversationEvidence(tabId, expectedAfterMs) {
+  const response = await sendTabMessage(tabId, {
+    type: 'GPTLOCK_FETCH_CONVERSATION_EVIDENCE',
+    expectedAfterMs,
+  });
+  return response?.evidence ?? null;
+}
+
+async function applyConversationEvidence(tabId, evidence, attempt) {
+  if (!evidence) return null;
+  const state = ensureTabState(tabId);
+  try {
+    const result = await verifyObservation({
+      model: evidence.model ?? null,
+      reasoning: evidence.reasoning ?? null,
+      evidenceSource: 'conversation_response_metadata',
+      capturedAt: evidence.capturedAt ?? new Date().toISOString(),
+      requestId: `conversation-${tabId}-${attempt}-${Date.now()}`,
+    });
+    state.lastVerification = result;
+    state.phase = result.verdict;
+    state.evidenceIssue = result.reason === 'model_missing'
+      ? 'conversation_model_not_exposed'
+      : result.reason === 'reasoning_missing'
+        ? 'conversation_reasoning_not_exposed'
+        : result.verdict === 'verified'
+          ? null
+          : 'conversation_metadata_incomplete';
+    state.lastEvidenceDiagnostics = {
+      ...(state.lastEvidenceDiagnostics ?? {}),
+      conversationFallback: evidence.diagnostics ?? null,
+    };
+    logRuntime(result.verdict === 'verified' ? 'info' : 'warn', 'verification', 'conversation_fallback_evaluated', {
+      tabId,
+      attempt,
+      verdict: result.verdict,
+      decision: result.decision,
+      reason: result.reason,
+      reasons: result.reasons,
+      model: result.model,
+      reasoning: result.reasoning,
+      evidenceSource: result.evidenceSource,
+      diagnostics: evidence.diagnostics ?? null,
+    });
+    await broadcastTabState(tabId);
+    return result;
+  } catch (error) {
+    state.lastError = errorText(error);
+    logRuntime('error', 'verification', 'conversation_fallback_failed', {
+      tabId,
+      attempt,
+      error: state.lastError,
+      diagnostics: evidence.diagnostics ?? null,
+    });
+    await broadcastTabState(tabId);
+    return null;
+  }
+}
+
+function probeText(attempt) {
+  if (attempt === 1) {
+    return 'GPTLock 自动验证 1/2：请计算 37×41，并只回复结果。';
+  }
+  return 'GPTLock 自动验证 2/2：请计算 137×29，并只回复结果。';
+}
+
+async function autoVerify(tabId) {
+  if (!currentSettings.enabled) throw new Error('GPTLock is disabled / GPTLock 已关闭');
+  const tab = await chrome.tabs.get(tabId);
+  if (!isChatGptUrl(tab.url ?? '')) throw new Error('Open chatgpt.com first / 请先打开 chatgpt.com');
+  const state = ensureTabState(tabId, tab.url);
+  const startedAt = new Date().toISOString();
+  logRuntime('info', 'verification', 'auto_verify_started', {
+    tabId,
+    maxAttempts: AUTO_VERIFY_MAX_ATTEMPTS,
+  });
+
+  const coreCheck = await refreshNativeCore({ tolerateFailure: true });
+  const monitorAttached = await networkMonitor.attach(tabId);
+  const page = await collectPageObservation(tabId, state);
+
+  state.autoVerification = {
+    running: true,
+    startedAt,
+    completedAt: null,
+    attempt: 0,
+    maxAttempts: AUTO_VERIFY_MAX_ATTEMPTS,
+    retries: 0,
+    outcome: 'running',
+    reason: null,
+    requestLockConfirmed: false,
+    requestModel: null,
+    responseModel: null,
+    responseReasoning: null,
+    evidenceSource: null,
+    attempts: [],
+  };
+  resetVerificationAttempt(state);
   state.lastError = page.error;
   await broadcastTabState(tabId);
 
@@ -604,52 +778,196 @@ async function autoVerify(tabId) {
     });
   }
 
-  let sendResult;
-  try {
-    sendResult = await sendTabMessage(tabId, {
-      type: 'GPTLOCK_AUTO_SEND_PROBE',
-      preferredReasoning: currentSettings.preferredReasoning,
-    });
-  } catch (error) {
-    state.lastError = errorText(error);
+  for (let attempt = 1; attempt <= AUTO_VERIFY_MAX_ATTEMPTS; attempt += 1) {
+    resetVerificationAttempt(state);
+    state.autoVerification.running = true;
+    state.autoVerification.attempt = attempt;
+    state.autoVerification.retries = attempt - 1;
+    state.autoVerification.reason = attempt > 1 ? 'retrying_after_incomplete_evidence' : null;
     await broadcastTabState(tabId);
-    logRuntime('error', 'verification', 'auto_probe_send_failed', {
+
+    const attemptStartedMs = Date.now();
+    let sendResult = null;
+    let sendError = null;
+    try {
+      sendResult = await sendTabMessage(tabId, {
+        type: 'GPTLOCK_AUTO_SEND_PROBE',
+        preferredReasoning: currentSettings.preferredReasoning,
+        probeText: probeText(attempt),
+        probeMarker: `GPTLock 自动验证 ${attempt}/2`,
+      });
+    } catch (error) {
+      sendError = errorText(error);
+      state.lastError = sendError;
+      logRuntime('error', 'verification', 'auto_probe_send_failed', {
+        tabId,
+        attempt,
+        error: sendError,
+        monitorAttached,
+      });
+    }
+
+    if (sendError || !sendResult?.sent) {
+      state.autoVerification.attempts.push({
+        attempt,
+        sent: false,
+        sendError: sendError || 'visible_probe_not_sent',
+        requestLockConfirmed: false,
+        outcome: 'send_failed',
+        reason: sendError || 'visible_probe_not_sent',
+      });
+      if (attempt < AUTO_VERIFY_MAX_ATTEMPTS) {
+        logRuntime('warn', 'verification', 'auto_verify_retry_scheduled', {
+          tabId,
+          attempt,
+          reason: sendError || 'visible_probe_not_sent',
+        });
+        await sleep(1000);
+        continue;
+      }
+      break;
+    }
+
+    logRuntime('info', 'verification', 'auto_probe_send_completed', {
       tabId,
-      error: state.lastError,
+      attempt,
+      sent: true,
+      method: sendResult.method ?? null,
+      draftPreserved: Boolean(sendResult.draftPreserved),
+      draftRestored: Boolean(sendResult.draftRestored),
+      coreConnected: coreCheck.connected,
+      coreError: coreCheck.error,
       monitorAttached,
+      pageCollected: page.collected,
+      pageCollectionError: page.error,
     });
-    throw error;
+
+    const waited = await waitForAttemptVerification(tabId, attemptStartedMs);
+    let fallbackAttempted = false;
+    let fallbackError = null;
+    if (waited.timedOut) {
+      state.phase = 'unverified';
+      state.evidenceIssue = 'auto_verify_response_timeout';
+      state.lastError = 'response_verification_timeout';
+      logRuntime('warn', 'verification', 'auto_verify_response_timeout', {
+        tabId,
+        attempt,
+        requestId: waited.requestId,
+        timeoutMs: AUTO_VERIFY_RESPONSE_TIMEOUT_MS,
+      });
+      await broadcastTabState(tabId);
+    } else if (state.lastVerification?.verdict !== 'verified') {
+      fallbackAttempted = true;
+      await sleep(AUTO_VERIFY_FALLBACK_DELAY_MS);
+      try {
+        const evidence = await collectConversationEvidence(tabId, attemptStartedMs);
+        if (evidence) await applyConversationEvidence(tabId, evidence, attempt);
+      } catch (error) {
+        fallbackError = errorText(error);
+        logRuntime('warn', 'verification', 'conversation_fallback_unavailable', {
+          tabId,
+          attempt,
+          error: fallbackError,
+        });
+      }
+    }
+
+    const requestLocked = requestLockConfirmed(state);
+    const outcome = verificationOutcome(state, {
+      timedOut: waited.timedOut,
+      fallbackError,
+    });
+    const attemptSummary = {
+      attempt,
+      sent: true,
+      requestLockConfirmed: requestLocked,
+      requestModel: state.lastRequest?.model ?? null,
+      rewriteReason: state.lastRewrite?.reason ?? null,
+      responseModel: state.lastVerification?.model ?? null,
+      responseReasoning: state.lastVerification?.reasoning ?? null,
+      evidenceSource: state.lastVerification?.evidenceSource ?? null,
+      verdict: state.lastVerification?.verdict ?? null,
+      evidenceIssue: state.evidenceIssue ?? null,
+      fallbackAttempted,
+      fallbackError,
+      timedOut: waited.timedOut,
+      outcome: outcome.outcome,
+      reason: outcome.reason,
+    };
+    state.autoVerification.attempts.push(attemptSummary);
+    state.autoVerification.requestLockConfirmed = requestLocked;
+    state.autoVerification.requestModel = attemptSummary.requestModel;
+    state.autoVerification.responseModel = attemptSummary.responseModel;
+    state.autoVerification.responseReasoning = attemptSummary.responseReasoning;
+    state.autoVerification.evidenceSource = attemptSummary.evidenceSource;
+    state.autoVerification.outcome = outcome.outcome;
+    state.autoVerification.reason = outcome.reason;
+    await broadcastTabState(tabId);
+
+    if (outcome.outcome === 'verified') break;
+    if (attempt < AUTO_VERIFY_MAX_ATTEMPTS) {
+      logRuntime('warn', 'verification', 'auto_verify_retry_scheduled', {
+        tabId,
+        attempt,
+        nextAttempt: attempt + 1,
+        reason: outcome.reason,
+        requestLockConfirmed: requestLocked,
+      });
+      await sleep(1000);
+    }
   }
 
-  const sent = Boolean(sendResult?.sent);
-  logRuntime(sent ? 'info' : 'warn', 'verification', 'auto_probe_send_completed', {
+  const attempts = state.autoVerification.attempts;
+  const lastAttempt = attempts[attempts.length - 1] ?? null;
+  const finalOutcome = lastAttempt?.outcome ?? 'error';
+  const finalReason = lastAttempt?.reason ?? state.lastError ?? 'auto_verify_failed';
+  state.autoVerification.running = false;
+  state.autoVerification.completedAt = new Date().toISOString();
+  state.autoVerification.outcome = finalOutcome;
+  state.autoVerification.reason = finalReason;
+  state.autoVerification.retries = Math.max(0, attempts.length - 1);
+  state.autoVerification.requestLockConfirmed = Boolean(lastAttempt?.requestLockConfirmed);
+  state.autoVerification.requestModel = lastAttempt?.requestModel ?? null;
+  state.autoVerification.responseModel = lastAttempt?.responseModel ?? null;
+  state.autoVerification.responseReasoning = lastAttempt?.responseReasoning ?? null;
+  state.autoVerification.evidenceSource = lastAttempt?.evidenceSource ?? null;
+  await broadcastTabState(tabId);
+
+  logRuntime(finalOutcome === 'verified' ? 'info' : 'warn', 'verification', 'auto_verify_completed', {
     tabId,
-    sent,
-    method: sendResult?.method ?? null,
-    draftPreserved: Boolean(sendResult?.draftPreserved),
-    draftRestored: Boolean(sendResult?.draftRestored),
-    coreConnected: coreCheck.connected,
-    coreError: coreCheck.error,
-    monitorAttached,
-    pageCollected: page.collected,
-    pageCollectionError: page.error,
+    outcome: finalOutcome,
+    reason: finalReason,
+    attempts: attempts.length,
+    retries: state.autoVerification.retries,
+    requestLockConfirmed: state.autoVerification.requestLockConfirmed,
+    requestModel: state.autoVerification.requestModel,
+    responseModel: state.autoVerification.responseModel,
+    responseReasoning: state.autoVerification.responseReasoning,
+    evidenceSource: state.autoVerification.evidenceSource,
   });
 
   return {
-    ready: sent,
-    sent,
+    ready: Boolean(lastAttempt?.sent),
+    sent: Boolean(lastAttempt?.sent),
+    outcome: finalOutcome,
+    reason: finalReason,
+    attempts: attempts.length,
+    retries: state.autoVerification.retries,
+    requestLockConfirmed: state.autoVerification.requestLockConfirmed,
+    requestModel: state.autoVerification.requestModel,
+    responseModel: state.autoVerification.responseModel,
+    responseReasoning: state.autoVerification.responseReasoning,
+    evidenceSource: state.autoVerification.evidenceSource,
     checks: {
       coreConnected: coreCheck.connected,
       coreError: coreCheck.error,
       monitorAttached,
       pageCollected: page.collected,
       pageCollectionError: page.error,
+      pageModel: state.pageObservation?.model ?? null,
+      pageReasoning: state.pageObservation?.reasoning ?? null,
     },
-    send: {
-      method: sendResult?.method ?? null,
-      draftPreserved: Boolean(sendResult?.draftPreserved),
-      draftRestored: Boolean(sendResult?.draftRestored),
-    },
+    autoVerification: state.autoVerification,
     tabState: publicTabState(state),
   };
 }
@@ -676,6 +994,7 @@ function diagnosticTabState(state) {
     lastEvidenceDiagnostics: state.lastEvidenceDiagnostics,
     evidenceIssue: state.evidenceIssue,
     lastError: state.lastError,
+    autoVerification: state.autoVerification,
     updatedAt: state.updatedAt,
     guard: guardFor(state),
   };
@@ -768,6 +1087,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       state.lastEvidenceDiagnostics = null;
       state.evidenceIssue = null;
       state.lastError = null;
+      state.autoVerification = null;
       void broadcastTabState(state.tabId);
     }
     void configureOpenTabs();
@@ -885,6 +1205,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         state.lastVerification = null;
         state.lastError = null;
         state.evidenceIssue = null;
+        state.autoVerification = null;
         logRuntime('info', 'verification', 'legacy_probe_reset', { tabId });
         await broadcastTabState(tabId);
         return publicTabState(state);

@@ -4,7 +4,7 @@
 
 ## 首次配置
 
-1. 打开扩展“设置”。0.3.4 默认策略：
+1. 打开扩展“设置”。0.3.5 默认策略：
 
    - GPTLock 总开关：开启
    - 锁定模型：`gpt-5.6-sol`
@@ -19,7 +19,7 @@
 
 ## 日常使用：不需要先验证
 
-0.3.4 不再要求“先验证成功才能聊天”。正常流程是：
+0.3.5 不再要求“先验证成功才能聊天”。正常流程是：
 
 1. 打开 `https://chatgpt.com/` 并进入聊天；
 2. GPTLock 自动附加当前标签页的请求锁定器；
@@ -47,7 +47,7 @@
 
 ## 自动验证：程序自动发送测试消息
 
-点击弹窗或设置页的 **“自动验证 / Auto verify”** 后，不需要再人工输入或发送“探针”。程序会自动：
+点击弹窗或设置页的 **“自动验证 / Auto verify”** 后，不需要再人工输入或发送“探针”。0.3.5 会对一次自动验证最多执行 2 次可见测试尝试：第一次响应证据不足时先自动回查当前会话详情，仍不足才自动发送第二条测试消息。程序会自动：
 
 1. 检查 Native Core；失败时记录告警但继续后续可执行步骤；
 2. 确保当前 ChatGPT 标签页的请求锁定器已附加；
@@ -60,7 +60,9 @@
 6. 自动点击发送；
 7. 捕获该正式请求的锁定结果；
 8. 响应完成后自动尝试提取模型/推理元数据并交给 Native Core 验证；
-9. 将全过程的技术状态写入运行日志/诊断包。
+9. 若流式响应未暴露模型/推理元数据，自动读取当前会话详情中的最新助手消息元数据作为第二证据源；
+10. 若仍为 `unverified`，自动再发送一次可见测试消息；
+11. 最终明确显示失败/不足原因与已执行的尝试次数，并将全过程写入运行日志/诊断包。
 
 如果输入框已有草稿，程序会先保留草稿，并在测试消息成功发出后尽力恢复。自动验证不会发送隐藏请求，也不会把页面文字伪造为 `verified`。
 
@@ -103,7 +105,7 @@
 
 ## `gpt-5.6-sol-wm` 与 `gpt-5-6-thinking`
 
-0.3.4 根据实际观察把 `gpt-5.6-sol-wm` 作为 `gpt-5.6-sol` 的传输别名处理。因此策略中选择 `gpt-5.6-sol` 时，正式请求可能以 `gpt-5.6-sol-wm` 发出，而界面/审计显示规范化后的 `gpt-5.6-sol`。
+0.3.5 根据实际观察把 `gpt-5.6-sol-wm` 作为 `gpt-5.6-sol` 的传输别名处理。因此策略中选择 `gpt-5.6-sol` 时，正式请求可能以 `gpt-5.6-sol-wm` 发出，而界面/审计显示规范化后的 `gpt-5.6-sol`。
 
 `gpt-5-6-thinking` 仍是独立标识，不会被 GPTLock 当成 Sol。如果正式请求顶层模型是该值，而策略只允许 Sol，请求锁定器会尝试改写为 Sol 的已知传输标识。
 
@@ -166,7 +168,7 @@ curl -H "Authorization: Bearer $GPTLOCK_TOKEN" http://127.0.0.1:17856/status
 
 ## English
 
-GPTLock 0.3.4 no longer requires verification before ordinary chat. Once enabled, it attaches a CDP request interceptor and locks only the two formal conversation POST endpoints. A disallowed top-level model is rewritten to the configured lock target; an already-existing top-level reasoning field may be aligned to the preferred allowed value, but missing reasoning fields are never invented.
+GPTLock 0.3.5 no longer requires verification before ordinary chat. Once enabled, it attaches a CDP request interceptor and locks only the two formal conversation POST endpoints. A disallowed top-level model is rewritten to the configured lock target; an already-existing top-level reasoning field may be aligned to the preferred allowed value, but missing reasoning fields are never invented.
 
 Response verification is supplementary. Missing DOM fields, Core outages, debugger detaches, unreadable/missing response metadata, reasoning mismatches, and verification errors warn but fail open. In strict mode, only a **confirmed response-model mismatch** blocks subsequent sends.
 

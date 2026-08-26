@@ -2,9 +2,9 @@
 
 > 默认中文，English follows.
 
-## 0.3.4 设计原则
+## 0.3.5 设计原则
 
-GPTLock 0.3.4 将“请求锁定”和“响应确认”拆成两个独立层次：
+GPTLock 0.3.5 将“请求锁定”和“响应确认”拆成两个独立层次：
 
 - **请求锁定是主功能**：正式 ChatGPT conversation POST 在真正发出前，通过 CDP `Fetch` 暂停、检查并在必要时改写顶层模型/已有推理字段，然后立即继续。
 - **响应确认是附加证据**：CDP `Network` 关联同一正式请求的响应，只从白名单响应头/JSON/SSE 元数据提取模型与推理强度，再交给 Native Core 审计。
@@ -45,7 +45,7 @@ GPTLock 0.3.4 将“请求锁定”和“响应确认”拆成两个独立层次
 
 5. **Guard `guard.js`**
    - 将页面预检、请求锁定器状态、Core 状态和最近响应结果转成可发送/告警/阻断决定；
-   - 0.3.4 仅当 Native 结果明确包含 `model_not_allowed` 时，在严格模式返回 `canSend=false`；
+   - 0.3.5 仅当 Native 结果明确包含 `model_not_allowed` 时，在严格模式返回 `canSend=false`；
    - 其他验证异常全部允许发送并附带告警原因。
 
 6. **Rust Native Core**
@@ -182,7 +182,7 @@ gpt-5.6-sol     -> transport when rewrite is needed: gpt-5.6-sol-wm
 
 ## Guard 状态机
 
-0.3.4 不再使用“一次探针额度”作为日常发送门禁。
+0.3.5 不再使用“一次探针额度”作为日常发送门禁。
 
 | 状态 | 严格模式能否发送 | 说明 |
 |---|---:|---|
@@ -233,7 +233,7 @@ content.js
 
 ## English
 
-GPTLock 0.3.4 uses two separate layers. CDP **Fetch** is the primary request-lock layer: only the two exact formal conversation POST paths are paused, their top-level model is checked/re-written when needed, already-existing top-level reasoning fields may be aligned, and the request is immediately continued. Auxiliary `prepare` and `init` traffic is never treated as a formal chat send.
+GPTLock 0.3.5 uses two separate layers. CDP **Fetch** is the primary request-lock layer: only the two exact formal conversation POST paths are paused, their top-level model is checked/re-written when needed, already-existing top-level reasoning fields may be aligned, and the request is immediately continued. Auxiliary `prepare` and `init` traffic is never treated as a formal chat send.
 
 CDP **Network** is a supplementary response-evidence layer. It correlates only formal requests, transiently reads completed response bodies, extracts whitelisted model/reasoning metadata from headers/JSON/SSE/NDJSON, discards the body, and asks the Rust core for a verdict. Request metadata and DOM labels never become backend proof.
 
