@@ -36,11 +36,25 @@ function valuePair(model, reasoning) {
   return model || reasoning ? `${model || 'model ?'} · ${reasoning || 'reasoning ?'}` : '无 / None';
 }
 
+function autoReasonText(auto) {
+  const reasons = {
+    confirmed_model_mismatch: '响应明确确认了不允许的模型。',
+    reasoning_not_exposed: '模型已确认，但 ChatGPT 未暴露推理强度元数据。',
+    model_not_exposed: '正式请求已经锁定，但流式响应和会话详情都没有暴露可验证模型元数据。',
+    response_verification_timeout: '等待响应确认超时。',
+    conversation_evidence_fetch_failed: '流式响应证据不足，且会话详情回查失败。',
+    response_body_read_failed: '浏览器无法读取响应体。',
+    metadata_incomplete: '响应元数据仍不完整。',
+  };
+  return reasons[auto?.reason] || auto?.reason || null;
+}
+
 function render(state) {
   elements.version.textContent = state.extensionVersion || '';
   const native = state.nativeStatus ?? {};
   const tab = state.tabState;
   const guard = tab?.guard;
+  const auto = tab?.autoVerification;
   const enabled = state.settings?.enabled !== false;
   elements.enabled.checked = enabled;
   elements.native.textContent = native.connected
@@ -79,7 +93,26 @@ function render(state) {
     outside_scope: ['不适用 / Out of scope', 'GPTLock 仅作用于 chatgpt.com。', 'off'],
     disabled: ['GPTLock 已关闭 / Disabled', '请求锁定与响应确认均已暂停。', 'off'],
   };
-  const [title, detail, tone] = states[guard?.status] || ['无活动状态 / No active state', '请打开 chatgpt.com 后重试。', 'off'];
+  let [title, detail, tone] = states[guard?.status] || ['无活动状态 / No active state', '请打开 chatgpt.com 后重试。', 'off'];
+  if (auto?.running) {
+    title = `自动验证中 ${auto.attempt || 1}/${auto.maxAttempts || 2} / Auto verifying`;
+    detail = '正在等待本次真实聊天响应；如果响应证据不足，程序会自动回查会话详情并最多再发送一次测试消息。';
+    tone = 'wait';
+  } else if (auto?.completedAt) {
+    if (auto.outcome === 'verified') {
+      title = '自动验证通过 / Verified';
+      detail = `已完成 ${auto.attempts?.length || 1} 次尝试；响应证据确认 ${auto.responseModel || auto.requestModel || 'locked model'}。`;
+      tone = 'good';
+    } else if (auto.outcome === 'model_verified_reasoning_unconfirmed') {
+      title = '模型已确认，推理未确认 / Partial verification';
+      detail = `已自动重试 ${auto.retries || 0} 次；${autoReasonText(auto)}`;
+      tone = 'wait';
+    } else {
+      title = '自动验证未完全确认 / Auto verification incomplete';
+      detail = `已自动尝试 ${auto.attempts?.length || 0} 次；${autoReasonText(auto) || '证据仍不足。'} 请求层锁定${auto.requestLockConfirmed ? '已确认' : '未确认'}。`;
+      tone = auto.outcome === 'model_mismatch' ? 'bad' : 'wait';
+    }
+  }
   const reasonDetails = {
     model_missing: '响应已捕获，但未暴露可验证模型字段；这不会阻断聊天。',
     reasoning_missing: '响应已捕获，但未暴露可验证推理强度字段；这不会阻断聊天。',
@@ -88,6 +121,9 @@ function render(state) {
     response_reasoning_not_exposed: 'ChatGPT 本次响应未暴露推理强度元数据。',
     response_body_empty: '本次可读取响应体为空。',
     response_body_unparseable: '本次响应格式无法安全解析为元数据。',
+    conversation_model_not_exposed: '会话详情也没有暴露模型元数据。',
+    conversation_reasoning_not_exposed: '会话详情确认了模型，但没有暴露推理强度元数据。',
+    auto_verify_response_timeout: '自动验证等待响应确认超时。',
   };
   const rewrite = tab?.lastRewrite;
   const rewriteDetail = rewrite
@@ -114,14 +150,18 @@ elements.enabled.addEventListener('change', () => {
 });
 
 elements.autoVerify.addEventListener('click', () => {
-  elements.message.textContent = '正在自动对齐并发送可见测试消息 / Sending visible verification message…';
+  elements.message.textContent = '正在自动验证；证据不足会自动回查并重试一次 / Auto verification is running…';
   elements.autoVerify.disabled = true;
   void sendMessage({ type: 'GPTLOCK_AUTO_VERIFY' })
     .then(async (result) => {
       await load();
-      elements.message.textContent = result.sent
-        ? '已自动发送可见测试消息；响应完成后会自动确认 / Visible test sent; verification will finish automatically.'
-        : `自动验证未发送 / Not sent · ${result.tabState?.guard?.reason || result.tabState?.guard?.status || 'unknown'}`;
+      if (result.outcome === 'verified') {
+        elements.message.textContent = `自动验证通过；共尝试 ${result.attempts} 次 / Verified.`;
+      } else if (result.outcome === 'model_verified_reasoning_unconfirmed') {
+        elements.message.textContent = `模型已确认 ${result.responseModel || result.requestModel || ''}；已自动重试 ${result.retries} 次，但服务端未暴露推理强度。`;
+      } else {
+        elements.message.textContent = `自动验证未完全确认：${result.reason || 'metadata_incomplete'}；已自动尝试 ${result.attempts} 次，请求锁定=${result.requestLockConfirmed ? '成功' : '未确认'}。`;
+      }
     })
     .catch((error) => { elements.message.textContent = `自动验证失败 / Auto verification failed: ${error.message}`; })
     .finally(() => { elements.autoVerify.disabled = false; });

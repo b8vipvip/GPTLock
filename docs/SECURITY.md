@@ -19,7 +19,7 @@ manifest 中提交的是稳定扩展 ID 所需的 RSA **公钥**，不是商店�
 
 ## 请求锁定的最小修改范围
 
-0.3.4 会在正式 conversation POST 发出前短暂读取请求体，因为只有这样才能检查网页实际准备发送的顶层模型字段。修改范围刻意限制为：
+0.3.5 会在正式 conversation POST 发出前短暂读取请求体，因为只有这样才能检查网页实际准备发送的顶层模型字段。修改范围刻意限制为：
 
 - 只处理 `https://chatgpt.com`；
 - 只处理 `POST`；
@@ -75,14 +75,14 @@ Native Core 审计允许记录：时间、安全请求 ID、模型、推理强�
 
 - 响应缺失模型或推理字段：`unverified`；
 - 强证据冲突：降级，不猜测补全；
-- 响应推理强度不允许：`mismatch`/告警，但 0.3.4 不因此阻断聊天；
+- 响应推理强度不允许：`mismatch`/告警，但 0.3.5 不因此阻断聊天；
 - 响应明确暴露不允许模型：`mismatch`，严格模式可阻断后续发送。
 
 这仍不是 OpenAI 内部调度器的密码学证明：GPTLock 只能验证服务器实际交给官方网页的元数据，本地核心也无法独立证明调用它的扩展没有伪造 `evidenceSource`。
 
 ## Fail-open 的安全取舍
 
-旧版把“验证器是否健康”本身当成发送门禁，容易出现 Core 离线、字段缺失或协议变化时日常聊天完全无法发送。0.3.4 改为：
+旧版把“验证器是否健康”本身当成发送门禁，容易出现 Core 离线、字段缺失或协议变化时日常聊天完全无法发送。0.3.5 改为：
 
 - 请求锁定器健康时尽量执行锁定；
 - 请求锁定器/Native Core/响应验证失败时清晰告警并记录日志；
@@ -122,7 +122,7 @@ GPTLock 不防御：
 
 ## English
 
-GPTLock 0.3.4 uses Chromium's `debugger` permission for both CDP **Fetch** and **Network** on `chatgpt.com`. Fetch is the pre-send request-lock layer and is constrained to the two exact formal conversation POST paths. It may modify only the top-level model and already-existing top-level reasoning fields; it does not modify chat content, attachments, conversation identifiers, or unrelated payload fields. Parsing/rewrite errors fail open and attempt to continue the original request.
+GPTLock 0.3.5 uses Chromium's `debugger` permission for both CDP **Fetch** and **Network** on `chatgpt.com`. Fetch is the pre-send request-lock layer and is constrained to the two exact formal conversation POST paths. It may modify only the top-level model and already-existing top-level reasoning fields; it does not modify chat content, attachments, conversation identifiers, or unrelated payload fields. Parsing/rewrite errors fail open and attempt to continue the original request.
 
 Full request postData and response bodies are transient. They are not persisted in runtime logs, diagnostics, or Native Core audit files. Redaction removes request/response payloads, prompts, answers, cookies, authorization data, tokens, passwords, and secrets while preserving technical metadata such as endpoint, lengths, normalized model IDs, candidate field paths, HTTP status, and errors.
 

@@ -39,6 +39,14 @@ test('bounds the persisted runtime log ring buffer', () => {
   assert.deepEqual(boundRuntimeLogs(null), []);
 });
 
+test('diagnostic array sanitization keeps the newest entries', () => {
+  const entries = Array.from({ length: 300 }, (_, index) => ({ index }));
+  const result = sanitizeLogValue(entries);
+  assert.equal(result[0], '[truncated:300;omitted:50;kept:last]');
+  assert.equal(result[1].index, 50);
+  assert.equal(result.at(-1).index, 299);
+});
+
 test('clips overly long strings without dropping diagnostic context', () => {
   const value = sanitizeLogValue({ error: 'x'.repeat(2500) });
   assert.match(value.error, /^x+…\[truncated:2500\]$/);
