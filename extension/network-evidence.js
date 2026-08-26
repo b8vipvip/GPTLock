@@ -11,7 +11,11 @@ const MODEL_KEYS = new Set([
   'modelid',
   'used_model',
   'resolved_model',
+  'resolved_model_slug',
   'served_model',
+  'served_model_slug',
+  'used_model_slug',
+  'default_model_slug',
   'model',
 ]);
 const REASONING_KEYS = new Set([
@@ -21,6 +25,7 @@ const REASONING_KEYS = new Set([
   'reasoninglevel',
   'thinking_level',
   'thinkinglevel',
+  'thinking_effort',
 ]);
 const SKIPPED_CONTENT_KEYS = new Set([
   'content',
@@ -31,6 +36,7 @@ const SKIPPED_CONTENT_KEYS = new Set([
   'output_text',
   'arguments',
 ]);
+const EMBEDDED_STREAM_KEYS = new Set(['encoded_item']);
 const MODEL_HEADERS = [
   'x-openai-model',
   'openai-model',
@@ -170,6 +176,32 @@ export function parseSseObjects(body) {
 }
 
 
+function collectEmbeddedStreamObjects(value, objects, depth = 0) {
+  if (depth > 10 || value === null || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    for (const child of value) collectEmbeddedStreamObjects(child, objects, depth + 1);
+    return;
+  }
+  for (const [rawKey, child] of Object.entries(value)) {
+    const key = canonicalKey(rawKey);
+    if (EMBEDDED_STREAM_KEYS.has(key) && typeof child === 'string' && child.length <= MAX_BODY_CHARS) {
+      const trimmed = child.trim();
+      const parsed = parseJson(trimmed);
+      if (parsed && typeof parsed === 'object') {
+        objects.push(parsed);
+        collectEmbeddedStreamObjects(parsed, objects, depth + 1);
+      }
+      const sseObjects = parseSseObjects(trimmed);
+      if (sseObjects.length) {
+        objects.push(...sseObjects);
+        for (const object of sseObjects) collectEmbeddedStreamObjects(object, objects, depth + 1);
+      }
+      continue;
+    }
+    if (!SKIPPED_CONTENT_KEYS.has(key)) collectEmbeddedStreamObjects(child, objects, depth + 1);
+  }
+}
+
 export function extractStreamHandoff(body = '') {
   const objects = parseSseObjects(body);
   let resumeToken = null;
@@ -256,6 +288,12 @@ function inspectBody(body, mimeType = '') {
       if (parsed && typeof parsed === 'object') values.push(parsed);
     }
     if (values.length) formats.push('ndjson');
+  }
+  const embedded = [];
+  for (const value of [...values]) collectEmbeddedStreamObjects(value, embedded);
+  if (embedded.length) {
+    values.push(...embedded);
+    formats.push('embedded-sse');
   }
   return {
     values,

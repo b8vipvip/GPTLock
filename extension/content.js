@@ -68,6 +68,27 @@
     return null;
   }
 
+  function firstNormalizedElements(elements, normalize) {
+    for (const element of elements) {
+      for (const text of elementTexts(element)) {
+        const value = normalize(text);
+        if (value) return value;
+      }
+    }
+    return null;
+  }
+
+  function composerNearbyControls() {
+    const composer = COMPOSER_SELECTORS.map((selector) => document.querySelector(selector)).find((element) => element && visible(element));
+    if (!composer) return [];
+    const composerRect = composer.getBoundingClientRect();
+    return [...document.querySelectorAll('button,[role=\"button\"],[aria-haspopup]')].filter((element) => {
+      if (!visible(element)) return false;
+      const rect = element.getBoundingClientRect();
+      return rect.bottom >= composerRect.top - 96 && rect.top <= composerRect.bottom + 96;
+    });
+  }
+
   function normalizeDisplayedModel(text) {
     if (!text) return null;
     const compact = text.trim().toLowerCase().replace(/\s+/g, '-');
@@ -93,11 +114,14 @@
   }
 
   function collectObservation() {
+    const nearbyControls = composerNearbyControls();
     const model = firstNormalized(MODEL_SELECTORS, normalizeDisplayedModel)
-      || firstNormalized(['button'], normalizeDisplayedModel);
+      || firstNormalizedElements(nearbyControls, normalizeDisplayedModel)
+      || firstNormalized(['button,[role=\"button\"]'], normalizeDisplayedModel);
     const reasoning = firstNormalized(REASONING_SELECTORS, normalizeDisplayedReasoning)
+      || firstNormalizedElements(nearbyControls, normalizeDisplayedReasoning)
       || firstNormalized(MODEL_SELECTORS, normalizeDisplayedReasoning)
-      || (model ? firstNormalized(['button'], normalizeDisplayedReasoning) : null);
+      || (model ? firstNormalized(['button,[role=\"button\"]'], normalizeDisplayedReasoning) : null);
     return {
       model,
       reasoning,
@@ -121,7 +145,7 @@
     const messages = {
       waiting_for_response_metadata: '请求已锁定，正在等待响应确认 / Request locked; waiting for response metadata',
       page_selection_not_allowed: '页面选择与策略不同；正式请求仍会尝试锁定 / UI differs; the formal request will still be locked',
-      page_selection_missing: '页面没有暴露完整选择；正式请求仍会尝试锁定 / UI selection is incomplete; request locking still applies',
+      page_selection_missing: '页面未暴露完整选择；网络请求锁仍已就绪 / UI selection is incomplete; network request lock remains ready',
       response_verification_disabled: '响应确认已关闭；请求锁定仍启用 / Response verification is off; request locking remains active',
       network_monitor_not_attached: '请求锁定器未连接；聊天不会因此被阻断 / Request lock is not attached; chat remains fail-open',
       native_core_offline: '本地核心离线；请求锁定仍由扩展尝试执行 / Native Core is offline; extension request locking remains active',
@@ -143,7 +167,7 @@
     if (indicator?.isConnected) return indicator;
     const host = document.createElement('div');
     host.id = 'gptlock-indicator-host';
-    host.style.cssText = 'all:initial;position:fixed;left:12px;bottom:12px;z-index:2147483647';
+    host.style.cssText = 'all:initial;position:fixed;right:12px;bottom:12px;z-index:2147483647';
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `
       <style>

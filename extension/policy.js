@@ -26,6 +26,7 @@ export const REASONING_LEVELS = Object.freeze([
 
 const MODEL_ALIASES = Object.freeze({
   'gpt-5.6-sol-wm': 'gpt-5.6-sol',
+  'gpt-5-6': 'gpt-5.6-sol',
 });
 
 const MODEL_TRANSPORT_IDS = Object.freeze({
@@ -50,6 +51,7 @@ export function modelTransportId(value) {
 export function normalizeReasoningLevel(value) {
   const level = String(value ?? '').trim().toLowerCase();
   if (['extra high', 'extra_high', 'extra-high', 'xhigh'].includes(level)) return 'extra-high';
+  if (level === 'extended') return 'high';
   return ['low', 'medium', 'high'].includes(level) ? level : null;
 }
 

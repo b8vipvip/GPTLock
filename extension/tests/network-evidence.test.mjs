@@ -227,3 +227,18 @@ test('extracts ChatGPT stream handoff and matches downstream topic or resume tok
     resumeTokenPresent: true,
   });
 });
+
+test('extracts model and thinking effort from nested ChatGPT WebSocket encoded_item SSE', () => {
+  const encodedItem = [
+    'event: delta',
+    'data: {\"v\":{\"message\":{\"author\":{\"role\":\"assistant\"},\"metadata\":{\"resolved_model_slug\":\"gpt-5-6\",\"model_slug\":\"gpt-5-6\",\"default_model_slug\":\"gpt-5.6-sol-wm\",\"thinking_effort\":\"extended\"}}}}',
+    '',
+  ].join('\n');
+  const body = JSON.stringify([{ type: 'message', topic_id: 'conversation-turn-test', payload: { type: 'conversation-turn-stream', payload: { type: 'stream-item', encoded_item: encodedItem } } }]);
+  const result = extractResponseEvidence({ body, mimeType: 'application/json' });
+  assert.equal(result.model, 'gpt-5.6-sol');
+  assert.equal(result.reasoning, 'high');
+  assert.match(result.diagnostics.bodyFormat, /embedded-sse/);
+  assert.match(result.fields.model, /resolved_model_slug/);
+  assert.match(result.fields.reasoning, /thinking_effort/);
+});

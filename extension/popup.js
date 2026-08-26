@@ -41,6 +41,7 @@ function autoReasonText(auto) {
     confirmed_model_mismatch: '响应明确确认了不允许的模型。',
     reasoning_not_exposed: '模型已确认，但 ChatGPT 未暴露推理强度元数据。',
     model_not_exposed: '正式请求已经锁定，但流式响应和会话详情都没有暴露可验证模型元数据。',
+    downstream_model_not_exposed: '已跟踪 handoff 后续流，但尚未从嵌套流元数据中解析出模型。',
     response_verification_timeout: '等待响应确认超时。',
     conversation_evidence_fetch_failed: '流式响应证据不足，且会话详情回查失败。',
     response_body_read_failed: '浏览器无法读取响应体。',
@@ -124,6 +125,7 @@ function render(state) {
     conversation_model_not_exposed: '会话详情也没有暴露模型元数据。',
     conversation_reasoning_not_exposed: '会话详情确认了模型，但没有暴露推理强度元数据。',
     auto_verify_response_timeout: '自动验证等待响应确认超时。',
+    page_selection_missing: '页面当前未暴露完整模型/推理选择；网络请求锁仍已就绪。',
   };
   const rewrite = tab?.lastRewrite;
   const rewriteDetail = rewrite
@@ -133,7 +135,8 @@ function render(state) {
   elements.verdict.textContent = title.split(' / ')[0];
   elements.verdict.className = `verdict ${tone}`;
   elements.guardTitle.textContent = title;
-  elements.guardDetail.textContent = [detail, rewriteDetail, evidenceDetail, guard?.reason].filter(Boolean).join(' · ');
+  const rawReason = guard?.reason && !evidenceDetail ? guard.reason : null;
+  elements.guardDetail.textContent = [detail, rewriteDetail, evidenceDetail, rawReason].filter(Boolean).join(' · ');
   elements.autoVerify.disabled = !tab || !enabled;
 }
 
