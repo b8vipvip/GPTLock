@@ -1,0 +1,36 @@
+name: One-shot GPTLock 0.3.7 privacy cleanup
+
+on:
+  push:
+    branches: [fix/handoff-stream-tracking-037]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply privacy cleanup
+        run: python .github/scripts/privacy_cleanup_037.py
+      - name: Test extension
+        working-directory: extension
+        run: npm test
+      - name: Validate privacy invariant
+        run: |
+          grep -q "if (direction === 'sent') return;" extension/network-monitor.js
+          ! grep -q "rawStreamData: payload" extension/network-monitor.js
+      - name: Commit cleanup
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add extension docs
+          git commit -m 'Do not persist WebSocket subscription frames'
+          git push
