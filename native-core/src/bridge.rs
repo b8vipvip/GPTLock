@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
 use crate::config::Policy;
+use crate::updater::{prepare_update, PrepareUpdateRequest};
 use crate::verifier::VerificationRequest;
 use crate::{AppState, PROTOCOL_VERSION};
 
@@ -88,6 +89,7 @@ fn handle_message(state: &Arc<AppState>, message: Value) -> Value {
             "policyPersistence": true,
             "auditLog": true,
             "diagnosticExport": true,
+            "oneClickWindowsUpdate": cfg!(windows),
             "sufficientEvidenceSources": [
                 "network_response_metadata",
                 "conversation_response_metadata"
@@ -117,6 +119,15 @@ fn handle_message(state: &Arc<AppState>, message: Value) -> Value {
                 serde_json::from_value::<VerificationRequest>(value).map_err(Into::into)
             })
             .and_then(|request| state.verify(request))
+            .and_then(|result| serde_json::to_value(result).map_err(Into::into)),
+        "prepare_update" => message
+            .get("update")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("update is required / 缺少 update"))
+            .and_then(|value| {
+                serde_json::from_value::<PrepareUpdateRequest>(value).map_err(Into::into)
+            })
+            .and_then(prepare_update)
             .and_then(|result| serde_json::to_value(result).map_err(Into::into)),
         "get_status" => state
             .status()
@@ -207,6 +218,25 @@ mod tests {
         let response = handle_message(&state, json!({ "id": 7, "type": "delete_everything" }));
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "unsupported_message");
+    }
+
+    #[test]
+    fn rejects_invalid_update_requests() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = AppState::initialize(ConfigStore::at(directory.path().to_path_buf())).unwrap();
+        let response = handle_message(
+            &state,
+            json!({
+                "id": 9,
+                "type": "prepare_update",
+                "update": {
+                    "installerPath": "evil.exe",
+                    "expectedSha256": "abc",
+                    "targetVersion": "0.4.0"
+                }
+            }),
+        );
+        assert_eq!(response["ok"], false);
     }
 
     #[test]
