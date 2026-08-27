@@ -1,7 +1,10 @@
+import { appendRuntimeLog } from './runtime-log.js';
+
 export const RELEASE_API_URL = 'https://api.github.com/repos/b8vipvip/GPTLock/releases/latest';
 export const RELEASES_URL = 'https://github.com/b8vipvip/GPTLock/releases/latest';
 export const WINDOWS_INSTALLER_NAME = 'GPTLockSetup-x64.exe';
 export const WINDOWS_DOWNLOAD_FILENAME = 'GPTLock/GPTLockSetup-x64.exe';
+export const UPDATE_STATUS_KEY = 'gptlockUiUpdateStatus';
 
 function numericParts(value) {
   const normalized = String(value || '').trim().replace(/^v/i, '');
@@ -31,6 +34,11 @@ export function compareVersions(left, right) {
 function sha256FromDigest(value) {
   const match = String(value || '').trim().match(/^sha256:([0-9a-f]{64})$/i);
   return match ? match[1].toLowerCase() : null;
+}
+
+function logUpdate(level, event, details = {}) {
+  if (!globalThis.chrome?.storage?.local) return;
+  void appendRuntimeLog(level, 'update', event, details).catch(() => {});
 }
 
 export function parseLatestRelease(release, currentVersion) {
@@ -69,16 +77,124 @@ export function parseLatestRelease(release, currentVersion) {
 }
 
 export async function fetchLatestRelease(currentVersion, fetchImpl = fetch) {
-  const response = await fetchImpl(RELEASE_API_URL, {
-    cache: 'no-store',
-    credentials: 'omit',
-    headers: {
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`GitHub update check failed (${response.status}) / GitHub 更新检查失败`);
+  logUpdate('info', 'update_check_started', { currentVersion: normalizeVersion(currentVersion) || String(currentVersion || '') });
+  try {
+    const response = await fetchImpl(RELEASE_API_URL, {
+      cache: 'no-store',
+      credentials: 'omit',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`GitHub update check failed (${response.status}) / GitHub 更新检查失败`);
+    }
+    const release = parseLatestRelease(await response.json(), currentVersion);
+    logUpdate('info', 'update_check_completed', {
+      currentVersion: release.currentVersion,
+      latestVersion: release.latestVersion,
+      updateAvailable: release.updateAvailable,
+    });
+    return release;
+  } catch (error) {
+    logUpdate('error', 'update_check_failed', {
+      currentVersion: normalizeVersion(currentVersion) || String(currentVersion || ''),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
-  return parseLatestRelease(await response.json(), currentVersion);
+}
+
+export function isInstallActionReady(installButton) {
+  return Boolean(installButton && installButton.hidden === false && installButton.disabled === false);
+}
+
+export function bindAutomaticInstallAfterCheck({
+  checkButton,
+  installButton,
+  MutationObserverImpl = globalThis.MutationObserver,
+  timeoutMs = 60_000,
+  setTimeoutImpl = globalThis.setTimeout,
+  clearTimeoutImpl = globalThis.clearTimeout,
+} = {}) {
+  if (!checkButton || !installButton || typeof MutationObserverImpl !== 'function') return () => {};
+
+  let cancelPending = () => {};
+  const onCheck = () => {
+    cancelPending();
+    let completed = false;
+    let timer = null;
+    let observer = null;
+
+    const cleanup = () => {
+      observer?.disconnect();
+      if (timer !== null) clearTimeoutImpl(timer);
+      timer = null;
+    };
+    cancelPending = cleanup;
+
+    const maybeInstall = () => {
+      if (completed || !isInstallActionReady(installButton)) return false;
+      completed = true;
+      cleanup();
+      logUpdate('info', 'update_auto_install_triggered');
+      installButton.click();
+      return true;
+    };
+
+    observer = new MutationObserverImpl(() => { maybeInstall(); });
+    observer.observe(installButton, {
+      attributes: true,
+      attributeFilter: ['hidden', 'disabled'],
+    });
+    timer = setTimeoutImpl(() => {
+      if (!completed) logUpdate('warn', 'update_auto_install_wait_expired', { timeoutMs });
+      cleanup();
+    }, timeoutMs);
+    maybeInstall();
+  };
+
+  checkButton.addEventListener('click', onCheck);
+  return () => {
+    cancelPending();
+    checkButton.removeEventListener('click', onCheck);
+  };
+}
+
+export function updateStatusEventName(phase) {
+  const events = {
+    downloading: 'update_download_started',
+    installing: 'update_install_started',
+    complete: 'update_completed',
+    error: 'update_failed',
+  };
+  return events[phase] || null;
+}
+
+export function bindUpdateStatusLogging(chromeApi = globalThis.chrome) {
+  if (!chromeApi?.storage?.onChanged?.addListener) return () => {};
+  const listener = (changes, areaName) => {
+    if (areaName !== 'local' || !changes?.[UPDATE_STATUS_KEY]) return;
+    const status = changes[UPDATE_STATUS_KEY].newValue;
+    const event = updateStatusEventName(status?.phase);
+    if (!event) return;
+    logUpdate(status.phase === 'error' ? 'error' : 'info', event, {
+      phase: status.phase,
+      targetVersion: status.targetVersion ?? null,
+      nativeVersion: status.nativeVersion ?? null,
+      error: status.error ?? null,
+    });
+  };
+  chromeApi.storage.onChanged.addListener(listener);
+  return () => chromeApi.storage.onChanged.removeListener?.(listener);
+}
+
+if (typeof document !== 'undefined') {
+  const checkButton = document.getElementById('checkUpdate');
+  const installButton = document.getElementById('installUpdate');
+  if (checkButton && installButton) {
+    bindAutomaticInstallAfterCheck({ checkButton, installButton });
+    bindUpdateStatusLogging();
+  }
 }
