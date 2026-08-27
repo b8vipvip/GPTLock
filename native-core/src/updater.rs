@@ -23,10 +23,10 @@ pub struct PrepareUpdateResult {
 }
 
 fn normalized_sha256(value: &str) -> Result<String> {
-    let normalized = value
-        .trim()
+    let trimmed = value.trim();
+    let normalized = trimmed
         .strip_prefix("sha256:")
-        .unwrap_or(value.trim())
+        .unwrap_or(trimmed)
         .to_ascii_lowercase();
     if normalized.len() != 64 || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         bail!("invalid SHA-256 digest / SHA-256 校验值无效");
@@ -107,7 +107,7 @@ fn powershell_literal(value: &Path) -> Result<String> {
     let text = value
         .to_str()
         .context("Windows update path is not valid UTF-8 / Windows 更新路径不是有效 UTF-8")?;
-    Ok(text.replace(''', "''"))
+    Ok(text.replace('\'', "''"))
 }
 
 #[cfg(windows)]
@@ -119,14 +119,7 @@ fn launch_waiting_installer(installer: &Path, install_root: &Path, pid: u32) -> 
     let installer = powershell_literal(installer)?;
     let install_root = powershell_literal(install_root)?;
     let command = format!(
-        "$ErrorActionPreference='Stop'; Wait-Process -Id {pid} -ErrorAction SilentlyContinue; "
-            .to_owned()
-            + "$arguments=@('/SUPPRESSMSGBOXES','/NORESTART','/VERYSILENT','/DIR=\""
-            + &install_root
-            + "\"'); "
-            + "$process=Start-Process -FilePath '"
-            + &installer
-            + "' -ArgumentList $arguments -Wait -PassThru; exit $process.ExitCode"
+        "$ErrorActionPreference='Stop'; Wait-Process -Id {pid} -ErrorAction SilentlyContinue; $arguments=@('/SUPPRESSMSGBOXES','/NORESTART','/VERYSILENT','/DIR=\"{install_root}\"'); $process=Start-Process -FilePath '{installer}' -ArgumentList $arguments -Wait -PassThru; exit $process.ExitCode"
     );
 
     Command::new("powershell.exe")
