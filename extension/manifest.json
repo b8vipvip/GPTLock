@@ -29,6 +29,7 @@
         "https://chatgpt.com/*"
       ],
       "js": [
+        "page-model-evidence.js",
         "content.js",
         "model-catalog.js"
       ],
