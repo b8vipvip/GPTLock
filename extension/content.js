@@ -125,6 +125,7 @@
         modelLabel: validated.modelLabel || '',
         reasoningLabel: validated.reasoningLabel || '',
         ambiguousModel: Boolean(validated.ambiguous),
+        candidates: Array.isArray(validated.candidates) ? validated.candidates.slice(0, 8) : [],
         capturedAt: new Date().toISOString(),
       };
     }
@@ -143,6 +144,8 @@
       evidenceSource: 'page_dom',
       modelEvidenceSource: 'legacy-fallback',
       reasoningEvidenceSource: 'legacy-fallback',
+      ambiguousModel: false,
+      candidates: model ? [model] : [],
       capturedAt: new Date().toISOString(),
     };
   }
@@ -332,7 +335,16 @@
 
   async function report() {
     const observation = collectObservation();
-    const fingerprint = JSON.stringify([observation.model, observation.reasoning]);
+    const fingerprint = JSON.stringify([
+      observation.model,
+      observation.reasoning,
+      observation.modelEvidenceSource,
+      observation.reasoningEvidenceSource,
+      observation.modelLabel,
+      observation.reasoningLabel,
+      observation.ambiguousModel,
+      observation.candidates,
+    ]);
     if (fingerprint === previousFingerprint) return;
     previousFingerprint = fingerprint;
     try {

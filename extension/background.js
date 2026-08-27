@@ -720,11 +720,18 @@ async function collectPageObservation(tabId, state) {
   try {
     const response = await sendTabMessage(tabId, { type: 'GPTLOCK_COLLECT_PAGE_STATE' });
     if (response?.observation) {
+      const observation = response.observation;
       state.pageObservation = {
-        model: response.observation.model ?? null,
-        reasoning: response.observation.reasoning ?? null,
-        capturedAt: response.observation.capturedAt ?? new Date().toISOString(),
+        model: observation.model ?? null,
+        reasoning: observation.reasoning ?? null,
+        capturedAt: observation.capturedAt ?? new Date().toISOString(),
         evidenceSource: 'page_dom',
+        modelEvidenceSource: observation.modelEvidenceSource ?? 'none',
+        reasoningEvidenceSource: observation.reasoningEvidenceSource ?? 'none',
+        modelLabel: observation.modelLabel ?? '',
+        reasoningLabel: observation.reasoningLabel ?? '',
+        ambiguousModel: Boolean(observation.ambiguousModel),
+        candidates: Array.isArray(observation.candidates) ? observation.candidates.slice(0, 8) : [],
       };
       return { collected: true, error: null };
     }
@@ -1225,11 +1232,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ? message.tabId
           : sender.tab?.id ?? await activeTabId();
         const { nativeStatus } = await chrome.storage.local.get('nativeStatus');
+        const state = tabId === null ? null : tabStates.get(tabId);
+        if (tabId !== null && state && isChatGptUrl(state.url)) {
+          await collectPageObservation(tabId, state);
+        }
         return {
           policy: currentPolicy,
           settings: currentSettings,
           nativeStatus: nativeStatus ?? { connected: false },
-          tabState: tabId === null ? null : publicTabState(tabStates.get(tabId)),
+          tabState: state ? publicTabState(state) : null,
           extensionVersion: chrome.runtime.getManifest().version,
         };
       }
@@ -1263,6 +1274,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           reasoning: message.observation?.reasoning ?? null,
           capturedAt: message.observation?.capturedAt ?? new Date().toISOString(),
           evidenceSource: 'page_dom',
+          modelEvidenceSource: message.observation?.modelEvidenceSource ?? 'none',
+          reasoningEvidenceSource: message.observation?.reasoningEvidenceSource ?? 'none',
+          modelLabel: message.observation?.modelLabel ?? '',
+          reasoningLabel: message.observation?.reasoningLabel ?? '',
+          ambiguousModel: Boolean(message.observation?.ambiguousModel),
+          candidates: Array.isArray(message.observation?.candidates) ? message.observation.candidates.slice(0, 8) : [],
         };
         if (
           previous?.model && state.pageObservation.model

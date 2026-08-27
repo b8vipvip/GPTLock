@@ -70,15 +70,22 @@
       && style.visibility !== 'hidden';
   }
 
+  function evidenceValues(element) {
+    if (!element) return [];
+    const values = [
+      ...MODEL_ATTRIBUTE_NAMES.map((name) => element.getAttribute?.(name) || ''),
+      element.innerText || '',
+      element.textContent || '',
+    ]
+      .map(normalizeLabel)
+      .filter(Boolean);
+    return [...new Set(values)];
+  }
+
   function labelOf(element) {
-    return normalizeLabel(
-      element?.getAttribute?.('aria-label')
-      || element?.getAttribute?.('data-value')
-      || element?.getAttribute?.('title')
-      || element?.innerText
-      || element?.textContent
-      || '',
-    );
+    const values = evidenceValues(element);
+    const visibleText = normalizeLabel(element?.innerText || element?.textContent || '');
+    return visibleText || values[0] || '';
   }
 
   function normalizeModelId(value) {
@@ -146,20 +153,27 @@
     return null;
   }
 
+  function parseControl(element) {
+    const values = evidenceValues(element);
+    const modelValue = values.find((value) => modelFromText(value));
+    const reasoningValue = values.find((value) => reasoningFromText(value));
+    const model = modelValue ? modelFromText(modelValue) : null;
+    const reasoning = reasoningValue ? reasoningFromText(reasoningValue) : null;
+    return {
+      element,
+      values,
+      label: modelValue || reasoningValue || labelOf(element),
+      model,
+      reasoning,
+    };
+  }
+
   function modelReasoningControls() {
     const root = composerRoot();
     if (!root) return [];
-    return [...root.querySelectorAll("button,[role='button'],[aria-label],[data-value]")]
+    return [...root.querySelectorAll("button,[role='button'],[aria-label],[data-value],[data-model],[data-model-id]")]
       .filter(visible)
-      .map((element) => {
-        const label = labelOf(element);
-        return {
-          element,
-          label,
-          model: modelFromText(label),
-          reasoning: reasoningFromText(label),
-        };
-      })
+      .map(parseControl)
       .filter((item) => item.model || item.reasoning);
   }
 
@@ -172,33 +186,47 @@
       for (const element of root.querySelectorAll(selector)) {
         if (seen.has(element) || !visible(element)) continue;
         seen.add(element);
-        const values = [
-          labelOf(element),
-          ...MODEL_ATTRIBUTE_NAMES.map((name) => element.getAttribute?.(name) || ''),
-        ];
-        const model = values.map(modelFromText).find(Boolean) || null;
-        if (model) {
+        const parsed = parseControl(element);
+        if (parsed.model) {
           rows.push({
-            model,
+            model: parsed.model,
             source: 'composer-dom',
-            label: values.find((value) => modelFromText(value) === model) || '',
+            label: parsed.values.find((value) => modelFromText(value) === parsed.model) || parsed.label,
+            selected: true,
+            combined: Boolean(parsed.reasoning),
           });
         }
       }
     }
 
-    // ChatGPT often renders one combined composer pill such as "5.5 高".
-    // The validated chat2api selector strategy treats visible controls inside
-    // the unified composer as passive current-selection evidence too.
+    // ChatGPT commonly exposes the current family only as visible text on the
+    // compact composer pill while aria-label/title remain generic (for example,
+    // aria-label="Model selector" with visible text "5.6 Sol 高").  Keep all
+    // text/attribute values from the validated chat2api composer controls so the
+    // visible model name is not lost just because a generic aria-label exists.
     for (const item of modelReasoningControls()) {
-      if (item.model) rows.push({ model: item.model, source: 'composer-dom', label: item.label });
+      if (item.model) {
+        rows.push({
+          model: item.model,
+          source: 'composer-dom',
+          label: item.values.find((value) => modelFromText(value) === item.model) || item.label,
+          selected: false,
+          combined: Boolean(item.reasoning),
+        });
+      }
     }
 
+    const preferredRows = rows.filter((row) => row.selected || row.combined);
+    const preferredModels = [...new Set(preferredRows.map((item) => item.model).filter(Boolean))];
     const models = [...new Set(rows.map((item) => item.model).filter(Boolean))];
-    if (models.length === 1) {
-      const row = rows.find((item) => item.model === models[0]);
+    const effectiveModels = preferredModels.length === 1 ? preferredModels : models;
+
+    if (effectiveModels.length === 1) {
+      const model = effectiveModels[0];
+      const row = preferredRows.find((item) => item.model === model)
+        || rows.find((item) => item.model === model);
       return {
-        model: models[0],
+        model,
         source: row?.source || 'composer-dom',
         label: row?.label || '',
         ambiguous: false,
@@ -207,9 +235,9 @@
     }
     return {
       model: null,
-      source: models.length > 1 ? 'ambiguous-dom' : 'none',
+      source: effectiveModels.length > 1 ? 'ambiguous-dom' : 'none',
       label: '',
-      ambiguous: models.length > 1,
+      ambiguous: effectiveModels.length > 1,
       candidates: models,
     };
   }
@@ -222,7 +250,7 @@
     return {
       reasoning: item.reasoning,
       source: 'composer-dom',
-      label: item.label,
+      label: item.values.find((value) => reasoningFromText(value) === item.reasoning) || item.label,
     };
   }
 
@@ -242,8 +270,9 @@
   }
 
   globalThis[KEY] = Object.freeze({
-    version: '1.0.0',
+    version: '1.1.0',
     composerRoot,
+    evidenceValues,
     labelOf,
     visible,
     modelFromText,
