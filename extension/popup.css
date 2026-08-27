@@ -29,6 +29,14 @@ h1 small { color: #64748b; font-size: 11px; font-weight: 600; }
 .switch input:checked + span { background: #2563eb; }
 .switch input:checked + span::after { transform: translateX(18px); }
 .switch input:focus-visible + span { outline: 3px solid #bfdbfe; }
+.update-card { margin: -2px 0 12px; padding: 11px 12px; border: 1px solid #bfdbfe; border-radius: 13px; background: #eff6ff; }
+.update-copy { display: grid; gap: 4px; }
+.update-copy strong { color: #1e3a8a; font-size: 13px; }
+.update-copy strong small { color: #64748b; font-size: 9px; font-weight: 650; }
+.update-copy span { color: #475569; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.update-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 9px; }
+.update-actions button:only-child { grid-column: 1 / -1; }
+.update-actions [hidden] { display: none; }
 .install-help { margin: -4px 0 12px; padding: 12px; border: 1px solid #fed7aa; border-radius: 13px; background: #fff7ed; }
 .install-help[hidden] { display: none; }
 .install-help strong { display: block; color: #9a3412; font-size: 13px; }

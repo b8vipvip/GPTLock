@@ -2,6 +2,7 @@ pub mod api;
 pub mod bridge;
 pub mod config;
 pub mod logger;
+pub mod updater;
 pub mod verifier;
 
 use std::sync::{Arc, RwLock};
