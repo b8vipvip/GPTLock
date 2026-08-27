@@ -45,6 +45,7 @@ dd { margin: 0; font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
 .actions .auto,
 .actions .reconnect,
 .actions .install-update { grid-column: 1 / -1; }
+.actions .install-update { display: none; }
 .actions [hidden] { display: none; }
 button { border: 0; border-radius: 10px; padding: 9px 7px; color: #1d4ed8; background: #e8efff; font: 750 12px/1.2 inherit; cursor: pointer; }
 button.primary { color: white; background: #1d4ed8; }
