@@ -111,7 +111,7 @@ fn powershell_literal(value: &Path) -> Result<String> {
 }
 
 #[cfg(windows)]
-fn launch_waiting_installer(installer: &Path, install_root: &Path, pid: u32) -> Result<()> {
+fn launch_installer_helper(installer: &Path, install_root: &Path) -> Result<()> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
 
@@ -119,7 +119,7 @@ fn launch_waiting_installer(installer: &Path, install_root: &Path, pid: u32) -> 
     let installer = powershell_literal(installer)?;
     let install_root = powershell_literal(install_root)?;
     let command = format!(
-        "$ErrorActionPreference='Stop'; Wait-Process -Id {pid} -ErrorAction SilentlyContinue; $arguments=@('/SUPPRESSMSGBOXES','/NORESTART','/VERYSILENT','/DIR=\"{install_root}\"'); $process=Start-Process -FilePath '{installer}' -ArgumentList $arguments -Wait -PassThru; exit $process.ExitCode"
+        "$ErrorActionPreference='Stop'; Start-Sleep -Milliseconds 1500; Get-Process -Name 'gptlock-core' -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Milliseconds 400; $arguments=@('/SUPPRESSMSGBOXES','/NORESTART','/VERYSILENT','/DIR=\"{install_root}\"'); $process=Start-Process -FilePath '{installer}' -ArgumentList $arguments -Wait -PassThru; exit $process.ExitCode"
     );
 
     Command::new("powershell.exe")
@@ -156,7 +156,7 @@ pub fn prepare_update(request: PrepareUpdateRequest) -> Result<PrepareUpdateResu
             bail!("installer SHA-256 mismatch / 安装器 SHA-256 校验失败");
         }
         let pid = std::process::id();
-        launch_waiting_installer(&installer_path, &install_root, pid)?;
+        launch_installer_helper(&installer_path, &install_root)?;
         Ok(PrepareUpdateResult {
             target_version,
             installer_path: installer_path.to_string_lossy().into_owned(),
