@@ -127,54 +127,42 @@
     return Boolean(verificationAt && verificationAt >= requestAt - 1000);
   }
 
-  function currentModel(state) {
-    const candidates = [];
-    const verification = state?.lastVerification;
-    const verifiedModel = normalizeModelId(verification?.model);
-    if (verifiedModel && responseAppliesToLatestRequest(state)) {
-      candidates.push({
-        id: verifiedModel,
-        label: modelLabel(verifiedModel),
-        source: 'response',
-        capturedAt: timestamp(verification?.verifiedAt),
-        sourcePriority: 3,
-        confirmed: verification?.evidenceSource === 'network_response_metadata'
-          && !verification?.reasons?.includes?.('model_missing'),
-        mismatch: verification?.reasons?.includes?.('model_not_allowed') || verification?.verdict === 'mismatch',
-      });
-    }
-
-    const requestModel = normalizeModelId(state?.lastRequest?.model);
-    if (requestModel) {
-      candidates.push({
-        id: requestModel,
-        label: modelLabel(requestModel),
-        source: 'request',
-        capturedAt: timestamp(state?.lastRequest?.capturedAt),
-        sourcePriority: 2,
-        confirmed: false,
-        mismatch: false,
-      });
-    }
-
+  function modelSnapshot(state) {
     const pageObservation = effectivePageObservation(state);
     const pageModel = normalizeModelId(pageObservation?.model);
-    if (pageModel) {
-      candidates.push({
-        id: pageModel,
-        label: modelLabel(pageModel),
-        source: 'page',
-        capturedAt: timestamp(pageObservation?.capturedAt),
-        sourcePriority: 1,
-        confirmed: false,
-        mismatch: false,
-      });
-    }
+    const requestModel = normalizeModelId(state?.lastRequest?.model);
+    const verification = state?.lastVerification;
+    const responseCurrent = responseAppliesToLatestRequest(state);
+    const responseModel = responseCurrent ? normalizeModelId(verification?.model) : null;
+    const responseConfirmed = Boolean(
+      responseModel
+      && verification?.evidenceSource === 'network_response_metadata'
+      && !verification?.reasons?.includes?.('model_missing')
+    );
+    const responseMismatch = Boolean(
+      responseModel
+      && (verification?.reasons?.includes?.('model_not_allowed') || verification?.verdict === 'mismatch')
+    );
 
-    candidates.sort((left, right) => (
-      right.capturedAt - left.capturedAt || right.sourcePriority - left.sourcePriority
-    ));
-    return candidates[0] ?? null;
+    return {
+      page: {
+        id: pageModel,
+        label: pageModel ? modelLabel(pageModel) : '未识别',
+        status: pageModel ? 'observed' : 'unknown',
+      },
+      request: {
+        id: requestModel,
+        label: requestModel ? modelLabel(requestModel) : '等待请求',
+        status: requestModel ? 'request' : 'waiting',
+      },
+      response: {
+        id: responseModel,
+        label: responseModel ? modelLabel(responseModel) : responseCurrent ? '等待响应' : '等待当前响应',
+        status: responseMismatch ? 'mismatch' : responseConfirmed ? 'confirmed' : responseModel ? 'response' : 'waiting',
+        confirmed: responseConfirmed,
+        mismatch: responseMismatch,
+      },
+    };
   }
 
   function rememberModels(models) {
@@ -248,19 +236,25 @@
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `
       <style>
-        button{display:flex;align-items:center;gap:6px;border:1px solid rgba(255,255,255,.22);border-radius:999px;padding:7px 11px;
+        button{display:grid;gap:4px;min-width:214px;border:1px solid rgba(255,255,255,.22);border-radius:13px;padding:8px 10px;
           color:#fff;background:rgba(15,23,42,.68);-webkit-backdrop-filter:blur(10px) saturate(130%);backdrop-filter:blur(10px) saturate(130%);
-          font:700 11px/1.2 system-ui,sans-serif;box-shadow:0 5px 18px rgba(15,23,42,.18);cursor:pointer;white-space:nowrap}
-        button::before{content:'';width:6px;height:6px;border-radius:50%;background:rgba(226,232,240,.9);box-shadow:0 0 0 2px rgba(255,255,255,.12)}
+          font:600 11px/1.25 system-ui,sans-serif;box-shadow:0 5px 18px rgba(15,23,42,.18);cursor:pointer;white-space:nowrap;text-align:left}
+        .model-row{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px;align-items:center}
+        .model-key{opacity:.76;font-weight:650}
+        .model-value{font-weight:800;text-align:right;overflow:hidden;text-overflow:ellipsis}
+        .model-row[data-status="waiting"] .model-value,.model-row[data-status="unknown"] .model-value{opacity:.65;font-weight:650}
+        .model-row[data-status="confirmed"] .model-value{color:#dcfce7}
+        .model-row[data-status="mismatch"] .model-value{color:#fee2e2}
         button[data-tone="confirmed"]{background:rgba(21,128,61,.72);border-color:rgba(187,247,208,.48)}
-        button[data-tone="confirmed"]::before{background:#bbf7d0}
         button[data-tone="request"]{background:rgba(37,99,235,.72);border-color:rgba(191,219,254,.48)}
-        button[data-tone="request"]::before{background:#bfdbfe}
         button[data-tone="mismatch"]{background:rgba(185,28,28,.74);border-color:rgba(254,202,202,.5)}
-        button[data-tone="mismatch"]::before{background:#fecaca}
         button:focus{outline:3px solid rgba(191,219,254,.8);outline-offset:2px}
       </style>
-      <button type="button" data-tone="unknown" title="GPTLock 当前模型 / Current model">当前模型 · 未识别</button>`;
+      <button type="button" data-tone="unknown" title="GPTLock 模型证据 / Model evidence">
+        <span class="model-row" data-source="page" data-status="unknown"><span class="model-key">页面模型</span><span class="model-value">未识别</span></span>
+        <span class="model-row" data-source="request" data-status="waiting"><span class="model-key">请求模型</span><span class="model-value">等待请求</span></span>
+        <span class="model-row" data-source="response" data-status="waiting"><span class="model-key">响应模型</span><span class="model-value">等待响应</span></span>
+      </button>`;
     root.querySelector('button').addEventListener('click', () => {
       chrome.runtime.sendMessage({ type: 'GPTLOCK_OPEN_OPTIONS' }, () => void chrome.runtime.lastError);
     });
@@ -271,40 +265,41 @@
     return host;
   }
 
+  function updateRow(button, source, model) {
+    const row = button.querySelector(`[data-source="${source}"]`);
+    if (!row) return;
+    row.dataset.status = model.status;
+    const value = row.querySelector('.model-value');
+    if (value) value.textContent = model.label;
+  }
+
   function render(state) {
     lastState = state ?? lastState;
     const host = ensureIndicator();
     const button = host.shadowRoot.querySelector('button');
-    const model = currentModel(lastState);
-    if (!model) {
-      button.textContent = '当前模型 · 未识别';
-      button.dataset.tone = 'unknown';
-      button.title = '当前页面尚未取得可靠模型名称。\nCurrent page has not exposed a reliable model name yet.';
-      schedulePosition();
-      return;
-    }
+    const snapshot = modelSnapshot(lastState);
 
-    if (model.source === 'response') {
-      button.textContent = `当前模型 · ${model.label}`;
-      button.dataset.tone = model.mismatch ? 'mismatch' : model.confirmed ? 'confirmed' : 'request';
-      button.title = model.mismatch
-        ? `响应确认模型：${model.label} (${model.id})\n该模型与当前锁定策略不一致。`
-        : `响应模型：${model.label} (${model.id})\n${model.confirmed ? '已由网络响应元数据确认。' : '响应中识别到模型，但确认信息尚未完整。'}`;
-      schedulePosition();
-      return;
-    }
+    updateRow(button, 'page', snapshot.page);
+    updateRow(button, 'request', snapshot.request);
+    updateRow(button, 'response', snapshot.response);
 
-    if (model.source === 'request') {
-      button.textContent = `请求模型 · ${model.label}`;
-      button.dataset.tone = 'request';
-      button.title = `正式请求模型：${model.label} (${model.id})\n这是发出的请求模型，仍等待响应元数据确认实际响应模型。`;
-      schedulePosition();
-      return;
-    }
+    button.dataset.tone = snapshot.response.mismatch
+      ? 'mismatch'
+      : snapshot.response.confirmed
+        ? 'confirmed'
+        : snapshot.request.id
+          ? 'request'
+          : 'unknown';
 
-    button.textContent = `页面模型 · ${model.label}`;
-    button.dataset.tone = 'unknown';
-    button.title = `页面选择：${model.label} (${model.id})\n页面选择变化会实时更新；正式请求后以更新的请求/响应证据为准。`;
+    const pageDetail = snapshot.page.id ? `${snapshot.page.label} (${snapshot.page.id})` : snapshot.page.label;
+    const requestDetail = snapshot.request.id ? `${snapshot.request.label} (${snapshot.request.id})` : snapshot.request.label;
+    const responseDetail = snapshot.response.id ? `${snapshot.response.label} (${snapshot.response.id})` : snapshot.response.label;
+    button.title = [
+      `页面模型：${pageDetail}`,
+      `请求模型：${requestDetail}`,
+      `响应模型：${responseDetail}${snapshot.response.confirmed ? ' · 网络响应已确认' : ''}${snapshot.response.mismatch ? ' · 与锁定策略不一致' : ''}`,
+    ].join('\n');
+
     schedulePosition();
   }
 
