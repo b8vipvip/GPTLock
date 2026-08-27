@@ -50,7 +50,7 @@ jobs:
           zip -9 ../dist/gptlock-extension.zip \
             background.js content.js diagnostics.css diagnostics.html diagnostics.js guard.js manifest.json \
             native-status.js network-evidence.js network-monitor.js options.css options.html options.js \
-            policy.js popup.css popup.html popup.js runtime-log.js
+            policy.js popup.css popup.html popup.js runtime-log.js update-manager.js
       - uses: actions/upload-artifact@v4
         with:
           name: gptlock-extension
