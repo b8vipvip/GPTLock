@@ -16,8 +16,37 @@ $temporaryDirectory = Join-Path $env:TEMP ("GPTLock-Update-" + [Guid]::NewGuid()
 New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
 
 try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch {
+    # Windows PowerShell may already be using the system TLS defaults.
+}
+
+function Invoke-GptLockDownload {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$OutFile
+    )
+
+    try {
+        Invoke-WebRequest -Uri $Uri -Headers $headers -OutFile $OutFile -UseBasicParsing
+        return
+    } catch {
+        $webError = $_.Exception.Message
+        $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+        if ($null -eq $curl) {
+            throw "PowerShell 下载失败且系统没有 curl.exe / PowerShell download failed and curl.exe is unavailable: $webError"
+        }
+        Write-Warning "PowerShell 下载失败，改用 curl.exe / Falling back to curl.exe: $webError"
+        & $curl.Source --location --fail --retry 3 --retry-delay 2 --connect-timeout 20 --output $OutFile $Uri
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $OutFile)) {
+            throw "curl.exe 下载失败 / curl.exe download failed (exit $LASTEXITCODE)."
+        }
+    }
+}
+
+try {
     Write-Host '正在检查 GPTLock 更新 / Checking for GPTLock updates…'
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repository/releases/latest" -Headers $headers
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repository/releases/latest" -Headers $headers -UseBasicParsing
     $installerAsset = $release.assets | Where-Object { $_.name -eq 'GPTLockSetup-x64.exe' } | Select-Object -First 1
     $checksumAsset = $release.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' } | Select-Object -First 1
     if ($null -eq $installerAsset -or $null -eq $checksumAsset) {
@@ -26,8 +55,8 @@ try {
 
     $installerPath = Join-Path $temporaryDirectory $installerAsset.name
     $checksumPath = Join-Path $temporaryDirectory $checksumAsset.name
-    Invoke-WebRequest -Uri $installerAsset.browser_download_url -Headers $headers -OutFile $installerPath
-    Invoke-WebRequest -Uri $checksumAsset.browser_download_url -Headers $headers -OutFile $checksumPath
+    Invoke-GptLockDownload -Uri $installerAsset.browser_download_url -OutFile $installerPath
+    Invoke-GptLockDownload -Uri $checksumAsset.browser_download_url -OutFile $checksumPath
 
     $escapedName = [Regex]::Escape($installerAsset.name)
     $line = Get-Content -LiteralPath $checksumPath | Where-Object { $_ -match "\s\*?$escapedName$" } | Select-Object -First 1
