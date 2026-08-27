@@ -145,7 +145,12 @@ pub fn prepare_update(request: PrepareUpdateRequest) -> Result<PrepareUpdateResu
 
     #[cfg(not(windows))]
     {
-        let _ = (expected_sha256, installer_path, install_root, target_version);
+        let _ = (
+            expected_sha256,
+            installer_path,
+            install_root,
+            target_version,
+        );
         bail!("one-click installer update is only supported on Windows / 一键安装更新目前仅支持 Windows");
     }
 
