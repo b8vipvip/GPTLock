@@ -22,9 +22,16 @@ test('model indicator receives event-driven state and keeps a live fallback refr
   assert.match(source, /detectPageModel/);
 });
 
-test('fresh page selection can supersede stale request or response display', () => {
-  assert.match(source, /capturedAt: timestamp\(verification\?\.verifiedAt\)/);
-  assert.match(source, /capturedAt: timestamp\(state\?\.lastRequest\?\.capturedAt\)/);
-  assert.match(source, /capturedAt: timestamp\(pageObservation\?\.capturedAt\)/);
-  assert.match(source, /right\.capturedAt - left\.capturedAt/);
+test('model indicator renders page request and response evidence simultaneously', () => {
+  assert.match(source, /data-source="page"/);
+  assert.match(source, /data-source="request"/);
+  assert.match(source, /data-source="response"/);
+  assert.match(source, /页面模型/);
+  assert.match(source, /请求模型/);
+  assert.match(source, /响应模型/);
+  assert.match(source, /modelSnapshot/);
+  assert.match(source, /updateRow\(button, 'page'/);
+  assert.match(source, /updateRow\(button, 'request'/);
+  assert.match(source, /updateRow\(button, 'response'/);
+  assert.doesNotMatch(source, /candidates\.sort/);
 });
