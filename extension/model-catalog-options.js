@@ -32,7 +32,13 @@
 
   function appendChoice(model, lockedModels) {
     const container = document.getElementById('modelChoices');
-    if (!container || container.querySelector(`input[name="model"][value="${CSS.escape(model)}"]`)) return;
+    if (!container) return;
+    const existing = container.querySelector(`input[name="model"][value="${CSS.escape(model)}"]`);
+    if (existing) {
+      if (existing.closest('[data-discovered-model]')) existing.checked = lockedModels.includes(model);
+      return;
+    }
+
     const row = document.createElement('label');
     row.className = 'check-row';
     row.dataset.discoveredModel = model;
@@ -53,6 +59,17 @@
     container.append(row);
   }
 
+  function dedupeCustomField(discovered) {
+    const field = document.getElementById('customModels');
+    if (!field || !field.value.trim()) return;
+    const discoveredSet = new Set(discovered);
+    const remaining = field.value
+      .split(',')
+      .map((value) => normalizeModelId(value))
+      .filter((value) => value && !discoveredSet.has(value));
+    field.value = [...new Set(remaining)].join(', ');
+  }
+
   async function refresh() {
     const stored = await chrome.storage.sync.get([STORAGE_KEY, 'policy']);
     const discovered = Array.isArray(stored[STORAGE_KEY])
@@ -62,6 +79,8 @@
       ? stored.policy.lockedModels.map(normalizeModelId).filter(Boolean)
       : [];
     for (const model of discovered) appendChoice(model, lockedModels);
+    dedupeCustomField(discovered);
+    window.setTimeout(() => dedupeCustomField(discovered), 800);
   }
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
