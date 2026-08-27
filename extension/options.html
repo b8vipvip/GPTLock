@@ -10,7 +10,7 @@
   <main class="shell">
     <header>
       <div>
-        <p class="eyebrow">GPTLOCK <span id="extensionVersion">0.3.5</span></p>
+        <p class="eyebrow">GPTLOCK <span id="extensionVersion">0.4.1</span></p>
         <h1>请求模型锁定与响应确认</h1>
         <p class="subtitle">Request locking &amp; supplementary response verification</p>
       </div>
@@ -28,6 +28,7 @@
     <section class="card" aria-labelledby="modelHeading">
       <h2 id="modelHeading">锁定模型 <span>Locked models</span></h2>
       <p class="help">可多选。正式聊天 POST 发出前，GPTLock 会检查顶层 model；若当前模型不在允许列表，则改写为第一个锁定模型的已知传输标识。</p>
+      <p class="permission-note">使用过程中识别到的新模型会自动加入这里作为“自动识别 / Discovered”候选项，但不会自动勾选或放宽当前锁定策略；只有你勾选并保存后才会成为允许的锁定模型。</p>
       <div id="modelChoices" class="choices"></div>
       <label class="field" for="customModels">
         <span>自定义模型标识（逗号分隔）</span>
@@ -104,5 +105,6 @@
     </footer>
   </main>
   <script type="module" src="options.js"></script>
+  <script src="model-catalog-options.js"></script>
 </body>
 </html>
