@@ -33,7 +33,11 @@ test('uses the chat2api composer and selected-state page objects as model eviden
   assert.match(adapterSource, /button\[class\*='composer-pill'\]/);
   assert.match(adapterSource, /button\[data-testid\*='model' i\]/);
   assert.match(adapterSource, /data-model-id/);
-  assert.match(adapterSource, /models\.length === 1/);
+  assert.match(adapterSource, /function evidenceValues/);
+  assert.match(adapterSource, /element\.innerText/);
+  assert.match(adapterSource, /element\.textContent/);
+  assert.match(adapterSource, /generic aria-label/);
+  assert.match(adapterSource, /effectiveModels\.length === 1/);
   assert.match(adapterSource, /ambiguous-dom/);
 });
 
