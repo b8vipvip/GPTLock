@@ -47,10 +47,17 @@
     return values;
   }
 
+  function responseAppliesToLatestRequest(state) {
+    const requestAt = Date.parse(state?.lastRequest?.capturedAt || '');
+    const verificationAt = Date.parse(state?.lastVerification?.verifiedAt || '');
+    if (!Number.isFinite(requestAt)) return true;
+    return Number.isFinite(verificationAt) && verificationAt >= requestAt - 1000;
+  }
+
   function currentModel(state) {
     const verification = state?.lastVerification;
     const verifiedModel = normalizeModelId(verification?.model);
-    if (verifiedModel) {
+    if (verifiedModel && responseAppliesToLatestRequest(state)) {
       const confirmed = verification?.evidenceSource === 'network_response_metadata'
         && !verification?.reasons?.includes?.('model_missing');
       return {
