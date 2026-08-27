@@ -1,6 +1,6 @@
 #define MyAppName "GPTLock"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.3.3"
+  #define MyAppVersion "0.4.4"
 #endif
 #define MyAppPublisher "GPTLock Maintainers"
 #define MyAppURL "https://github.com/b8vipvip/GPTLock"
