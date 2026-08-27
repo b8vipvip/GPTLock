@@ -1,9 +1,9 @@
 {
   "name": "gptlock-extension",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --check background.js && node --check content.js && node --check popup.js && node --check update-manager.js && node --test tests/*.test.mjs"
+    "test": "node --check background.js && node --check content.js && node --check popup.js && node --check update-manager.js && node --check model-catalog.js && node --check model-catalog-options.js && node --test tests/*.test.mjs"
   }
 }
