@@ -106,6 +106,10 @@ if addition not in test_text:
     if anchor not in test_text:
         raise SystemExit('page model test anchor missing')
     test_text = test_text.replace(anchor, anchor + addition, 1)
+test_text = test_text.replace(
+    "  assert.match(adapterSource, /models\\.length === 1/);",
+    "  assert.match(adapterSource, /effectiveModels\\.length === 1/);",
+)
 test_path.write_text(test_text, encoding='utf-8')
 
 sync_test = Path('extension/tests/page-observation-sync.test.mjs')
