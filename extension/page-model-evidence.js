@@ -1,0 +1,256 @@
+(() => {
+  const KEY = '__GPTLOCK_PAGE_MODEL_EVIDENCE__';
+  if (globalThis[KEY]) return;
+
+  const MODEL_ALIASES = Object.freeze({
+    'gpt-5.6-sol-wm': 'gpt-5.6-sol',
+    'gpt-5-6': 'gpt-5.6-sol',
+  });
+  const FAMILY_ALIASES = Object.freeze({
+    'gpt-5.6-sol': ['gpt-5.6 sol', 'gpt 5.6 sol', '5.6 sol'],
+    'gpt-5.5': ['gpt-5.5', 'gpt 5.5', '5.5'],
+  });
+  const REASONING_ALIASES = Object.freeze({
+    'extra-high': ['extra high', 'extra-high', 'xhigh', '超高'],
+    high: ['high', '高级', '高'],
+    medium: ['medium', '中级', '中等', '中'],
+    low: ['low', '低级', '低', '极速', 'instant', 'fast', 'minimal'],
+  });
+  const COMPOSER_ROOT_SELECTORS = Object.freeze([
+    "form[data-type='unified-composer']",
+    'form',
+  ]);
+  const COMPOSER_SELECTORS = Object.freeze([
+    '#prompt-textarea',
+    'textarea[placeholder]',
+    "div[contenteditable='true'][data-lexical-editor='true']",
+    "div[contenteditable='true'].ProseMirror",
+    "form div[contenteditable='true']",
+    "[contenteditable='true']",
+  ]);
+  const SELECTED_MODEL_SELECTORS = Object.freeze([
+    "[aria-checked='true']",
+    "[aria-selected='true']",
+    "[data-state='checked']",
+    "[data-state='selected']",
+    "[data-selected='true']",
+    "button[class*='composer-pill']",
+    "button[data-testid*='model' i]",
+  ]);
+  const MODEL_ATTRIBUTE_NAMES = Object.freeze([
+    'data-model',
+    'data-model-id',
+    'data-value',
+    'aria-label',
+    'title',
+  ]);
+
+  function normalize(value) {
+    return String(value || '')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function normalizeLabel(value) {
+    return normalize(value).replace(/[✓✔︎✔√]/g, '').trim();
+  }
+
+  function normalizedLabelLower(value) {
+    return normalizeLabel(value).toLowerCase();
+  }
+
+  function visible(element) {
+    if (!element?.getBoundingClientRect) return false;
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0
+      && rect.height > 0
+      && style.display !== 'none'
+      && style.visibility !== 'hidden';
+  }
+
+  function labelOf(element) {
+    return normalizeLabel(
+      element?.getAttribute?.('aria-label')
+      || element?.getAttribute?.('data-value')
+      || element?.getAttribute?.('title')
+      || element?.innerText
+      || element?.textContent
+      || '',
+    );
+  }
+
+  function normalizeModelId(value) {
+    const model = String(value ?? '').trim().toLowerCase();
+    if (!/^[a-z0-9._:-]{1,128}$/.test(model)) return null;
+    return MODEL_ALIASES[model] ?? model;
+  }
+
+  function aliasMatches(text, alias) {
+    const haystack = normalizedLabelLower(text);
+    const needle = normalizedLabelLower(alias);
+    if (!needle) return false;
+    let offset = haystack.indexOf(needle);
+    while (offset >= 0) {
+      const before = offset > 0 ? haystack[offset - 1] : '';
+      const afterIndex = offset + needle.length;
+      const after = afterIndex < haystack.length ? haystack[afterIndex] : '';
+      const boundedBefore = !before || !/[a-z0-9.]/i.test(before);
+      const boundedAfter = !after || !/[a-z0-9.]/i.test(after);
+      if (boundedBefore && boundedAfter) return true;
+      offset = haystack.indexOf(needle, offset + 1);
+    }
+    return false;
+  }
+
+  function modelFromText(value) {
+    const text = normalizedLabelLower(value);
+    if (!text) return null;
+
+    for (const [family, aliases] of Object.entries(FAMILY_ALIASES)) {
+      if (aliases.some((alias) => aliasMatches(text, alias))) return family;
+    }
+
+    const compact = text.replace(/\s+/g, '-');
+    const explicit = compact.match(/gpt-?(\d+(?:\.\d+)*)(?:-([a-z0-9]+(?:-[a-z0-9]+)*))?/);
+    if (explicit) {
+      const suffix = explicit[2] ? `-${explicit[2]}` : '';
+      return normalizeModelId(`gpt-${explicit[1]}${suffix}`);
+    }
+    const compactSol = compact.match(/(?:^|[^a-z0-9])(\d+(?:\.\d+)*)-sol(?:-wm)?(?:-|$)/);
+    return compactSol ? normalizeModelId(`gpt-${compactSol[1]}-sol`) : null;
+  }
+
+  function reasoningFromText(value) {
+    const text = normalizedLabelLower(value);
+    if (!text) return null;
+    for (const [level, aliases] of Object.entries(REASONING_ALIASES)) {
+      if (aliases.some((alias) => {
+        const needle = normalizedLabelLower(alias);
+        return text === needle
+          || text.startsWith(`${needle} `)
+          || text.endsWith(` ${needle}`);
+      })) return level;
+    }
+    return null;
+  }
+
+  function composerRoot() {
+    for (const selector of COMPOSER_ROOT_SELECTORS) {
+      const root = [...document.querySelectorAll(selector)].find((form) =>
+        visible(form) && COMPOSER_SELECTORS.some((composerSelector) => form.querySelector(composerSelector)),
+      );
+      if (root) return root;
+    }
+    return null;
+  }
+
+  function modelReasoningControls() {
+    const root = composerRoot();
+    if (!root) return [];
+    return [...root.querySelectorAll("button,[role='button'],[aria-label],[data-value]")]
+      .filter(visible)
+      .map((element) => {
+        const label = labelOf(element);
+        return {
+          element,
+          label,
+          model: modelFromText(label),
+          reasoning: reasoningFromText(label),
+        };
+      })
+      .filter((item) => item.model || item.reasoning);
+  }
+
+  function modelEvidence() {
+    const root = composerRoot() || document;
+    const rows = [];
+    const seen = new Set();
+
+    for (const selector of SELECTED_MODEL_SELECTORS) {
+      for (const element of root.querySelectorAll(selector)) {
+        if (seen.has(element) || !visible(element)) continue;
+        seen.add(element);
+        const values = [
+          labelOf(element),
+          ...MODEL_ATTRIBUTE_NAMES.map((name) => element.getAttribute?.(name) || ''),
+        ];
+        const model = values.map(modelFromText).find(Boolean) || null;
+        if (model) {
+          rows.push({
+            model,
+            source: 'composer-dom',
+            label: values.find((value) => modelFromText(value) === model) || '',
+          });
+        }
+      }
+    }
+
+    // ChatGPT often renders one combined composer pill such as "5.5 高".
+    // The validated chat2api selector strategy treats visible controls inside
+    // the unified composer as passive current-selection evidence too.
+    for (const item of modelReasoningControls()) {
+      if (item.model) rows.push({ model: item.model, source: 'composer-dom', label: item.label });
+    }
+
+    const models = [...new Set(rows.map((item) => item.model).filter(Boolean))];
+    if (models.length === 1) {
+      const row = rows.find((item) => item.model === models[0]);
+      return {
+        model: models[0],
+        source: row?.source || 'composer-dom',
+        label: row?.label || '',
+        ambiguous: false,
+        candidates: models,
+      };
+    }
+    return {
+      model: null,
+      source: models.length > 1 ? 'ambiguous-dom' : 'none',
+      label: '',
+      ambiguous: models.length > 1,
+      candidates: models,
+    };
+  }
+
+  function reasoningEvidence() {
+    const candidates = modelReasoningControls().filter((item) => item.reasoning);
+    if (!candidates.length) return { reasoning: null, source: 'none', label: '' };
+    const combined = candidates.find((item) => item.model);
+    const item = combined || candidates[0];
+    return {
+      reasoning: item.reasoning,
+      source: 'composer-dom',
+      label: item.label,
+    };
+  }
+
+  function collect() {
+    const model = modelEvidence();
+    const reasoning = reasoningEvidence();
+    return {
+      model: model.model,
+      reasoning: reasoning.reasoning,
+      modelSource: model.source,
+      reasoningSource: reasoning.source,
+      modelLabel: model.label,
+      reasoningLabel: reasoning.label,
+      ambiguous: model.ambiguous,
+      candidates: model.candidates,
+    };
+  }
+
+  globalThis[KEY] = Object.freeze({
+    version: '1.0.0',
+    composerRoot,
+    labelOf,
+    visible,
+    modelFromText,
+    reasoningFromText,
+    modelReasoningControls,
+    modelEvidence,
+    reasoningEvidence,
+    collect,
+  });
+})();

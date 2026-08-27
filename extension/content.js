@@ -114,6 +114,21 @@
   }
 
   function collectObservation() {
+    const validated = globalThis.__GPTLOCK_PAGE_MODEL_EVIDENCE__?.collect?.();
+    if (validated) {
+      return {
+        model: validated.model || null,
+        reasoning: validated.reasoning || null,
+        evidenceSource: 'page_dom',
+        modelEvidenceSource: validated.modelSource || 'none',
+        reasoningEvidenceSource: validated.reasoningSource || 'none',
+        modelLabel: validated.modelLabel || '',
+        reasoningLabel: validated.reasoningLabel || '',
+        ambiguousModel: Boolean(validated.ambiguous),
+        capturedAt: new Date().toISOString(),
+      };
+    }
+
     const nearbyControls = composerNearbyControls();
     const model = firstNormalized(MODEL_SELECTORS, normalizeDisplayedModel)
       || firstNormalizedElements(nearbyControls, normalizeDisplayedModel)
@@ -126,6 +141,8 @@
       model,
       reasoning,
       evidenceSource: 'page_dom',
+      modelEvidenceSource: 'legacy-fallback',
+      reasoningEvidenceSource: 'legacy-fallback',
       capturedAt: new Date().toISOString(),
     };
   }
@@ -574,6 +591,19 @@
     childList: true,
     subtree: true,
     characterData: true,
+    attributes: true,
+    attributeFilter: [
+      'aria-label',
+      'aria-checked',
+      'aria-selected',
+      'data-state',
+      'data-selected',
+      'data-value',
+      'data-model',
+      'data-model-id',
+      'title',
+      'data-testid',
+    ],
   });
 
   ensureIndicator();

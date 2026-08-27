@@ -76,6 +76,9 @@
   }
 
   function detectPageModel() {
+    const validated = globalThis.__GPTLOCK_PAGE_MODEL_EVIDENCE__?.collect?.();
+    if (validated) return normalizeModelId(validated.model);
+
     for (const selector of PAGE_MODEL_SELECTORS) {
       for (const element of document.querySelectorAll(selector)) {
         if (!visible(element)) continue;
@@ -312,12 +315,15 @@
 
   function refreshPageModel() {
     pageRefreshTimer = null;
-    const model = detectPageModel();
+    const validated = globalThis.__GPTLOCK_PAGE_MODEL_EVIDENCE__?.collect?.();
+    const model = validated ? normalizeModelId(validated.model) : detectPageModel();
     const previousModel = normalizeModelId(localPageObservation?.model);
     if (model !== previousModel) {
       localPageObservation = model ? {
         model,
         evidenceSource: 'page_dom_live',
+        modelEvidenceSource: validated?.modelSource || 'legacy-fallback',
+        modelLabel: validated?.modelLabel || '',
         capturedAt: new Date().toISOString(),
       } : null;
       if (model) rememberModels([model]);
@@ -353,7 +359,18 @@
     subtree: true,
     characterData: true,
     attributes: true,
-    attributeFilter: ['aria-label', 'title', 'data-testid'],
+    attributeFilter: [
+      'aria-label',
+      'aria-checked',
+      'aria-selected',
+      'data-state',
+      'data-selected',
+      'data-value',
+      'data-model',
+      'data-model-id',
+      'title',
+      'data-testid',
+    ],
   });
 
   window.addEventListener('resize', schedulePosition, { passive: true });
