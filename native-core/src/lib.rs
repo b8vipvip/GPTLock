@@ -47,6 +47,10 @@ impl AppState {
         &self.api_token
     }
 
+    pub fn device_id(&self) -> String {
+        stable_device_id(&self.api_token)
+    }
+
     pub fn config_store(&self) -> &ConfigStore {
         &self.store
     }
@@ -95,6 +99,7 @@ impl AppState {
             status: "ok",
             version: env!("CARGO_PKG_VERSION"),
             protocol_version: PROTOCOL_VERSION,
+            device_id: self.device_id(),
             uptime_seconds: self.started_at.elapsed().as_secs(),
             policy_revision: revision,
             strict_mode: policy.strict_mode,
@@ -137,12 +142,28 @@ impl AppState {
     }
 }
 
+fn stable_device_id(token: &str) -> String {
+    fn fnv64(value: &[u8]) -> u64 {
+        let mut hash = 0xcbf29ce484222325_u64;
+        for byte in value {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash
+    }
+
+    let first = fnv64(format!("gptlock-device-v1:{token}").as_bytes());
+    let second = fnv64(format!("{token}:gptlock-device-v1").as_bytes());
+    format!("device-{first:016x}{second:016x}")
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CoreStatus {
     pub status: &'static str,
     pub version: &'static str,
     pub protocol_version: u32,
+    pub device_id: String,
     pub uptime_seconds: u64,
     pub policy_revision: String,
     pub strict_mode: bool,
@@ -165,4 +186,19 @@ pub struct DoctorReport {
     pub policy_file: String,
     pub audit_file: String,
     pub native_host_name: &'static str,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_id_is_stable_and_does_not_expose_token() {
+        let token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let first = stable_device_id(token);
+        let second = stable_device_id(token);
+        assert_eq!(first, second);
+        assert!(first.starts_with("device-"));
+        assert!(!first.contains(token));
+    }
 }
