@@ -47,6 +47,8 @@ DEPLOYED_COMMIT=""
 ROLLBACK_COMMIT=""
 FETCH_ROUTE=""
 STAGE_DIR=""
+CURRENT_STAGE="idle"
+CURRENT_PERCENT=0
 
 log() {
   printf '%s  %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG_FILE"
@@ -54,6 +56,8 @@ log() {
 
 write_status() {
   local status="$1" stage="$2" percent="$3" message="$4" error="${5:-}"
+  CURRENT_STAGE="$stage"
+  CURRENT_PERCENT="$percent"
   STATUS="$status" STAGE="$stage" PERCENT="$percent" MESSAGE="$message" ERROR_TEXT="$error" \
   REQUEST_ID="$REQUEST_ID" STARTED_AT="$STARTED_AT" FROM_COMMIT="$FROM_COMMIT" TARGET_COMMIT="$TARGET_COMMIT" \
   DEPLOYED_COMMIT="$DEPLOYED_COMMIT" ROLLBACK_COMMIT="$ROLLBACK_COMMIT" REF="$REF" FETCH_ROUTE="$FETCH_ROUTE" \
@@ -75,7 +79,10 @@ cleanup() {
 
 fail() {
   trap - ERR
-  local message="$1"
+  local message="$1" failed_stage="${CURRENT_STAGE:-failed}" failed_percent="${CURRENT_PERCENT:-1}"
+  if ! [[ "$failed_percent" =~ ^[0-9]+$ ]] || (( failed_percent < 1 || failed_percent >= 100 )); then
+    failed_percent=1
+  fi
   log "FAILED: $message"
   if [[ -n "$FROM_COMMIT" && -n "$TARGET_COMMIT" && "$FROM_COMMIT" != "$TARGET_COMMIT" ]]; then
     write_status rolling_back rollback 94 "更新失败，正在回滚到上一版本" "$message" || true
@@ -84,7 +91,7 @@ fail() {
     systemctl restart "$SERVICE" >>"$LOG_FILE" 2>&1 || true
     ROLLBACK_COMMIT="$FROM_COMMIT"
   fi
-  write_status failed failed 100 "更新失败" "$message" || true
+  write_status failed "$failed_stage" "$failed_percent" "更新失败（阶段：$failed_stage）" "$message" || true
   cleanup
   exit 1
 }
@@ -95,7 +102,7 @@ trap cleanup EXIT
 exec 9>"$LOCK_FILE"
 chmod 600 "$LOCK_FILE" || true
 if ! flock -n 9; then
-  write_status failed busy 100 "已有更新任务正在执行" "UPDATE_BUSY"
+  write_status failed busy 1 "已有更新任务正在执行" "UPDATE_BUSY"
   exit 0
 fi
 
