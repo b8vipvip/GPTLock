@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createUpdateManager } from './update-manager.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(ROOT, 'public');
@@ -23,6 +24,7 @@ if (!ADMIN_PASSWORD || ADMIN_PASSWORD.length < 12) throw new Error('GPTLOCK_LICE
 if (!SECRET || SECRET.length < 32) throw new Error('GPTLOCK_LICENSE_SECRET must be at least 32 characters');
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error('Invalid GPTLOCK_LICENSE_PORT');
 mkdirSync(dirname(DB_PATH), { recursive: true });
+const updateManager = createUpdateManager({ serverRoot: ROOT, dbPath: DB_PATH, env });
 
 const db = new DatabaseSync(DB_PATH);
 db.exec(`
@@ -331,6 +333,14 @@ async function handleAdmin(req, res, url) {
   }
   if (!isAdmin(req)) return apiError(res, 401, 'ADMIN_REQUIRED', '需要管理员登录');
 
+  if (url.pathname === '/admin/api/update' && req.method === 'GET') {
+    return json(res, 200, updateManager.info());
+  }
+  if (url.pathname === '/admin/api/update' && req.method === 'POST') {
+    const result = updateManager.request();
+    audit('server_update_requested', null, { requestId: result.requestId, ref: env.GPTLOCK_UPDATE_REF || 'main' });
+    return json(res, 202, result);
+  }
   if (url.pathname === '/admin/api/licenses' && req.method === 'GET') {
     purgeWindowLeases();
     const rows = db.prepare('SELECT * FROM licenses ORDER BY id DESC LIMIT 1000').all();
