@@ -40,10 +40,10 @@
       </div>
       <label>内部备注<textarea id="note" rows="2"></textarea></label>
       <button id="create" class="primary">生成授权码</button>
-      <div id="newCode" class="new-code" hidden><strong>新授权码（只显示这一次）</strong><code id="newCodeValue"></code><button id="copyCode">复制</button></div>
+      <div id="newCode" class="new-code" hidden><strong>新授权码（后续可在授权列表再次复制）</strong><code id="newCodeValue"></code><button id="copyCode">复制</button></div>
     </section>
     <section class="card">
-      <div class="section-title"><h2>授权列表</h2><button id="refresh">刷新</button></div>
+      <div class="section-title"><div><h2>授权列表</h2><p class="muted">新版本创建的授权码可直接复制；升级前的历史记录只有不可逆摘要，因此无法恢复原始授权码。</p></div><button id="refresh">刷新</button></div>
       <div class="table-wrap"><table><thead><tr><th>ID</th><th>授权</th><th>名称</th><th>状态</th><th>设备</th><th>窗口</th><th>到期</th><th>操作</th></tr></thead><tbody id="licenses"></tbody></table></div>
     </section>
     <section class="card"><h2>最近审计</h2><pre id="audit"></pre></section>
