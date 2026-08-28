@@ -1,5 +1,6 @@
 name: Refresh v0.5.1 Cargo lock
 
+# One-shot release helper. Delete after Cargo.lock is refreshed.
 on:
   push:
     branches:
