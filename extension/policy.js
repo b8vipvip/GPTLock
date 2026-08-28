@@ -397,6 +397,11 @@ if (typeof document === 'undefined' && typeof chrome !== 'undefined' && chrome.d
 
   replaceMethod(chrome.runtime.onMessage, 'addListener', function patchedAddListener(listener) {
     return original.onMessageAddListener((message, sender, sendResponse) => {
+      // License messages have a dedicated listener above. Never pass them into the
+      // generic background listener as well, otherwise two async listeners race to
+      // sendResponse() and a fast "Unsupported extension message" can hide a real
+      // successful activation.
+      if (message?.type?.startsWith('GPTLOCK_LICENSE_')) return false;
       const windowId = Number.isInteger(message?.windowId) ? message.windowId : (sender?.tab?.windowId ?? null);
       const licensed = Number.isInteger(windowId) ? windowAuthorized(windowId) : licenseState.authorized;
       if (!licensed && message?.type === 'GPTLOCK_SEND_STARTED') {
