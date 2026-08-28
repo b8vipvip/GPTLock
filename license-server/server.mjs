@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { createServer } from 'node:http';
 import { mkdirSync, readFileSync } from 'node:fs';
@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS licenses (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 ) STRICT;
+CREATE TABLE IF NOT EXISTS license_secrets (
+  license_id INTEGER PRIMARY KEY REFERENCES licenses(id) ON DELETE CASCADE,
+  code_ciphertext TEXT NOT NULL
+) STRICT;
 CREATE TABLE IF NOT EXISTS devices (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   license_id INTEGER NOT NULL REFERENCES licenses(id) ON DELETE CASCADE,
@@ -86,6 +90,9 @@ CREATE INDEX IF NOT EXISTS idx_activations_license ON activations(license_id);
 CREATE INDEX IF NOT EXISTS idx_window_leases_seen ON window_leases(last_seen_at);
 `);
 
+const LICENSE_CODE_KEY = createHmac('sha256', SECRET).update('gptlock-license-code-encryption:v1').digest();
+const LICENSE_CODE_AAD_PREFIX = 'gptlock-license-code:v1:';
+
 function nowIso() { return new Date().toISOString(); }
 function sha256(value) { return createHash('sha256').update(String(value)).digest('hex'); }
 function hmac(value) { return createHmac('sha256', SECRET).update(String(value)).digest('hex'); }
@@ -95,6 +102,27 @@ function safeEqual(a, b) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 function normalizeCode(value) { return String(value || '').trim().toUpperCase().replace(/\s+/g, ''); }
+function encryptLicenseCode(code, licenseId) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', LICENSE_CODE_KEY, iv);
+  cipher.setAAD(Buffer.from(`${LICENSE_CODE_AAD_PREFIX}${licenseId}`));
+  const ciphertext = Buffer.concat([cipher.update(normalizeCode(code), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v1.${iv.toString('base64url')}.${tag.toString('base64url')}.${ciphertext.toString('base64url')}`;
+}
+function decryptLicenseCode(value, licenseId) {
+  if (!value) return null;
+  try {
+    const [version, ivText, tagText, ciphertextText] = String(value).split('.');
+    if (version !== 'v1' || !ivText || !tagText || !ciphertextText) return null;
+    const decipher = createDecipheriv('aes-256-gcm', LICENSE_CODE_KEY, Buffer.from(ivText, 'base64url'));
+    decipher.setAAD(Buffer.from(`${LICENSE_CODE_AAD_PREFIX}${licenseId}`));
+    decipher.setAuthTag(Buffer.from(tagText, 'base64url'));
+    return Buffer.concat([decipher.update(Buffer.from(ciphertextText, 'base64url')), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
+}
 function validId(value, max = 160) { return typeof value === 'string' && value.length >= 8 && value.length <= max && /^[A-Za-z0-9._:-]+$/.test(value); }
 function clampInt(value, min, max, fallback) {
   const parsed = Number(value);
@@ -131,7 +159,7 @@ function licenseSummary(row) {
   purgeWindowLeases();
   const devices = db.prepare('SELECT COUNT(*) AS count FROM devices WHERE license_id=?').get(row.id).count;
   const windows = db.prepare(`SELECT COUNT(*) AS count FROM window_leases wl JOIN activations a ON a.id=wl.activation_id WHERE a.license_id=? AND a.revoked_at IS NULL`).get(row.id).count;
-  return {
+  const summary = {
     id: row.id,
     hint: row.code_hint,
     label: row.label,
@@ -142,6 +170,8 @@ function licenseSummary(row) {
     limits: { devices: row.max_devices, windows: row.max_windows },
     usage: { devices, windows },
   };
+  if (Object.prototype.hasOwnProperty.call(row, 'code_available')) summary.codeAvailable = Boolean(row.code_available);
+  return summary;
 }
 function findLicenseByCode(code) {
   return db.prepare('SELECT * FROM licenses WHERE code_hash=?').get(hmac(normalizeCode(code)));
@@ -239,10 +269,21 @@ function createLicense(input) {
     if (!findLicenseByCode(code)) break;
   }
   const now = nowIso();
-  const result = db.prepare(`INSERT INTO licenses(code_hash,code_hint,label,note,status,max_devices,max_windows,valid_from,expires_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(hmac(code), `${code.slice(0,9)}…${code.slice(-4)}`, String(input.label || '').slice(0,120), String(input.note || '').slice(0,500), 'active', maxDevices, maxWindows, validFrom, expiresAt, now, now);
-  audit('license_created', Number(result.lastInsertRowid), { maxDevices, maxWindows, expiresAt });
-  return { code, license: licenseSummary(db.prepare('SELECT * FROM licenses WHERE id=?').get(Number(result.lastInsertRowid))) };
+  let licenseId;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = db.prepare(`INSERT INTO licenses(code_hash,code_hint,label,note,status,max_devices,max_windows,valid_from,expires_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(hmac(code), `${code.slice(0,9)}…${code.slice(-4)}`, String(input.label || '').slice(0,120), String(input.note || '').slice(0,500), 'active', maxDevices, maxWindows, validFrom, expiresAt, now, now);
+    licenseId = Number(result.lastInsertRowid);
+    db.prepare('INSERT INTO license_secrets(license_id,code_ciphertext) VALUES(?,?)')
+      .run(licenseId, encryptLicenseCode(code, licenseId));
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw error;
+  }
+  audit('license_created', licenseId, { maxDevices, maxWindows, expiresAt });
+  return { code, license: licenseSummary(db.prepare('SELECT * FROM licenses WHERE id=?').get(licenseId)) };
 }
 
 async function handleApi(req, res, url) {
@@ -343,12 +384,34 @@ async function handleAdmin(req, res, url) {
   }
   if (url.pathname === '/admin/api/licenses' && req.method === 'GET') {
     purgeWindowLeases();
-    const rows = db.prepare('SELECT * FROM licenses ORDER BY id DESC LIMIT 1000').all();
+    const rows = db.prepare(`
+      SELECT l.*, CASE WHEN s.license_id IS NULL THEN 0 ELSE 1 END AS code_available
+      FROM licenses l
+      LEFT JOIN license_secrets s ON s.license_id=l.id
+      ORDER BY l.id DESC
+      LIMIT 1000
+    `).all();
     return json(res, 200, { ok: true, licenses: rows.map(licenseSummary) });
   }
   if (url.pathname === '/admin/api/licenses' && req.method === 'POST') {
     const created = createLicense(await bodyJson(req));
     return json(res, 201, { ok: true, ...created });
+  }
+  const codeMatch = url.pathname.match(/^\/admin\/api\/licenses\/(\d+)\/code$/);
+  if (codeMatch && req.method === 'GET') {
+    const id = Number(codeMatch[1]);
+    const row = db.prepare(`
+      SELECT l.id, s.code_ciphertext
+      FROM licenses l
+      LEFT JOIN license_secrets s ON s.license_id=l.id
+      WHERE l.id=?
+    `).get(id);
+    if (!row) return apiError(res, 404, 'LICENSE_NOT_FOUND', '授权不存在');
+    if (!row.code_ciphertext) return apiError(res, 409, 'LICENSE_CODE_UNAVAILABLE', '该历史授权码创建时未保存完整值，无法恢复');
+    const code = decryptLicenseCode(row.code_ciphertext, id);
+    if (!code) return apiError(res, 500, 'LICENSE_CODE_DECRYPT_FAILED', '授权码解密失败，请检查服务端密钥配置');
+    audit('license_code_accessed', id, {});
+    return json(res, 200, { ok: true, code });
   }
   const match = url.pathname.match(/^\/admin\/api\/licenses\/(\d+)$/);
   if (match && req.method === 'PATCH') {

@@ -16,6 +16,29 @@ async function api(path, options = {}) {
   if (!response.ok || body.ok === false) throw new Error(body.error?.message || `HTTP ${response.status}`);
   return body;
 }
+async function copyText(value) {
+  const text = String(value || '');
+  if (!text) throw new Error('没有可复制的授权码');
+  await navigator.clipboard.writeText(text);
+}
+async function copyLicenseCode(row, button) {
+  const original = button.textContent;
+  try {
+    button.disabled = true;
+    button.textContent = '复制中…';
+    const result = await api(`/admin/api/licenses/${row.id}/code`);
+    await copyText(result.code);
+    button.textContent = '已复制';
+    setTimeout(() => {
+      button.textContent = original;
+      button.disabled = false;
+    }, 1200);
+  } catch (error) {
+    button.textContent = original;
+    button.disabled = false;
+    alert(error.message);
+  }
+}
 function localDate(value) { return value ? new Date(value).toLocaleString() : '—'; }
 function escapeText(value) { return String(value ?? ''); }
 function shortCommit(value) { return value ? String(value).slice(0, 12) : '—'; }
@@ -31,6 +54,11 @@ function renderLicenses(rows) {
     const cells = [row.id, row.hint, row.label || '—', row.status === 'active' ? '启用' : '停用', `${row.usage.devices}/${row.limits.devices}`, `${row.usage.windows}/${row.limits.windows}`, localDate(row.expiresAt)];
     for (const value of cells) { const td = document.createElement('td'); td.textContent = escapeText(value); tr.append(td); }
     const actions = document.createElement('td');
+    const copy = document.createElement('button');
+    copy.textContent = row.codeAvailable ? '复制授权码' : '历史码不可恢复';
+    copy.disabled = !row.codeAvailable;
+    copy.title = row.codeAvailable ? '复制完整授权码' : '该授权创建于完整授权码加密保存功能上线之前，服务器只有不可逆摘要，无法恢复原码';
+    if (row.codeAvailable) copy.addEventListener('click', () => void copyLicenseCode(row, copy));
     const toggle = document.createElement('button'); toggle.textContent = row.status === 'active' ? '停用' : '启用';
     toggle.addEventListener('click', () => void updateLicense(row.id, { status: row.status === 'active' ? 'revoked' : 'active' }));
     const edit = document.createElement('button'); edit.textContent = '修改限制';
@@ -42,7 +70,7 @@ function renderLicenses(rows) {
     });
     const release = document.createElement('button'); release.textContent = '释放设备';
     release.addEventListener('click', () => { if (confirm('确认清空此授权的设备绑定和浏览器激活？')) void releaseDevices(row.id); });
-    actions.append(toggle, edit, release); tr.append(actions); el.licenses.append(tr);
+    actions.append(copy, toggle, edit, release); tr.append(actions); el.licenses.append(tr);
   }
 }
 function renderUpdate(data) {
@@ -135,5 +163,8 @@ el.create.addEventListener('click', async () => {
     el.newCode.hidden = false; el.newCodeValue.textContent = result.code; await load();
   } catch (e) { alert(e.message); }
 });
-el.copyCode.addEventListener('click', () => void navigator.clipboard.writeText(el.newCodeValue.textContent || ''));
+el.copyCode.addEventListener('click', async () => {
+  try { await copyText(el.newCodeValue.textContent); }
+  catch (error) { alert(error.message); }
+});
 defaultExpiry(); void load();
