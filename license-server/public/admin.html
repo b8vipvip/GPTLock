@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GPTLock 授权管理</title>
+  <link rel="stylesheet" href="/admin.css">
+</head>
+<body>
+<main>
+  <header><div><p>GPTLOCK</p><h1>授权管理服务</h1></div><button id="logout" hidden>退出</button></header>
+  <section id="login" class="card login">
+    <h2>管理员登录</h2>
+    <input id="password" type="password" autocomplete="current-password" placeholder="管理员密码">
+    <button id="loginButton" class="primary">登录</button><p id="loginMessage"></p>
+  </section>
+  <div id="app" hidden>
+    <section class="card">
+      <h2>生成授权码</h2>
+      <div class="grid">
+        <label>备注名称<input id="label" placeholder="例如：客户 A"></label>
+        <label>设备上限<input id="maxDevices" type="number" min="1" value="1"></label>
+        <label>同时窗口上限<input id="maxWindows" type="number" min="1" value="1"></label>
+        <label>有效期至<input id="expiresAt" type="datetime-local"></label>
+      </div>
+      <label>内部备注<textarea id="note" rows="2"></textarea></label>
+      <button id="create" class="primary">生成授权码</button>
+      <div id="newCode" class="new-code" hidden><strong>新授权码（只显示这一次）</strong><code id="newCodeValue"></code><button id="copyCode">复制</button></div>
+    </section>
+    <section class="card">
+      <div class="section-title"><h2>授权列表</h2><button id="refresh">刷新</button></div>
+      <div class="table-wrap"><table><thead><tr><th>ID</th><th>授权</th><th>名称</th><th>状态</th><th>设备</th><th>窗口</th><th>到期</th><th>操作</th></tr></thead><tbody id="licenses"></tbody></table></div>
+    </section>
+    <section class="card"><h2>最近审计</h2><pre id="audit"></pre></section>
+  </div>
+</main>
+<script type="module" src="/admin.js"></script>
+</body>
+</html>
