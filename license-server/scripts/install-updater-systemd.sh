@@ -27,16 +27,30 @@ DB_PATH="${GPTLOCK_LICENSE_DB:-$SERVER_DIR/data/gptlock-license.sqlite3}"
 DATA_DIR="${GPTLOCK_UPDATE_DATA_DIR:-$(dirname "$DB_PATH")}"
 REQUEST_FILE="$DATA_DIR/update-request.json"
 UPDATE_SCRIPT="$SERVER_DIR/scripts/update-server.sh"
+FETCH_HELPER="$SERVER_DIR/scripts/github-fetch.sh"
+KNOWN_HOSTS="$SERVER_DIR/scripts/github-known-hosts"
+TRANSPORT="${GPTLOCK_UPDATE_TRANSPORT:-auto}"
 
 [[ -d "$REPO_DIR/.git" ]] || { echo "Git repository not found: $REPO_DIR" >&2; exit 1; }
 [[ -f "$UPDATE_SCRIPT" ]] || { echo "Updater script not found: $UPDATE_SCRIPT" >&2; exit 1; }
+[[ -f "$FETCH_HELPER" ]] || { echo "GitHub fetch helper not found: $FETCH_HELPER" >&2; exit 1; }
+[[ -s "$KNOWN_HOSTS" ]] || { echo "Pinned GitHub known_hosts file not found: $KNOWN_HOSTS" >&2; exit 1; }
 [[ -x "$NODE_BIN" ]] || { echo "Node 22 not found: $NODE_BIN" >&2; exit 1; }
+command -v timeout >/dev/null || { echo "GNU timeout is required" >&2; exit 1; }
 id "$RUNTIME_USER" >/dev/null 2>&1 || { echo "Runtime user not found: $RUNTIME_USER" >&2; exit 1; }
+
+REMOTE_URL="$(git -C "$REPO_DIR" remote get-url origin)"
+GPTLOCK_UPDATE_TRANSPORT="$TRANSPORT" bash "$FETCH_HELPER" --validate-url "$REMOTE_URL" || {
+  echo "Untrusted Git origin: $REMOTE_URL" >&2
+  exit 1
+}
+
 mkdir -p "$DATA_DIR"
 chown "$RUNTIME_USER:$RUNTIME_GROUP" "$DATA_DIR" || true
 rm -f "$REQUEST_FILE"
 chmod 750 "$SERVER_DIR/scripts" || true
-chmod 750 "$UPDATE_SCRIPT" || true
+chmod 750 "$UPDATE_SCRIPT" "$FETCH_HELPER" || true
+chmod 640 "$KNOWN_HOSTS" || true
 
 cat > /etc/systemd/system/gptlock-license-update.service <<EOF
 [Unit]
@@ -46,6 +60,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+Environment="GIT_TERMINAL_PROMPT=0"
 Environment="GPTLOCK_UPDATE_SERVER_DIR=$SERVER_DIR"
 Environment="GPTLOCK_UPDATE_REPO_DIR=$REPO_DIR"
 Environment="GPTLOCK_UPDATE_ENV_FILE=$ENV_FILE"
@@ -56,7 +71,7 @@ Environment="GPTLOCK_UPDATE_SERVICE=$SERVICE"
 Environment="GPTLOCK_UPDATE_RUNTIME_USER=$RUNTIME_USER"
 Environment="GPTLOCK_UPDATE_RUNTIME_GROUP=$RUNTIME_GROUP"
 ExecStart=/bin/bash $UPDATE_SCRIPT
-TimeoutStartSec=10min
+TimeoutStartSec=15min
 EOF
 
 cat > /etc/systemd/system/gptlock-license-update.path <<EOF
@@ -77,7 +92,11 @@ systemctl enable --now gptlock-license-update.path
 echo "GPTLock updater installed."
 echo "  repository: $REPO_DIR"
 echo "  server dir: $SERVER_DIR"
-echo "  target ref: origin/$REF"
+echo "  target ref: $REF"
+echo "  transport: $TRANSPORT (SSH 22 -> SSH 443 -> HTTPS in auto mode)"
 echo "  runtime user: $RUNTIME_USER:$RUNTIME_GROUP"
 echo "  request: $REQUEST_FILE"
 echo "  watcher: gptlock-license-update.path"
+echo "  trusted origin: $REMOTE_URL"
+echo "  transport plan:"
+GPTLOCK_UPDATE_TRANSPORT="$TRANSPORT" bash "$FETCH_HELPER" --plan "$REMOTE_URL" "$TRANSPORT" | sed 's/^/    /'
