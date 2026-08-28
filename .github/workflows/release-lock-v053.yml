@@ -1,0 +1,44 @@
+name: Refresh v0.5.3 Cargo lock
+
+on:
+  push:
+    branches:
+      - release/v0.5.3
+    paths:
+      - .github/workflows/release-lock-v053.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/v0.5.3
+          fetch-depth: 2
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Refresh lockfile with Cargo
+        run: |
+          cp native-core/Cargo.lock /tmp/Cargo.lock.before
+          cargo check --manifest-path native-core/Cargo.toml
+          python - <<'PY'
+          from pathlib import Path
+
+          before = Path('/tmp/Cargo.lock.before').read_text(encoding='utf-8')
+          after = Path('native-core/Cargo.lock').read_text(encoding='utf-8')
+          old = 'name = "gptlock-core"\nversion = "0.5.2"'
+          new = 'name = "gptlock-core"\nversion = "0.5.3"'
+          assert before.count(old) == 1, 'unexpected old root package entry'
+          expected = before.replace(old, new, 1)
+          assert after == expected, 'Cargo.lock changed beyond the root GPTLock package version'
+          PY
+      - name: Commit generated lockfile
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add native-core/Cargo.lock
+          git diff --cached --exit-code && { echo 'Cargo.lock did not change'; exit 1; } || true
+          git commit -m 'chore: refresh lockfile for v0.5.3'
+          git push origin HEAD:release/v0.5.3
