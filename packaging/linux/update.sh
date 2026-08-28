@@ -6,9 +6,17 @@ api_url="https://api.github.com/repos/$repository/releases/latest"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf -- "$temp_dir"' EXIT
 
+curl_github() {
+  curl -fsSL --proto '=https' --tlsv1.2 \
+    --retry 6 --retry-all-errors --retry-delay 2 --retry-max-time 180 \
+    --connect-timeout 15 --max-time 300 \
+    --speed-time 30 --speed-limit 1024 \
+    "$@"
+}
+
 echo "正在检查 GPTLock 更新 / Checking for GPTLock updates…"
 release_json="$temp_dir/release.json"
-curl -fsSL --proto '=https' --tlsv1.2 \
+curl_github \
   -H 'Accept: application/vnd.github+json' \
   -H 'User-Agent: GPTLock-Updater' \
   "$api_url" -o "$release_json"
@@ -35,8 +43,9 @@ tag="${release_data[0]}"
 asset="${release_data[1]}"
 asset_url="${release_data[2]}"
 checksums_url="${release_data[3]}"
-curl -fsSL --proto '=https' --tlsv1.2 "$asset_url" -o "$temp_dir/$asset"
-curl -fsSL --proto '=https' --tlsv1.2 "$checksums_url" -o "$temp_dir/SHA256SUMS.txt"
+echo "正在下载 $asset；网络失败会自动重试 / Downloading $asset with automatic retries…"
+curl_github "$asset_url" -o "$temp_dir/$asset"
+curl_github "$checksums_url" -o "$temp_dir/SHA256SUMS.txt"
 
 expected="$(awk -v name="$asset" '$2 == name || $2 == "*" name {print $1; exit}' "$temp_dir/SHA256SUMS.txt")"
 actual="$(sha256sum "$temp_dir/$asset" | awk '{print $1}')"
