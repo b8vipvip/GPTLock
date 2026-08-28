@@ -9,6 +9,8 @@ SERVICE="${GPTLOCK_UPDATE_SERVICE:-gptlock-license.service}"
 ENV_FILE="${GPTLOCK_UPDATE_ENV_FILE:-$SERVER_DIR/.env}"
 NODE_BIN="${GPTLOCK_UPDATE_NODE_BIN:-/usr/local/bin/node22}"
 DATA_DIR="${GPTLOCK_UPDATE_DATA_DIR:-}"
+RUNTIME_USER="${GPTLOCK_UPDATE_RUNTIME_USER:-gptlock}"
+RUNTIME_GROUP="${GPTLOCK_UPDATE_RUNTIME_GROUP:-$RUNTIME_USER}"
 
 if [[ -f "$ENV_FILE" ]]; then
   set -a
@@ -31,6 +33,7 @@ BACKUP_DIR="$DATA_DIR/update-backups"
 mkdir -p "$DATA_DIR" "$BACKUP_DIR"
 touch "$LOG_FILE"
 chmod 600 "$LOG_FILE" || true
+chown "$RUNTIME_USER:$RUNTIME_GROUP" "$LOG_FILE" 2>/dev/null || true
 
 REQUEST_ID="$($NODE_BIN -e "const fs=require('fs');try{const j=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(String(j.requestId||''))}catch{}" "$REQUEST_FILE" 2>/dev/null || true)"
 [[ "$REQUEST_ID" =~ ^[A-Za-z0-9._:-]{8,160}$ ]] || REQUEST_ID="manual-$(date +%s)"
@@ -57,6 +60,8 @@ write_status() {
     const body={status:e.STATUS,stage:e.STAGE,percent:Number(e.PERCENT),message:e.MESSAGE,requestId:e.REQUEST_ID,startedAt:e.STARTED_AT,updatedAt:new Date().toISOString(),ref:e.REF,fromCommit:e.FROM_COMMIT||null,targetCommit:e.TARGET_COMMIT||null,deployedCommit:e.DEPLOYED_COMMIT||null,rollbackCommit:e.ROLLBACK_COMMIT||null,error:e.ERROR_TEXT||null};
     fs.writeFileSync(tmp,JSON.stringify(body,null,2)); fs.renameSync(tmp,out);
   ' "$STATUS_FILE"
+  chown "$RUNTIME_USER:$RUNTIME_GROUP" "$STATUS_FILE" 2>/dev/null || true
+  chmod 600 "$STATUS_FILE" || true
 }
 
 cleanup() {
@@ -123,6 +128,7 @@ git -C "$REPO_DIR" worktree add --detach "$STAGE_DIR" "$TARGET_COMMIT" >>"$LOG_F
 
 write_status running test 52 "正在执行新版本语法检查"
 "$NODE_BIN" --check "$STAGE_DIR/license-server/server.mjs" >>"$LOG_FILE" 2>&1
+"$NODE_BIN" --check "$STAGE_DIR/license-server/update-manager.mjs" >>"$LOG_FILE" 2>&1
 "$NODE_BIN" --check "$STAGE_DIR/license-server/public/admin.js" >>"$LOG_FILE" 2>&1
 write_status running test 62 "正在执行新版本自动化测试"
 (cd "$STAGE_DIR/license-server" && GPTLOCK_UPDATE_ALLOW_WITHOUT_SYSTEMD=1 "$NODE_BIN" --test test/*.test.mjs) >>"$LOG_FILE" 2>&1
@@ -162,5 +168,7 @@ VERSION="$VERSION" DEPLOYED_COMMIT="$DEPLOYED_COMMIT" REF="$REF" "$NODE_BIN" -e 
   const fs=require("fs"), out=process.argv[1], tmp=`${out}.tmp`, e=process.env;
   fs.writeFileSync(tmp,JSON.stringify({version:e.VERSION,commit:e.DEPLOYED_COMMIT,ref:e.REF,deployedAt:new Date().toISOString()},null,2)); fs.renameSync(tmp,out);
 ' "$DEPLOYMENT_FILE"
+chown "$RUNTIME_USER:$RUNTIME_GROUP" "$DEPLOYMENT_FILE" 2>/dev/null || true
+chmod 600 "$DEPLOYMENT_FILE" || true
 write_status succeeded complete 100 "更新完成，服务已运行最新版本"
 log "Update completed successfully: $DEPLOYED_COMMIT"
