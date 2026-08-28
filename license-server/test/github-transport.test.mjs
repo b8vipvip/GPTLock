@@ -5,6 +5,8 @@ import test from 'node:test';
 
 const helper = new URL('../scripts/github-fetch.sh', import.meta.url);
 const knownHosts = new URL('../scripts/github-known-hosts', import.meta.url);
+const updater = new URL('../scripts/update-server.sh', import.meta.url);
+const installer = new URL('../scripts/install-updater-systemd.sh', import.meta.url);
 
 function run(args, env = {}) {
   return spawnSync('bash', [helper.pathname, ...args], {
@@ -63,4 +65,18 @@ test('invalid transport configuration fails closed', () => {
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /must be auto, ssh, https, or origin/);
+});
+
+test('updater keeps deployed checkout readable while updater artifacts stay private', async () => {
+  const content = await readFile(updater, 'utf8');
+  assert.match(content, /^umask 022$/m);
+  assert.match(content, /chmod 600 "\$LOG_FILE"/);
+  assert.match(content, /chmod 600 "\$LOCK_FILE"/);
+  assert.match(content, /\{mode:0o600\}/);
+});
+
+test('installer does not make tracked updater scripts executable', async () => {
+  const content = await readFile(installer, 'utf8');
+  assert.match(content, /chmod 640 "\$UPDATE_SCRIPT" "\$FETCH_HELPER"/);
+  assert.doesNotMatch(content, /chmod 750 "\$UPDATE_SCRIPT" "\$FETCH_HELPER"/);
 });

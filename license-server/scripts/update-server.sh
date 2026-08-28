@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-umask 077
+# Git checkout files must remain readable by the low-privilege runtime user after
+# root deploys a new commit. Sensitive updater artifacts are chmod 0600 below.
+umask 022
 
 SERVER_DIR="${GPTLOCK_UPDATE_SERVER_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 REPO_DIR="${GPTLOCK_UPDATE_REPO_DIR:-$(git -C "$SERVER_DIR" rev-parse --show-toplevel 2>/dev/null || true)}"
@@ -60,7 +62,7 @@ write_status() {
     const out=process.argv[1], tmp=`${out}.tmp`;
     const e=process.env;
     const body={status:e.STATUS,stage:e.STAGE,percent:Number(e.PERCENT),message:e.MESSAGE,requestId:e.REQUEST_ID,startedAt:e.STARTED_AT,updatedAt:new Date().toISOString(),ref:e.REF,fetchRoute:e.FETCH_ROUTE||null,fromCommit:e.FROM_COMMIT||null,targetCommit:e.TARGET_COMMIT||null,deployedCommit:e.DEPLOYED_COMMIT||null,rollbackCommit:e.ROLLBACK_COMMIT||null,error:e.ERROR_TEXT||null};
-    fs.writeFileSync(tmp,JSON.stringify(body,null,2)); fs.renameSync(tmp,out);
+    fs.writeFileSync(tmp,JSON.stringify(body,null,2),{mode:0o600}); fs.renameSync(tmp,out);
   ' "$STATUS_FILE"
   chown "$RUNTIME_USER:$RUNTIME_GROUP" "$STATUS_FILE" 2>/dev/null || true
   chmod 600 "$STATUS_FILE" || true
@@ -91,6 +93,7 @@ trap 'fail "第 ${LINENO} 行执行失败"' ERR
 trap cleanup EXIT
 
 exec 9>"$LOCK_FILE"
+chmod 600 "$LOCK_FILE" || true
 if ! flock -n 9; then
   write_status failed busy 100 "已有更新任务正在执行" "UPDATE_BUSY"
   exit 0
@@ -175,7 +178,7 @@ done
 VERSION="$($NODE_BIN -e "const p=require(process.argv[1]);process.stdout.write(String(p.version||''))" "$REPO_DIR/license-server/package.json")"
 VERSION="$VERSION" DEPLOYED_COMMIT="$DEPLOYED_COMMIT" REF="$REF" FETCH_ROUTE="$FETCH_ROUTE" "$NODE_BIN" -e '
   const fs=require("fs"), out=process.argv[1], tmp=`${out}.tmp`, e=process.env;
-  fs.writeFileSync(tmp,JSON.stringify({version:e.VERSION,commit:e.DEPLOYED_COMMIT,ref:e.REF,fetchRoute:e.FETCH_ROUTE||null,deployedAt:new Date().toISOString()},null,2)); fs.renameSync(tmp,out);
+  fs.writeFileSync(tmp,JSON.stringify({version:e.VERSION,commit:e.DEPLOYED_COMMIT,ref:e.REF,fetchRoute:e.FETCH_ROUTE||null,deployedAt:new Date().toISOString()},null,2),{mode:0o600}); fs.renameSync(tmp,out);
 ' "$DEPLOYMENT_FILE"
 chown "$RUNTIME_USER:$RUNTIME_GROUP" "$DEPLOYMENT_FILE" 2>/dev/null || true
 chmod 600 "$DEPLOYMENT_FILE" || true

@@ -7,15 +7,28 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
 fi
 
 SERVER_DIR="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-ENV_FILE="${GPTLOCK_UPDATE_ENV_FILE:-$SERVER_DIR/.env}"
 SERVICE="${GPTLOCK_UPDATE_SERVICE:-gptlock-license.service}"
-NODE_BIN="${GPTLOCK_UPDATE_NODE_BIN:-/usr/local/bin/node22}"
-REF="${GPTLOCK_UPDATE_REF:-main}"
-REPO_DIR="${GPTLOCK_UPDATE_REPO_DIR:-$(git -C "$SERVER_DIR" rev-parse --show-toplevel)}"
-RUNTIME_USER="${GPTLOCK_UPDATE_RUNTIME_USER:-$(systemctl show -p User --value "$SERVICE" 2>/dev/null || true)}"
-RUNTIME_GROUP="${GPTLOCK_UPDATE_RUNTIME_GROUP:-$(systemctl show -p Group --value "$SERVICE" 2>/dev/null || true)}"
-RUNTIME_USER="${RUNTIME_USER:-gptlock}"
-RUNTIME_GROUP="${RUNTIME_GROUP:-$RUNTIME_USER}"
+
+# Prefer the production service EnvironmentFile when the caller did not explicitly
+# select one. This keeps the updater aligned with the database and secrets used by
+# the running service instead of silently falling back to a checkout-local .env.
+SYSTEMD_ENV_FILE=""
+if [[ -z "${GPTLOCK_UPDATE_ENV_FILE:-}" ]]; then
+  SYSTEMD_ENV_FILE="$(
+    systemctl cat "$SERVICE" 2>/dev/null |
+      awk '
+        /^[[:space:]]*EnvironmentFile=/ {
+          line=$0
+          sub(/^[[:space:]]*EnvironmentFile=/, "", line)
+          sub(/^-/, "", line)
+          gsub(/^"|"$/, "", line)
+          if (line ~ /^\//) last=line
+        }
+        END { if (last) print last }
+      ' || true
+  )"
+fi
+ENV_FILE="${GPTLOCK_UPDATE_ENV_FILE:-${SYSTEMD_ENV_FILE:-$SERVER_DIR/.env}}"
 
 if [[ -f "$ENV_FILE" ]]; then
   set -a
@@ -23,6 +36,17 @@ if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
   set +a
 fi
+
+# Resolve updater settings only after loading the production environment so values
+# such as GPTLOCK_UPDATE_REPO_DIR and GPTLOCK_UPDATE_REF are actually honored.
+SERVICE="${GPTLOCK_UPDATE_SERVICE:-$SERVICE}"
+NODE_BIN="${GPTLOCK_UPDATE_NODE_BIN:-/usr/local/bin/node22}"
+REF="${GPTLOCK_UPDATE_REF:-main}"
+REPO_DIR="${GPTLOCK_UPDATE_REPO_DIR:-$(git -C "$SERVER_DIR" rev-parse --show-toplevel)}"
+RUNTIME_USER="${GPTLOCK_UPDATE_RUNTIME_USER:-$(systemctl show -p User --value "$SERVICE" 2>/dev/null || true)}"
+RUNTIME_GROUP="${GPTLOCK_UPDATE_RUNTIME_GROUP:-$(systemctl show -p Group --value "$SERVICE" 2>/dev/null || true)}"
+RUNTIME_USER="${RUNTIME_USER:-gptlock}"
+RUNTIME_GROUP="${RUNTIME_GROUP:-$RUNTIME_USER}"
 DB_PATH="${GPTLOCK_LICENSE_DB:-$SERVER_DIR/data/gptlock-license.sqlite3}"
 DATA_DIR="${GPTLOCK_UPDATE_DATA_DIR:-$(dirname "$DB_PATH")}"
 REQUEST_FILE="$DATA_DIR/update-request.json"
@@ -49,7 +73,9 @@ mkdir -p "$DATA_DIR"
 chown "$RUNTIME_USER:$RUNTIME_GROUP" "$DATA_DIR" || true
 rm -f "$REQUEST_FILE"
 chmod 750 "$SERVER_DIR/scripts" || true
-chmod 750 "$UPDATE_SCRIPT" "$FETCH_HELPER" || true
+# Keep tracked shell files non-executable so installing the updater does not dirty the Git checkout.
+# Both files are invoked explicitly through /bin/bash.
+chmod 640 "$UPDATE_SCRIPT" "$FETCH_HELPER" || true
 chmod 640 "$KNOWN_HOSTS" || true
 
 cat > /etc/systemd/system/gptlock-license-update.service <<EOF
@@ -95,6 +121,8 @@ echo "  server dir: $SERVER_DIR"
 echo "  target ref: $REF"
 echo "  transport: $TRANSPORT (SSH 22 -> SSH 443 -> HTTPS in auto mode)"
 echo "  runtime user: $RUNTIME_USER:$RUNTIME_GROUP"
+echo "  env file: $ENV_FILE"
+echo "  data dir: $DATA_DIR"
 echo "  request: $REQUEST_FILE"
 echo "  watcher: gptlock-license-update.path"
 echo "  trusted origin: $REMOTE_URL"
