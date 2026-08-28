@@ -17,6 +17,13 @@ const MAX_DETAIL_DEPTH = 5;
 const MAX_ARRAY_ITEMS = 128;
 const MAX_STRING_LENGTH = 2000;
 const SENSITIVE_KEY = /(?:password|secret|authorization|cookie|activation.?token|bearer|license.?code|token.?hash|code.?hash|code.?cipher)/i;
+const ROUTINE_GET_PATHS = new Set([
+  '/api/v1/health',
+  '/admin/api/update',
+  '/admin/api/runtime-logs',
+  '/admin/api/licenses',
+  '/admin/api/audit',
+]);
 
 function clampBytes(value) {
   const parsed = Number(value);
@@ -63,6 +70,16 @@ function readLines(path) {
   }
 }
 
+function skipEntry(level, event, detail) {
+  if (event !== 'http_request') return false;
+  const path = String(detail?.path || '');
+  const method = String(detail?.method || 'GET').toUpperCase();
+  const status = Number(detail?.status || 0);
+  if (status >= 400 || level === 'warn' || level === 'error') return false;
+  if (!path.startsWith('/api/') && !path.startsWith('/admin/api/')) return true;
+  return method === 'GET' && ROUTINE_GET_PATHS.has(path);
+}
+
 export function createRuntimeLogger({ dbPath, env = process.env }) {
   const path = env.GPTLOCK_LICENSE_RUNTIME_LOG || join(dirname(dbPath), 'runtime.log');
   const archivePath = `${path}.1`;
@@ -81,6 +98,7 @@ export function createRuntimeLogger({ dbPath, env = process.env }) {
   }
 
   function log(level, event, detail = {}) {
+    if (skipEntry(level, event, detail)) return null;
     const entry = {
       timestamp: new Date().toISOString(),
       level: ['debug', 'info', 'warn', 'error'].includes(level) ? level : 'info',
