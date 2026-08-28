@@ -31,6 +31,13 @@
       <pre id="updateLog" class="update-log">暂无更新日志</pre>
     </section>
     <section class="card">
+      <div class="section-title">
+        <div><h2>服务端运行日志</h2><p class="muted">记录授权 API、后台请求、服务启动与异常；敏感凭据不会写入日志。日志自动轮转并可导出为 JSONL。</p></div>
+        <div class="section-actions"><button id="refreshRuntime">刷新</button><button id="exportRuntime">导出日志</button></div>
+      </div>
+      <pre id="runtimeLog" class="server-runtime-log">暂无服务端运行日志</pre>
+    </section>
+    <section class="card">
       <h2>生成授权码</h2>
       <div class="grid">
         <label>备注名称<input id="label" placeholder="例如：客户 A"></label>

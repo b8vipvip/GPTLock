@@ -5,6 +5,7 @@ const el = {
   newCode: $('newCode'), newCodeValue: $('newCodeValue'), copyCode: $('copyCode'), licenses: $('licenses'), refresh: $('refresh'), audit: $('audit'),
   updateButton: $('updateButton'), serverVersion: $('serverVersion'), currentCommit: $('currentCommit'), targetRef: $('targetRef'),
   updateProgress: $('updateProgress'), updatePercent: $('updatePercent'), updateMessage: $('updateMessage'), updateWarning: $('updateWarning'), updateLog: $('updateLog'),
+  runtimeLog: $('runtimeLog'), refreshRuntime: $('refreshRuntime'), exportRuntime: $('exportRuntime'),
 };
 const ACTIVE_UPDATE_STATES = new Set(['queued', 'running', 'restarting', 'rolling_back']);
 let updatePoll = null;
@@ -99,6 +100,50 @@ function renderUpdate(data) {
   }
   updateWasActive = active;
 }
+function formatRuntimeEntry(entry) {
+  const detail = entry?.detail && Object.keys(entry.detail).length ? ` ${JSON.stringify(entry.detail)}` : '';
+  return `${entry?.timestamp || '—'}  ${(entry?.level || 'info').toUpperCase().padEnd(5)}  ${entry?.event || 'event'}${detail}`;
+}
+async function loadRuntimeLogs() {
+  if (!el.runtimeLog) return;
+  try {
+    const data = await api('/admin/api/runtime-logs?limit=400');
+    const rows = Array.isArray(data.logs) ? data.logs : [];
+    el.runtimeLog.textContent = rows.length ? rows.map(formatRuntimeEntry).join('\n') : '暂无服务端运行日志';
+    el.runtimeLog.scrollTop = el.runtimeLog.scrollHeight;
+  } catch (error) {
+    el.runtimeLog.textContent = `运行日志读取失败：${error.message}`;
+  }
+}
+async function exportRuntimeLogs() {
+  const original = el.exportRuntime.textContent;
+  try {
+    el.exportRuntime.disabled = true;
+    el.exportRuntime.textContent = '导出中…';
+    const response = await fetch('/admin/api/runtime-logs/export', { credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error?.message || `HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') || '';
+    const match = disposition.match(/filename="?([^";]+)"?/i);
+    const filename = match?.[1] || `gptlock-server-runtime-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`;
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    alert(`导出运行日志失败：${error.message}`);
+  } finally {
+    el.exportRuntime.disabled = false;
+    el.exportRuntime.textContent = original;
+  }
+}
 async function loadUpdate() {
   try {
     const data = await api('/admin/api/update');
@@ -126,7 +171,7 @@ async function load() {
     el.login.hidden = true; el.app.hidden = false; el.logout.hidden = false;
     renderLicenses(licenses.licenses);
     el.audit.textContent = audit.audit.map((row) => `${row.created_at}  ${row.event}  #${row.license_id ?? '-'}  ${row.detail}`).join('\n');
-    await loadUpdate();
+    await Promise.all([loadUpdate(), loadRuntimeLogs()]);
     startUpdatePolling();
   } catch (error) {
     stopUpdatePolling();
@@ -141,6 +186,8 @@ el.loginButton.addEventListener('click', async () => { try { await api('/admin/a
 el.password.addEventListener('keydown', (event) => { if (event.key === 'Enter') el.loginButton.click(); });
 el.logout.addEventListener('click', async () => { stopUpdatePolling(); await api('/admin/api/logout', { method: 'POST', body: '{}' }); location.reload(); });
 el.refresh.addEventListener('click', () => void load());
+el.refreshRuntime?.addEventListener('click', () => void loadRuntimeLogs());
+el.exportRuntime?.addEventListener('click', () => void exportRuntimeLogs());
 el.updateButton.addEventListener('click', async () => {
   try {
     el.updateButton.disabled = true;

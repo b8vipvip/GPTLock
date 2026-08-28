@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -21,9 +21,10 @@ async function waitForHealth(port, child) {
   throw new Error('license server did not become healthy');
 }
 
-test('license server enforces limits, securely exposes copyable codes to admin, and accepts update requests', async () => {
+test('license server enforces limits, securely exposes copyable codes, and exports sanitized runtime logs', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gptlock-license-test-'));
   const dbPath = join(dir, 'license.sqlite3');
+  const runtimeLogPath = join(dir, 'runtime.log');
   const port = 32000 + Math.floor(Math.random() * 1000);
   const child = spawn(process.execPath, ['server.mjs'], {
     cwd: ROOT,
@@ -33,6 +34,7 @@ test('license server enforces limits, securely exposes copyable codes to admin, 
       GPTLOCK_LICENSE_HOST: '127.0.0.1',
       GPTLOCK_LICENSE_PORT: String(port),
       GPTLOCK_LICENSE_DB: dbPath,
+      GPTLOCK_LICENSE_RUNTIME_LOG: runtimeLogPath,
       GPTLOCK_LICENSE_PUBLIC_ORIGIN: `http://127.0.0.1:${port}`,
       GPTLOCK_LICENSE_ADMIN_PASSWORD: 'test-password-12345',
       GPTLOCK_LICENSE_SECRET: '0123456789abcdef0123456789abcdef',
@@ -95,6 +97,33 @@ test('license server enforces limits, securely exposes copyable codes to admin, 
     const legacyCode = await fetch(`http://127.0.0.1:${port}/admin/api/licenses/${legacyId}/code`, { headers: { cookie } });
     assert.equal(legacyCode.status, 409);
     assert.equal((await legacyCode.json()).error.code, 'LICENSE_CODE_UNAVAILABLE');
+
+    const runtime = await fetch(`http://127.0.0.1:${port}/admin/api/runtime-logs?limit=100`, { headers: { cookie } });
+    assert.equal(runtime.status, 200);
+    const runtimeBody = await runtime.json();
+    assert.equal(runtimeBody.ok, true);
+    assert.ok(runtimeBody.logs.some((entry) => entry.event === 'server_started'));
+    assert.ok(runtimeBody.logs.some((entry) => entry.event === 'http_request' && entry.detail.path === '/api/v1/licenses/activate' && entry.detail.status === 200));
+    assert.ok(runtimeBody.logs.some((entry) => entry.event === 'http_request' && entry.detail.path === '/api/v1/licenses/heartbeat' && entry.detail.status === 200));
+    const serializedRuntime = JSON.stringify(runtimeBody.logs);
+    assert.equal(serializedRuntime.includes(created.code), false);
+    assert.equal(serializedRuntime.includes(activated.activationToken), false);
+    assert.equal(serializedRuntime.includes('test-password-12345'), false);
+
+    const exported = await fetch(`http://127.0.0.1:${port}/admin/api/runtime-logs/export`, { headers: { cookie } });
+    assert.equal(exported.status, 200);
+    assert.match(exported.headers.get('content-type') || '', /application\/x-ndjson/);
+    assert.match(exported.headers.get('content-disposition') || '', /attachment/);
+    const exportedText = await exported.text();
+    assert.match(exportedText, /"event":"server_started"/);
+    assert.match(exportedText, /"path":"\/api\/v1\/licenses\/activate"/);
+    assert.equal(exportedText.includes(created.code), false);
+    assert.equal(exportedText.includes(activated.activationToken), false);
+    assert.equal(exportedText.includes('test-password-12345'), false);
+    const rawRuntime = await readFile(runtimeLogPath, 'utf8');
+    assert.equal(rawRuntime.includes(created.code), false);
+    assert.equal(rawRuntime.includes(activated.activationToken), false);
+    assert.equal(rawRuntime.includes('test-password-12345'), false);
 
     const updateInfo = await fetch(`http://127.0.0.1:${port}/admin/api/update`, { headers: { cookie } });
     assert.equal(updateInfo.status, 200);
