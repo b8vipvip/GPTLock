@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 const helper = new URL('../scripts/github-fetch.sh', import.meta.url);
@@ -13,6 +15,10 @@ function run(args, env = {}) {
     encoding: 'utf8',
     env: { ...process.env, ...env },
   });
+}
+
+function runGit(args) {
+  return spawnSync('git', args, { encoding: 'utf8' });
 }
 
 test('auto transport prefers SSH and keeps HTTPS fallback', () => {
@@ -50,6 +56,64 @@ test('untrusted origins are rejected before network access', () => {
   const plan = run(['--plan', 'https://example.com/b8vipvip/GPTLock.git', 'auto']);
   assert.notEqual(plan.status, 0);
   assert.match(plan.stderr, /untrusted Git origin/i);
+});
+
+test('successful fetch is recognized when helper runs outside repository cwd', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gptlock-fetch-test-'));
+  const repo = join(dir, 'repo');
+  const bin = join(dir, 'bin');
+  try {
+    await mkdir(repo);
+    await mkdir(bin);
+    assert.equal(runGit(['init', repo]).status, 0);
+    assert.equal(runGit(['-C', repo, 'config', 'user.email', 'test@example.invalid']).status, 0);
+    assert.equal(runGit(['-C', repo, 'config', 'user.name', 'GPTLock Test']).status, 0);
+    await writeFile(join(repo, 'README.md'), 'fetch test\n');
+    assert.equal(runGit(['-C', repo, 'add', 'README.md']).status, 0);
+    assert.equal(runGit(['-C', repo, 'commit', '-m', 'fixture']).status, 0);
+    assert.equal(runGit(['-C', repo, 'remote', 'add', 'origin', 'https://github.com/b8vipvip/GPTLock.git']).status, 0);
+
+    const realGit = spawnSync('bash', ['-lc', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+    assert.ok(realGit);
+    const fakeGit = join(bin, 'git');
+    await writeFile(fakeGit, `#!/usr/bin/env bash
+set -Eeuo pipefail
+REAL_GIT=${JSON.stringify(realGit)}
+repo_dir=""
+previous=""
+for arg in "$@"; do
+  if [[ "$previous" == "-C" ]]; then repo_dir="$arg"; fi
+  previous="$arg"
+done
+for arg in "$@"; do
+  if [[ "$arg" == "fetch" ]]; then
+    [[ -n "$repo_dir" ]]
+    git_dir="$($REAL_GIT -C "$repo_dir" rev-parse --absolute-git-dir)"
+    commit="$($REAL_GIT -C "$repo_dir" rev-parse HEAD)"
+    printf '%s\t\tbranch '\''main'\'' of https://github.com/b8vipvip/GPTLock\n' "$commit" >"$git_dir/FETCH_HEAD"
+    exit 0
+  fi
+done
+exec "$REAL_GIT" "$@"
+`);
+    await chmod(fakeGit, 0o755);
+
+    const result = spawnSync('bash', [helper.pathname, repo, 'main'], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        GPTLOCK_UPDATE_TRANSPORT: 'https',
+        GPTLOCK_UPDATE_FETCH_RETRIES: '1',
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), 'origin-https');
+    assert.match(result.stderr, /GitHub fetch succeeded route=origin-https/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('GitHub host keys are pinned for SSH 22 and SSH 443', async () => {
