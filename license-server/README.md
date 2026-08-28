@@ -1,6 +1,6 @@
 # GPTLock License Server
 
-授权服务用于 `https://gptlock.mv3.cn`。Node.js 22.13+，无第三方 npm 依赖，数据使用 Node 内置 SQLite 持久化。
+授权服务用于 `https://gptlock.mv3.cn`。Node.js 22.16+，无第三方 npm 依赖，数据使用 Node 内置 SQLite 持久化。
 
 ## 功能
 
@@ -14,7 +14,7 @@
 
 ## 宝塔部署
 
-1. 安装 Node.js 22 LTS（至少 22.13）。
+1. 安装 Node.js 22 LTS（至少 22.16；一键更新使用 Node SQLite online backup）。
 2. 将仓库 clone 到生产目录；`license-server/` 必须位于该 Git checkout 内。
 3. 复制 `.env.example` 的变量到生产环境。`GPTLOCK_LICENSE_ADMIN_PASSWORD` 使用独立强密码；`GPTLOCK_LICENSE_SECRET` 建议 `openssl rand -hex 32`。
 4. 启动命令：`node server.mjs`，工作目录为 `license-server`，监听 `127.0.0.1:3188`。
