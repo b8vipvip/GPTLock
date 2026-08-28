@@ -31,6 +31,7 @@
       ],
       "js": [
         "page-model-evidence.js",
+        "context-budget.js",
         "content.js",
         "model-catalog.js"
       ],

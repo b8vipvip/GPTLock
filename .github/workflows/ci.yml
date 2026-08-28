@@ -48,7 +48,7 @@ jobs:
           mkdir -p dist
           cd extension
           zip -9 ../dist/gptlock-extension.zip \
-            background.js content.js diagnostics.css diagnostics.html diagnostics.js guard.js manifest.json \
+            background.js content.js context-budget.js diagnostics.css diagnostics.html diagnostics.js guard.js manifest.json \
             model-catalog.js model-catalog-options.js native-status.js network-evidence.js network-monitor.js \
             options.css options.html options.js page-model-evidence.js policy.js popup.css popup.html popup.js runtime-log.js update-manager.js
       - uses: actions/upload-artifact@v4
@@ -145,7 +145,8 @@ jobs:
             $binary,
             $repair,
             (Join-Path $root 'extension\manifest.json'),
-            (Join-Path $root 'extension\page-model-evidence.js')
+            (Join-Path $root 'extension\page-model-evidence.js'),
+            (Join-Path $root 'extension\context-budget.js')
           )) {
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing installed file: $path" }
           }
@@ -169,9 +170,11 @@ jobs:
           $sourceBinary = Join-Path $sourceInstallRoot 'bin\gptlock-core.exe'
           $sourceExtension = Join-Path $sourceInstallRoot 'extension\manifest.json'
           $sourceEvidence = Join-Path $sourceInstallRoot 'extension\page-model-evidence.js'
+          $sourceContextBudget = Join-Path $sourceInstallRoot 'extension\context-budget.js'
           if (-not (Test-Path -LiteralPath $sourceBinary -PathType Leaf)) { throw "Missing source-installed binary: $sourceBinary" }
           if (-not (Test-Path -LiteralPath $sourceExtension -PathType Leaf)) { throw "Missing source-installed extension: $sourceExtension" }
           if (-not (Test-Path -LiteralPath $sourceEvidence -PathType Leaf)) { throw "Missing source-installed page evidence adapter: $sourceEvidence" }
+          if (-not (Test-Path -LiteralPath $sourceContextBudget -PathType Leaf)) { throw "Missing source-installed context budget guard: $sourceContextBudget" }
           $chromeManifestPath = (Get-Item -LiteralPath 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.gptlock.core').GetValue('')
           $chromeManifest = Get-Content -LiteralPath $chromeManifestPath -Raw | ConvertFrom-Json
           if ($chromeManifest.path -ne $sourceBinary) { throw "Custom source root was not registered: $($chromeManifest.path)" }
