@@ -24,6 +24,7 @@ if [[ -z "$DATA_DIR" ]]; then
 else
   DB_PATH="${GPTLOCK_LICENSE_DB:-$DATA_DIR/gptlock-license.sqlite3}"
 fi
+FETCH_HELPER="${GPTLOCK_UPDATE_FETCH_HELPER:-$SERVER_DIR/scripts/github-fetch.sh}"
 REQUEST_FILE="$DATA_DIR/update-request.json"
 STATUS_FILE="$DATA_DIR/update-status.json"
 LOG_FILE="$DATA_DIR/update.log"
@@ -42,6 +43,7 @@ FROM_COMMIT=""
 TARGET_COMMIT=""
 DEPLOYED_COMMIT=""
 ROLLBACK_COMMIT=""
+FETCH_ROUTE=""
 STAGE_DIR=""
 
 log() {
@@ -52,12 +54,12 @@ write_status() {
   local status="$1" stage="$2" percent="$3" message="$4" error="${5:-}"
   STATUS="$status" STAGE="$stage" PERCENT="$percent" MESSAGE="$message" ERROR_TEXT="$error" \
   REQUEST_ID="$REQUEST_ID" STARTED_AT="$STARTED_AT" FROM_COMMIT="$FROM_COMMIT" TARGET_COMMIT="$TARGET_COMMIT" \
-  DEPLOYED_COMMIT="$DEPLOYED_COMMIT" ROLLBACK_COMMIT="$ROLLBACK_COMMIT" REF="$REF" \
+  DEPLOYED_COMMIT="$DEPLOYED_COMMIT" ROLLBACK_COMMIT="$ROLLBACK_COMMIT" REF="$REF" FETCH_ROUTE="$FETCH_ROUTE" \
   "$NODE_BIN" -e '
     const fs=require("fs");
     const out=process.argv[1], tmp=`${out}.tmp`;
     const e=process.env;
-    const body={status:e.STATUS,stage:e.STAGE,percent:Number(e.PERCENT),message:e.MESSAGE,requestId:e.REQUEST_ID,startedAt:e.STARTED_AT,updatedAt:new Date().toISOString(),ref:e.REF,fromCommit:e.FROM_COMMIT||null,targetCommit:e.TARGET_COMMIT||null,deployedCommit:e.DEPLOYED_COMMIT||null,rollbackCommit:e.ROLLBACK_COMMIT||null,error:e.ERROR_TEXT||null};
+    const body={status:e.STATUS,stage:e.STAGE,percent:Number(e.PERCENT),message:e.MESSAGE,requestId:e.REQUEST_ID,startedAt:e.STARTED_AT,updatedAt:new Date().toISOString(),ref:e.REF,fetchRoute:e.FETCH_ROUTE||null,fromCommit:e.FROM_COMMIT||null,targetCommit:e.TARGET_COMMIT||null,deployedCommit:e.DEPLOYED_COMMIT||null,rollbackCommit:e.ROLLBACK_COMMIT||null,error:e.ERROR_TEXT||null};
     fs.writeFileSync(tmp,JSON.stringify(body,null,2)); fs.renameSync(tmp,out);
   ' "$STATUS_FILE"
   chown "$RUNTIME_USER:$RUNTIME_GROUP" "$STATUS_FILE" 2>/dev/null || true
@@ -95,25 +97,29 @@ if ! flock -n 9; then
 fi
 
 write_status running preflight 5 "正在检查更新环境"
-log "Update request $REQUEST_ID started; ref=$REF"
+log "Update request $REQUEST_ID started; ref=$REF transport=${GPTLOCK_UPDATE_TRANSPORT:-auto}"
 [[ -n "$REPO_DIR" && -d "$REPO_DIR/.git" ]] || fail "未找到 Git 仓库"
 [[ "$REF" =~ ^[A-Za-z0-9._/-]+$ && "$REF" != -* && "$REF" != *..* ]] || fail "更新分支配置无效"
 command -v git >/dev/null || fail "git 不可用"
 command -v systemctl >/dev/null || fail "systemctl 不可用"
 command -v curl >/dev/null || fail "curl 不可用"
+command -v timeout >/dev/null || fail "timeout 不可用"
 [[ -x "$NODE_BIN" ]] || fail "Node 22 不可用: $NODE_BIN"
+[[ -f "$FETCH_HELPER" ]] || fail "GitHub 传输助手不存在: $FETCH_HELPER"
 REMOTE_URL="$(git -C "$REPO_DIR" remote get-url origin)"
-[[ "$REMOTE_URL" =~ github\.com[:/]b8vipvip/GPTLock(\.git)?$ ]] || fail "Git origin 不是受信任的 b8vipvip/GPTLock 仓库"
+bash "$FETCH_HELPER" --validate-url "$REMOTE_URL" || fail "Git origin 不是受信任的 b8vipvip/GPTLock 仓库"
 git -C "$REPO_DIR" diff --quiet || fail "生产仓库存在未提交的已跟踪文件修改"
 git -C "$REPO_DIR" diff --cached --quiet || fail "生产仓库存在未提交的暂存修改"
 FROM_COMMIT="$(git -C "$REPO_DIR" rev-parse HEAD)"
 
-write_status running fetch 18 "正在从 GitHub 获取最新代码"
-log "Fetching origin/$REF"
-git -C "$REPO_DIR" fetch --prune origin "$REF" >>"$LOG_FILE" 2>&1
+write_status running fetch 18 "正在通过 SSH/HTTPS 自适应链路获取最新代码"
+log "Fetching $REF with resilient GitHub transport"
+if ! FETCH_ROUTE="$(bash "$FETCH_HELPER" "$REPO_DIR" "$REF" "$LOG_FILE")"; then
+  fail "所有 GitHub 拉取链路均失败；请检查服务器 SSH/HTTPS 网络和 update.log"
+fi
 TARGET_COMMIT="$(git -C "$REPO_DIR" rev-parse FETCH_HEAD)"
-write_status running compare 30 "已获取最新版本，正在比较提交"
-log "Current=$FROM_COMMIT Target=$TARGET_COMMIT"
+write_status running compare 30 "已通过 $FETCH_ROUTE 获取最新版本，正在比较提交"
+log "Fetch route=$FETCH_ROUTE Current=$FROM_COMMIT Target=$TARGET_COMMIT"
 if [[ "$FROM_COMMIT" == "$TARGET_COMMIT" ]]; then
   DEPLOYED_COMMIT="$FROM_COMMIT"
   write_status succeeded current 100 "当前已经是最新版本"
@@ -130,6 +136,9 @@ write_status running test 52 "正在执行新版本语法检查"
 "$NODE_BIN" --check "$STAGE_DIR/license-server/server.mjs" >>"$LOG_FILE" 2>&1
 "$NODE_BIN" --check "$STAGE_DIR/license-server/update-manager.mjs" >>"$LOG_FILE" 2>&1
 "$NODE_BIN" --check "$STAGE_DIR/license-server/public/admin.js" >>"$LOG_FILE" 2>&1
+bash -n "$STAGE_DIR/license-server/scripts/update-server.sh"
+bash -n "$STAGE_DIR/license-server/scripts/github-fetch.sh"
+[[ -s "$STAGE_DIR/license-server/scripts/github-known-hosts" ]] || fail "新版本缺少 GitHub SSH host key 固定文件"
 write_status running test 62 "正在执行新版本自动化测试"
 (cd "$STAGE_DIR/license-server" && GPTLOCK_UPDATE_ALLOW_WITHOUT_SYSTEMD=1 "$NODE_BIN" --test test/*.test.mjs) >>"$LOG_FILE" 2>&1
 
@@ -146,7 +155,7 @@ if [[ -f "$DB_PATH" ]]; then
   log "Database backup: $BACKUP_PATH"
 fi
 
-write_status running deploy 80 "正在部署 GitHub 最新代码"
+write_status running deploy 80 "正在部署已验证的最新代码"
 log "Deploying $TARGET_COMMIT"
 git -C "$REPO_DIR" reset --hard "$TARGET_COMMIT" >>"$LOG_FILE" 2>&1
 DEPLOYED_COMMIT="$TARGET_COMMIT"
@@ -164,11 +173,11 @@ done
 [[ "$HEALTH_OK" == "1" ]] || fail "新版本启动后健康检查失败"
 
 VERSION="$($NODE_BIN -e "const p=require(process.argv[1]);process.stdout.write(String(p.version||''))" "$REPO_DIR/license-server/package.json")"
-VERSION="$VERSION" DEPLOYED_COMMIT="$DEPLOYED_COMMIT" REF="$REF" "$NODE_BIN" -e '
+VERSION="$VERSION" DEPLOYED_COMMIT="$DEPLOYED_COMMIT" REF="$REF" FETCH_ROUTE="$FETCH_ROUTE" "$NODE_BIN" -e '
   const fs=require("fs"), out=process.argv[1], tmp=`${out}.tmp`, e=process.env;
-  fs.writeFileSync(tmp,JSON.stringify({version:e.VERSION,commit:e.DEPLOYED_COMMIT,ref:e.REF,deployedAt:new Date().toISOString()},null,2)); fs.renameSync(tmp,out);
+  fs.writeFileSync(tmp,JSON.stringify({version:e.VERSION,commit:e.DEPLOYED_COMMIT,ref:e.REF,fetchRoute:e.FETCH_ROUTE||null,deployedAt:new Date().toISOString()},null,2)); fs.renameSync(tmp,out);
 ' "$DEPLOYMENT_FILE"
 chown "$RUNTIME_USER:$RUNTIME_GROUP" "$DEPLOYMENT_FILE" 2>/dev/null || true
 chmod 600 "$DEPLOYMENT_FILE" || true
 write_status succeeded complete 100 "更新完成，服务已运行最新版本"
-log "Update completed successfully: $DEPLOYED_COMMIT"
+log "Update completed successfully: $DEPLOYED_COMMIT route=$FETCH_ROUTE"
