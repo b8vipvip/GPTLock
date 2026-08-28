@@ -1,0 +1,84 @@
+import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+
+const ACTIVE = new Set(['queued', 'running', 'restarting', 'rolling_back']);
+
+function readJson(path, fallback = null) {
+  try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return fallback; }
+}
+
+function atomicJson(path, value) {
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
+  renameSync(tmp, path);
+}
+
+function tail(path, lines = 80) {
+  try { return readFileSync(path, 'utf8').split(/\r?\n/).filter(Boolean).slice(-lines); } catch { return []; }
+}
+
+function gitCommit(repoDir) {
+  try {
+    return execFileSync('git', ['-C', repoDir, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 2000 }).trim();
+  } catch {
+    return '';
+  }
+}
+
+export function createUpdateManager({ serverRoot, dbPath, env = process.env }) {
+  const dataDir = env.GPTLOCK_UPDATE_DATA_DIR || dirname(dbPath);
+  const repoDir = resolve(env.GPTLOCK_UPDATE_REPO_DIR || join(serverRoot, '..'));
+  const ref = env.GPTLOCK_UPDATE_REF || 'main';
+  const requestFile = join(dataDir, 'update-request.json');
+  const statusFile = join(dataDir, 'update-status.json');
+  const logFile = join(dataDir, 'update.log');
+  const deploymentFile = join(dataDir, 'deployment.json');
+  const packagePath = join(serverRoot, 'package.json');
+
+  function updaterReady() {
+    return existsSync('/etc/systemd/system/gptlock-license-update.path') || existsSync('/usr/lib/systemd/system/gptlock-license-update.path');
+  }
+
+  function info() {
+    const status = readJson(statusFile, { status: 'idle', stage: 'idle', percent: 0, message: '尚未执行版本更新' });
+    const deployment = readJson(deploymentFile, {});
+    const pkg = readJson(packagePath, {});
+    const commit = gitCommit(repoDir) || deployment.commit || '';
+    return {
+      ok: true,
+      updaterReady: updaterReady(),
+      serverVersion: pkg.version || deployment.version || 'unknown',
+      currentCommit: commit || null,
+      targetRef: ref,
+      status,
+      log: tail(logFile),
+    };
+  }
+
+  function request() {
+    if (!updaterReady() && env.GPTLOCK_UPDATE_ALLOW_WITHOUT_SYSTEMD !== '1') {
+      const error = new Error('系统更新器尚未安装，请先运行 scripts/install-updater-systemd.sh');
+      error.status = 503;
+      throw error;
+    }
+    const current = readJson(statusFile, null);
+    if (current && ACTIVE.has(current.status)) {
+      const error = new Error('已有版本更新任务正在执行');
+      error.status = 409;
+      throw error;
+    }
+    const requestId = `upd-${Date.now()}-${randomBytes(4).toString('hex')}`;
+    const now = new Date().toISOString();
+    atomicJson(statusFile, {
+      status: 'queued', stage: 'queued', percent: 1,
+      message: '更新任务已提交，等待系统更新器接管', requestId, ref,
+      startedAt: now, updatedAt: now,
+    });
+    atomicJson(requestFile, { requestId, ref, requestedAt: now });
+    return { ok: true, requestId, status: readJson(statusFile) };
+  }
+
+  return { info, request };
+}
