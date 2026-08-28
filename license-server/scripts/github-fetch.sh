@@ -116,8 +116,9 @@ ssh_command() {
 
 fetch_once() {
   local repo_dir="$1" ref="$2" kind="$3" url="$4"
-  local fetch_head
-  fetch_head="$(git -C "$repo_dir" rev-parse --git-path FETCH_HEAD)"
+  local git_dir fetch_head
+  git_dir="$(git -C "$repo_dir" rev-parse --absolute-git-dir)"
+  fetch_head="$git_dir/FETCH_HEAD"
   rm -f "$fetch_head"
 
   if [[ "$kind" == ssh ]]; then
@@ -136,7 +137,8 @@ fetch_once() {
         fetch --no-tags --force "$url" "$ref"
   fi
 
-  [[ -s "$fetch_head" ]]
+  [[ -s "$fetch_head" ]] || return 1
+  git -C "$repo_dir" rev-parse --verify 'FETCH_HEAD^{commit}' >/dev/null 2>&1
 }
 
 fetch_with_fallback() {
