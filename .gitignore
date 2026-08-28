@@ -1,6 +1,8 @@
 /native-core/target/
 /dist/
 /.gptlock/
+/license-server/data/
+/license-server/.env
 *.log
 *.tmp
 .DS_Store
