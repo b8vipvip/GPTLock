@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.13.0" },
+  "engines": { "node": ">=22.16.0" },
   "scripts": {
     "start": "node server.mjs",
     "check": "node --check server.mjs && node --check update-manager.mjs && node --check public/admin.js",
