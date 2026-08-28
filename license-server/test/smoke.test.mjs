@@ -20,7 +20,7 @@ async function waitForHealth(port, child) {
   throw new Error('license server did not become healthy');
 }
 
-test('license server enforces device and window limits', async () => {
+test('license server enforces device/window limits and accepts admin update requests', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gptlock-license-test-'));
   const port = 32000 + Math.floor(Math.random() * 1000);
   const child = spawn(process.execPath, ['server.mjs'], {
@@ -34,6 +34,8 @@ test('license server enforces device and window limits', async () => {
       GPTLOCK_LICENSE_PUBLIC_ORIGIN: `http://127.0.0.1:${port}`,
       GPTLOCK_LICENSE_ADMIN_PASSWORD: 'test-password-12345',
       GPTLOCK_LICENSE_SECRET: '0123456789abcdef0123456789abcdef',
+      GPTLOCK_UPDATE_DATA_DIR: dir,
+      GPTLOCK_UPDATE_ALLOW_WITHOUT_SYSTEMD: '1',
     },
   });
   try {
@@ -58,6 +60,19 @@ test('license server enforces device and window limits', async () => {
     const secondDevice = await fetch(`http://127.0.0.1:${port}/api/v1/licenses/activate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: created.code, deviceId: 'device-87654321', browserInstanceId: 'browser-87654321' }) });
     assert.equal(secondDevice.status, 409);
     assert.equal((await secondDevice.json()).error.code, 'DEVICE_LIMIT');
+
+    const updateInfo = await fetch(`http://127.0.0.1:${port}/admin/api/update`, { headers: { cookie } });
+    assert.equal(updateInfo.status, 200);
+    const info = await updateInfo.json();
+    assert.equal(info.ok, true);
+    assert.equal(info.serverVersion, '0.2.0');
+
+    const update = await fetch(`http://127.0.0.1:${port}/admin/api/update`, { method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: '{}' });
+    assert.equal(update.status, 202);
+    const queued = await update.json();
+    assert.equal(queued.ok, true);
+    assert.equal(queued.status.status, 'queued');
+    assert.match(queued.requestId, /^upd-/);
   } finally {
     child.kill('SIGTERM');
     await new Promise((resolve) => child.once('exit', resolve));
