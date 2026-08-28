@@ -49,7 +49,9 @@ mkdir -p "$DATA_DIR"
 chown "$RUNTIME_USER:$RUNTIME_GROUP" "$DATA_DIR" || true
 rm -f "$REQUEST_FILE"
 chmod 750 "$SERVER_DIR/scripts" || true
-chmod 750 "$UPDATE_SCRIPT" "$FETCH_HELPER" || true
+# Keep tracked shell files non-executable so installing the updater does not dirty the Git checkout.
+# Both files are invoked explicitly through /bin/bash.
+chmod 640 "$UPDATE_SCRIPT" "$FETCH_HELPER" || true
 chmod 640 "$KNOWN_HOSTS" || true
 
 cat > /etc/systemd/system/gptlock-license-update.service <<EOF
