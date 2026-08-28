@@ -64,7 +64,7 @@ cat > /etc/systemd/system/gptlock-license-update.path <<EOF
 Description=Watch GPTLock License Server update requests
 
 [Path]
-PathChanged=$REQUEST_FILE
+PathExists=$REQUEST_FILE
 Unit=gptlock-license-update.service
 
 [Install]
