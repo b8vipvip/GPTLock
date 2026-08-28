@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRuntimeLogger } from './runtime-log.mjs';
 import { createUpdateManager } from './update-manager.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -25,6 +26,7 @@ if (!SECRET || SECRET.length < 32) throw new Error('GPTLOCK_LICENSE_SECRET must 
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error('Invalid GPTLOCK_LICENSE_PORT');
 mkdirSync(dirname(DB_PATH), { recursive: true });
 const updateManager = createUpdateManager({ serverRoot: ROOT, dbPath: DB_PATH, env });
+const runtimeLogger = createRuntimeLogger({ dbPath: DB_PATH, env });
 
 const db = new DatabaseSync(DB_PATH);
 db.exec(`
@@ -218,6 +220,17 @@ function json(res, status, body, extra = {}) {
   });
   res.end(payload);
 }
+function download(res, content, filename) {
+  const payload = Buffer.from(content, 'utf8');
+  res.writeHead(200, {
+    'content-type': 'application/x-ndjson; charset=utf-8',
+    'content-length': payload.length,
+    'content-disposition': `attachment; filename="${filename}"`,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  });
+  res.end(payload);
+}
 function apiError(res, status, code, message) { json(res, status, { ok: false, error: { code, message } }); }
 async function bodyJson(req) {
   let size = 0;
@@ -374,6 +387,14 @@ async function handleAdmin(req, res, url) {
   }
   if (!isAdmin(req)) return apiError(res, 401, 'ADMIN_REQUIRED', '需要管理员登录');
 
+  if (url.pathname === '/admin/api/runtime-logs' && req.method === 'GET') {
+    const limit = clampInt(url.searchParams.get('limit'), 1, 2000, 300);
+    return json(res, 200, { ok: true, path: runtimeLogger.path, logs: runtimeLogger.tail(limit) });
+  }
+  if (url.pathname === '/admin/api/runtime-logs/export' && req.method === 'GET') {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    return download(res, runtimeLogger.exportText(), `gptlock-server-runtime-${stamp}.jsonl`);
+  }
   if (url.pathname === '/admin/api/update' && req.method === 'GET') {
     return json(res, 200, updateManager.info());
   }
@@ -455,6 +476,17 @@ async function handleAdmin(req, res, url) {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', PUBLIC_ORIGIN);
+  const started = Date.now();
+  res.once('finish', () => {
+    runtimeLogger.log(res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info', 'http_request', {
+      method: req.method || 'GET',
+      path: url.pathname,
+      status: res.statusCode,
+      durationMs: Date.now() - started,
+      origin: String(req.headers.origin || '').slice(0, 200) || null,
+      userAgent: String(req.headers['user-agent'] || '').slice(0, 300) || null,
+    });
+  });
   try {
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (url.pathname.startsWith('/admin/api/')) return await handleAdmin(req, res, url);
@@ -463,12 +495,27 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/admin.css') return staticFile(res, join(PUBLIC, 'admin.css'));
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('Not found');
   } catch (error) {
+    runtimeLogger.log('error', 'request_exception', {
+      method: req.method || 'GET',
+      path: url.pathname,
+      status: error.status || 500,
+      error,
+    });
     console.error(error);
     apiError(res, error.status || 500, error.status ? 'BAD_REQUEST' : 'SERVER_ERROR', error.status ? error.message : '服务器内部错误');
   }
 });
 
 server.listen(PORT, HOST, () => {
+  runtimeLogger.log('info', 'server_started', {
+    pid: process.pid,
+    host: HOST,
+    port: PORT,
+    publicOrigin: PUBLIC_ORIGIN,
+    database: DB_PATH,
+    runtimeLog: runtimeLogger.path,
+    windowLeaseTtlSeconds: WINDOW_TTL_SECONDS,
+  });
   console.log(`GPTLock license server listening on http://${HOST}:${PORT}`);
   console.log(`Public origin: ${PUBLIC_ORIGIN}`);
   console.log(`Window lease TTL: ${WINDOW_TTL_SECONDS}s`);
