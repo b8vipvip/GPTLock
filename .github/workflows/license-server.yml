@@ -30,4 +30,4 @@ jobs:
         working-directory: license-server
         run: npm test
       - name: Check updater shell scripts
-        run: bash -n license-server/scripts/update-server.sh license-server/scripts/install-updater-systemd.sh
+        run: bash -n license-server/scripts/update-server.sh license-server/scripts/install-updater-systemd.sh license-server/scripts/github-fetch.sh
