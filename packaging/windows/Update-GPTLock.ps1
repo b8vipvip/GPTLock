@@ -27,26 +27,47 @@ function Invoke-GptLockDownload {
         [Parameter(Mandatory = $true)][string]$OutFile
     )
 
-    try {
-        Invoke-WebRequest -Uri $Uri -Headers $headers -OutFile $OutFile -UseBasicParsing
-        return
-    } catch {
-        $webError = $_.Exception.Message
-        $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-        if ($null -eq $curl) {
-            throw "PowerShell 下载失败且系统没有 curl.exe / PowerShell download failed and curl.exe is unavailable: $webError"
+    $lastWebError = $null
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        try {
+            if (Test-Path -LiteralPath $OutFile) {
+                Remove-Item -LiteralPath $OutFile -Force
+            }
+            Invoke-WebRequest -Uri $Uri -Headers $headers -OutFile $OutFile -UseBasicParsing -TimeoutSec 90
+            if (Test-Path -LiteralPath $OutFile) {
+                return
+            }
+        } catch {
+            $lastWebError = $_.Exception.Message
+            if ($attempt -lt 4) {
+                $delay = [Math]::Min(8, [Math]::Pow(2, $attempt))
+                Write-Warning "GitHub 下载失败，第 $attempt/4 次；${delay}s 后重试 / GitHub download attempt $attempt/4 failed; retrying in ${delay}s: $lastWebError"
+                Start-Sleep -Seconds $delay
+            }
         }
-        Write-Warning "PowerShell 下载失败，改用 curl.exe / Falling back to curl.exe: $webError"
-        & $curl.Source --location --fail --retry 3 --retry-delay 2 --connect-timeout 20 --output $OutFile $Uri
-        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $OutFile)) {
-            throw "curl.exe 下载失败 / curl.exe download failed (exit $LASTEXITCODE)."
-        }
+    }
+
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if ($null -eq $curl) {
+        throw "PowerShell 多次下载失败且系统没有 curl.exe / PowerShell downloads failed and curl.exe is unavailable: $lastWebError"
+    }
+
+    Write-Warning "PowerShell 下载链路仍不稳定，改用 curl.exe 多重重试 / Falling back to curl.exe with retries: $lastWebError"
+    if (Test-Path -LiteralPath $OutFile) {
+        Remove-Item -LiteralPath $OutFile -Force
+    }
+    & $curl.Source --location --fail --retry 6 --retry-delay 2 --retry-connrefused --retry-max-time 180 --connect-timeout 15 --max-time 300 --speed-time 30 --speed-limit 1024 --output $OutFile $Uri
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $OutFile)) {
+        throw "curl.exe 下载失败 / curl.exe download failed (exit $LASTEXITCODE)."
     }
 }
 
 try {
     Write-Host '正在检查 GPTLock 更新 / Checking for GPTLock updates…'
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repository/releases/latest" -Headers $headers -UseBasicParsing
+    $releaseJsonPath = Join-Path $temporaryDirectory 'release.json'
+    Invoke-GptLockDownload -Uri "https://api.github.com/repos/$repository/releases/latest" -OutFile $releaseJsonPath
+    $release = Get-Content -LiteralPath $releaseJsonPath -Raw | ConvertFrom-Json
+
     $installerAsset = $release.assets | Where-Object { $_.name -eq 'GPTLockSetup-x64.exe' } | Select-Object -First 1
     $checksumAsset = $release.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' } | Select-Object -First 1
     if ($null -eq $installerAsset -or $null -eq $checksumAsset) {
@@ -55,6 +76,7 @@ try {
 
     $installerPath = Join-Path $temporaryDirectory $installerAsset.name
     $checksumPath = Join-Path $temporaryDirectory $checksumAsset.name
+    Write-Host "正在下载 $($installerAsset.name)，网络失败会自动重试 / Downloading $($installerAsset.name) with automatic retries…"
     Invoke-GptLockDownload -Uri $installerAsset.browser_download_url -OutFile $installerPath
     Invoke-GptLockDownload -Uri $checksumAsset.browser_download_url -OutFile $checksumPath
 

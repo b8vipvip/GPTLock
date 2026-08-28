@@ -1,0 +1,66 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import test from 'node:test';
+
+const helper = new URL('../scripts/github-fetch.sh', import.meta.url);
+const knownHosts = new URL('../scripts/github-known-hosts', import.meta.url);
+
+function run(args, env = {}) {
+  return spawnSync('bash', [helper.pathname, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  });
+}
+
+test('auto transport prefers SSH and keeps HTTPS fallback', () => {
+  const result = run(['--plan', 'https://github.com/b8vipvip/GPTLock.git', 'auto']);
+  assert.equal(result.status, 0, result.stderr);
+  const lines = result.stdout.trim().split(/\r?\n/);
+  assert.deepEqual(lines.slice(0, 2), [
+    'ssh-22|ssh|git@github.com:b8vipvip/GPTLock.git',
+    'ssh-443|ssh|ssh://git@ssh.github.com:443/b8vipvip/GPTLock.git',
+  ]);
+  assert.ok(lines.some((line) => line.includes('|https|https://github.com/b8vipvip/GPTLock.git')));
+});
+
+test('SSH origin is attempted before canonical SSH fallbacks', () => {
+  const result = run(['--plan', 'git@github.com:b8vipvip/GPTLock.git', 'auto']);
+  assert.equal(result.status, 0, result.stderr);
+  const lines = result.stdout.trim().split(/\r?\n/);
+  assert.equal(lines[0], 'origin-ssh|ssh|git@github.com:b8vipvip/GPTLock.git');
+  assert.ok(lines.some((line) => line.startsWith('ssh-443|ssh|')));
+  assert.ok(lines.some((line) => line.includes('|https|')));
+});
+
+test('ssh mode never falls back to HTTPS', () => {
+  const result = run(['--plan', 'https://github.com/b8vipvip/GPTLock.git', 'ssh']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /ssh-22\|ssh\|/);
+  assert.match(result.stdout, /ssh-443\|ssh\|/);
+  assert.doesNotMatch(result.stdout, /\|https\|/);
+});
+
+test('untrusted origins are rejected before network access', () => {
+  const validate = run(['--validate-url', 'git@github.com:attacker/GPTLock.git']);
+  assert.notEqual(validate.status, 0);
+
+  const plan = run(['--plan', 'https://example.com/b8vipvip/GPTLock.git', 'auto']);
+  assert.notEqual(plan.status, 0);
+  assert.match(plan.stderr, /untrusted Git origin/i);
+});
+
+test('GitHub host keys are pinned for SSH 22 and SSH 443', async () => {
+  const content = await readFile(knownHosts, 'utf8');
+  const key = 'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl';
+  assert.match(content, new RegExp(`^github\\.com ssh-ed25519 ${key}$`, 'm'));
+  assert.match(content, new RegExp(`^\\[ssh\\.github\\.com\\]:443 ssh-ed25519 ${key}$`, 'm'));
+});
+
+test('invalid transport configuration fails closed', () => {
+  const result = run(['--plan', 'https://github.com/b8vipvip/GPTLock.git'], {
+    GPTLOCK_UPDATE_TRANSPORT: 'anything-goes',
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /must be auto, ssh, https, or origin/);
+});
