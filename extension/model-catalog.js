@@ -1,5 +1,8 @@
 (() => {
   const STORAGE_KEY = 'discoveredModels';
+  const EVIDENCE_STORAGE_KEY = 'discoveredModelEvidence';
+  const DISCOVERY_SCHEMA_KEY = 'modelDiscoverySchemaVersion';
+  const DISCOVERY_SCHEMA_VERSION = 2;
   const MAX_DISCOVERED_MODELS = 64;
   const STATE_REFRESH_MS = 1200;
   const PAGE_REFRESH_DELAY_MS = 120;
@@ -34,13 +37,13 @@
   function normalizeDisplayedModel(text) {
     if (!text) return null;
     const compact = String(text).trim().toLowerCase().replace(/\s+/g, '-');
-    const explicit = compact.match(/gpt-?(\d+(?:\.\d+)*)(?:-([a-z0-9]+(?:-[a-z0-9]+)*))?/);
-    if (explicit) {
-      const suffix = explicit[2] ? `-${explicit[2]}` : '';
-      return normalizeModelId(`gpt-${explicit[1]}${suffix}`);
-    }
-    const compactSol = compact.match(/(?:^|[^a-z0-9])(\d+(?:\.\d+)*)-sol(?:-wm)?(?:-|$)/);
-    return compactSol ? normalizeModelId(`gpt-${compactSol[1]}-sol`) : null;
+    // Visible DOM text is advisory only.  Recognize the established Sol family
+    // explicitly, otherwise fall back to the base GPT family.  Do not turn
+    // arbitrary trailing UI text (for example "Solji"/"Solmo") into a model ID.
+    const compactSol = compact.match(/(?:^|[^a-z0-9])(?:gpt-)?(\d+(?:\.\d+)*)-sol(?:-wm)?(?:$|[^a-z0-9])/);
+    if (compactSol) return normalizeModelId(`gpt-${compactSol[1]}-sol`);
+    const explicit = compact.match(/(?:^|[^a-z0-9])gpt-?(\d+(?:\.\d+)*)(?=$|[^a-z0-9.])/);
+    return explicit ? normalizeModelId(`gpt-${explicit[1]}`) : null;
   }
 
   function modelLabel(value) {
@@ -111,16 +114,39 @@
     return remote;
   }
 
-  function modelCandidates(state) {
+  function trustedModelCandidates(state) {
     const values = [];
-    const add = (value) => {
+    const add = (value, source) => {
       const model = normalizeModelId(value);
-      if (model && !values.includes(model)) values.push(model);
+      if (!model) return;
+      const key = `${source}:${model}`;
+      if (!values.some((item) => item.key === key)) values.push({ key, model, source });
     };
-    add(state?.lastVerification?.model);
-    add(state?.lastRequest?.model);
-    add(effectivePageObservation(state)?.model);
+
+    // The formal conversation POST is authoritative for what GPTLock actually sends.
+    add(state?.lastRequest?.model, 'network_request_metadata');
+
+    const verification = state?.lastVerification;
+    if (
+      verification?.evidenceSource === 'network_response_metadata'
+      && !verification?.reasons?.includes?.('model_missing')
+    ) {
+      add(verification.model, 'network_response_metadata');
+    }
     return values;
+  }
+
+  function legacySuspiciousModel(value) {
+    const model = normalizeModelId(value);
+    if (!model) return true;
+    if (/^gpt-5\.6-(?:s|so)$/.test(model)) return true;
+    return model !== 'gpt-5.6-sol' && /^gpt-5\.6-sol[a-z0-9]+$/.test(model);
+  }
+
+  function hasTrustedNetworkEvidence(item) {
+    const sources = Array.isArray(item?.sources) ? item.sources : [];
+    return sources.includes('network_request_metadata')
+      || sources.includes('network_response_metadata');
   }
 
   function responseAppliesToLatestRequest(state) {
@@ -168,18 +194,57 @@
     };
   }
 
-  function rememberModels(models) {
-    if (!models.length) return;
+  function rememberModels(candidates) {
+    if (!candidates.length) return;
     writeQueue = writeQueue.then(async () => {
-      const stored = await chrome.storage.sync.get(STORAGE_KEY);
-      const existing = Array.isArray(stored[STORAGE_KEY])
+      const stored = await chrome.storage.sync.get([
+        STORAGE_KEY,
+        EVIDENCE_STORAGE_KEY,
+        DISCOVERY_SCHEMA_KEY,
+      ]);
+      const legacy = Array.isArray(stored[STORAGE_KEY])
         ? stored[STORAGE_KEY].map(normalizeModelId).filter(Boolean)
         : [];
-      const next = [...new Set([...existing, ...models.map(normalizeModelId).filter(Boolean)])]
-        .slice(-MAX_DISCOVERED_MODELS);
-      if (JSON.stringify(next) !== JSON.stringify(existing)) {
-        await chrome.storage.sync.set({ [STORAGE_KEY]: next });
+      const evidence = stored[EVIDENCE_STORAGE_KEY] && typeof stored[EVIDENCE_STORAGE_KEY] === 'object'
+        ? { ...stored[EVIDENCE_STORAGE_KEY] }
+        : {};
+      const now = new Date().toISOString();
+
+      // v1 stored page-text guesses without provenance. Keep plausible historical IDs,
+      // but drop the known partial/concatenated 5.6 Sol artifacts. A real future model
+      // can always be re-added immediately by authoritative network evidence.
+      if (Number(stored[DISCOVERY_SCHEMA_KEY] || 0) < DISCOVERY_SCHEMA_VERSION) {
+        for (const model of legacy) {
+          if (legacySuspiciousModel(model)) continue;
+          evidence[model] ||= { confirmed: true, sources: ['legacy-v1'], firstSeenAt: now, lastSeenAt: now };
+        }
       }
+
+      for (const candidate of candidates) {
+        const model = normalizeModelId(candidate?.model);
+        if (!model || legacySuspiciousModel(model) && candidate?.source?.startsWith?.('page_')) continue;
+        const previous = evidence[model] && typeof evidence[model] === 'object' ? evidence[model] : {};
+        const sources = [...new Set([...(Array.isArray(previous.sources) ? previous.sources : []), candidate.source])];
+        evidence[model] = {
+          confirmed: true,
+          sources,
+          firstSeenAt: previous.firstSeenAt || now,
+          lastSeenAt: now,
+        };
+      }
+
+      const entries = Object.entries(evidence)
+        .filter(([model, item]) => normalizeModelId(model) && item?.confirmed
+          && (!legacySuspiciousModel(model) || hasTrustedNetworkEvidence(item)))
+        .sort((a, b) => String(a[1]?.lastSeenAt || '').localeCompare(String(b[1]?.lastSeenAt || '')))
+        .slice(-MAX_DISCOVERED_MODELS);
+      const nextEvidence = Object.fromEntries(entries);
+      const next = entries.map(([model]) => model);
+      await chrome.storage.sync.set({
+        [STORAGE_KEY]: next,
+        [EVIDENCE_STORAGE_KEY]: nextEvidence,
+        [DISCOVERY_SCHEMA_KEY]: DISCOVERY_SCHEMA_VERSION,
+      });
     }).catch(() => {});
   }
 
@@ -309,7 +374,7 @@
   function consumeState(state) {
     if (!state) return;
     lastState = state;
-    rememberModels(modelCandidates(state));
+    rememberModels(trustedModelCandidates(state));
     render(state);
   }
 
@@ -326,7 +391,9 @@
         modelLabel: validated?.modelLabel || '',
         capturedAt: new Date().toISOString(),
       } : null;
-      if (model) rememberModels([model]);
+      // Page DOM remains useful for the live indicator, but it is not strong enough
+      // evidence to permanently add a lockable model. Network request/response evidence
+      // will promote the model after a real conversation request.
       render(lastState);
     }
     observeStatusAnchor();

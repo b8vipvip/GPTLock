@@ -120,13 +120,13 @@
     }
 
     const compact = text.replace(/\s+/g, '-');
-    const explicit = compact.match(/gpt-?(\d+(?:\.\d+)*)(?:-([a-z0-9]+(?:-[a-z0-9]+)*))?/);
-    if (explicit) {
-      const suffix = explicit[2] ? `-${explicit[2]}` : '';
-      return normalizeModelId(`gpt-${explicit[1]}${suffix}`);
-    }
-    const compactSol = compact.match(/(?:^|[^a-z0-9])(\d+(?:\.\d+)*)-sol(?:-wm)?(?:-|$)/);
-    return compactSol ? normalizeModelId(`gpt-${compactSol[1]}-sol`) : null;
+    // Visible DOM text is advisory only.  Recognize the established Sol family
+    // explicitly, otherwise fall back to the base GPT family.  Do not turn
+    // arbitrary trailing UI text (for example "Solji"/"Solmo") into a model ID.
+    const compactSol = compact.match(/(?:^|[^a-z0-9])(?:gpt-)?(\d+(?:\.\d+)*)-sol(?:-wm)?(?:$|[^a-z0-9])/);
+    if (compactSol) return normalizeModelId(`gpt-${compactSol[1]}-sol`);
+    const explicit = compact.match(/(?:^|[^a-z0-9])gpt-?(\d+(?:\.\d+)*)(?=$|[^a-z0-9.])/);
+    return explicit ? normalizeModelId(`gpt-${explicit[1]}`) : null;
   }
 
   function reasoningFromText(value) {
