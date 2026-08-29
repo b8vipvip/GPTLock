@@ -29,6 +29,20 @@
       </label>
     </section>
 
+    <section class="license-card" aria-labelledby="licenseHeading">
+      <div class="license-heading">
+        <span><strong id="licenseHeading">授权验证 / License</strong><small>需要有效授权码才能启用正式锁定功能</small></span>
+        <span id="licenseBadge" class="license-badge wait">检查中</span>
+      </div>
+      <button id="licensePurchase" class="license-purchase" type="button" disabled>获取授权码 <small>Get license</small></button>
+      <p id="licenseDetail" class="license-detail">正在读取授权状态…</p>
+      <div class="license-entry">
+        <input id="licenseCode" type="text" spellcheck="false" autocomplete="off" placeholder="GPTL-XXXX-XXXX-XXXX-XXXX-XXXX">
+        <button id="licenseActivate" class="primary" type="button">验证授权码</button>
+      </div>
+      <p id="licenseMessage" class="license-message" role="status"></p>
+    </section>
+
     <section id="installHelp" class="install-help" hidden>
       <strong id="installTitle">尚未安装本地核心</strong>
       <p id="installDetail"></p>

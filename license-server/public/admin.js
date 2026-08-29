@@ -6,6 +6,7 @@ const el = {
   updateButton: $('updateButton'), serverVersion: $('serverVersion'), currentCommit: $('currentCommit'), targetRef: $('targetRef'),
   updateProgress: $('updateProgress'), updatePercent: $('updatePercent'), updateMessage: $('updateMessage'), updateWarning: $('updateWarning'), updateLog: $('updateLog'),
   runtimeLog: $('runtimeLog'), refreshRuntime: $('refreshRuntime'), exportRuntime: $('exportRuntime'),
+  purchaseUrl: $('purchaseUrl'), saveSettings: $('saveSettings'), settingsMessage: $('settingsMessage'),
 };
 const ACTIVE_UPDATE_STATES = new Set(['queued', 'running', 'restarting', 'rolling_back']);
 let updatePoll = null;
@@ -104,6 +105,16 @@ function formatRuntimeEntry(entry) {
   const detail = entry?.detail && Object.keys(entry.detail).length ? ` ${JSON.stringify(entry.detail)}` : '';
   return `${entry?.timestamp || '—'}  ${(entry?.level || 'info').toUpperCase().padEnd(5)}  ${entry?.event || 'event'}${detail}`;
 }
+async function loadSettings() {
+  const data = await api('/admin/api/settings');
+  el.purchaseUrl.value = data.purchaseUrl || '';
+  el.settingsMessage.textContent = `允许的扩展 ID：${(data.allowedExtensionIds || []).join(', ')}`;
+}
+async function saveSettings() {
+  const data = await api('/admin/api/settings', { method: 'PUT', body: JSON.stringify({ purchaseUrl: el.purchaseUrl.value.trim() }) });
+  el.purchaseUrl.value = data.purchaseUrl || '';
+  el.settingsMessage.textContent = data.purchaseUrl ? '已保存，插件会读取新的获取授权码地址。' : '已清空获取授权码地址。';
+}
 async function loadRuntimeLogs() {
   if (!el.runtimeLog) return;
   try {
@@ -171,7 +182,7 @@ async function load() {
     el.login.hidden = true; el.app.hidden = false; el.logout.hidden = false;
     renderLicenses(licenses.licenses);
     el.audit.textContent = audit.audit.map((row) => `${row.created_at}  ${row.event}  #${row.license_id ?? '-'}  ${row.detail}`).join('\n');
-    await Promise.all([loadUpdate(), loadRuntimeLogs()]);
+    await Promise.all([loadUpdate(), loadRuntimeLogs(), loadSettings()]);
     startUpdatePolling();
   } catch (error) {
     stopUpdatePolling();
@@ -187,6 +198,10 @@ el.password.addEventListener('keydown', (event) => { if (event.key === 'Enter') 
 el.logout.addEventListener('click', async () => { stopUpdatePolling(); await api('/admin/api/logout', { method: 'POST', body: '{}' }); location.reload(); });
 el.refresh.addEventListener('click', () => void load());
 el.refreshRuntime?.addEventListener('click', () => void loadRuntimeLogs());
+el.saveSettings?.addEventListener('click', () => {
+  el.saveSettings.disabled = true;
+  void saveSettings().catch((error) => { el.settingsMessage.textContent = error.message; }).finally(() => { el.saveSettings.disabled = false; });
+});
 el.exportRuntime?.addEventListener('click', () => void exportRuntimeLogs());
 el.updateButton.addEventListener('click', async () => {
   try {

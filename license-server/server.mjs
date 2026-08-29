@@ -18,6 +18,13 @@ const ADMIN_PASSWORD = env.GPTLOCK_LICENSE_ADMIN_PASSWORD || '';
 const SECRET = env.GPTLOCK_LICENSE_SECRET || '';
 const WINDOW_TTL_SECONDS = Math.max(60, Number(env.GPTLOCK_LICENSE_WINDOW_TTL_SECONDS || 150));
 const ADMIN_SESSION_HOURS = Math.max(1, Number(env.GPTLOCK_LICENSE_ADMIN_SESSION_HOURS || 12));
+const DEFAULT_EXTENSION_ID = 'bhchcpeodphgjfjoookncemnamdbfcof';
+const ALLOWED_EXTENSION_IDS = new Set(String(env.GPTLOCK_LICENSE_ALLOWED_EXTENSION_IDS || DEFAULT_EXTENSION_ID)
+  .split(',').map((value) => value.trim().toLowerCase()).filter((value) => /^[a-z]{32}$/.test(value)));
+const ADMIN_LOGIN_MAX_ATTEMPTS = Math.max(3, Number(env.GPTLOCK_LICENSE_ADMIN_LOGIN_MAX_ATTEMPTS || 8));
+const ADMIN_LOGIN_WINDOW_MS = Math.max(60_000, Number(env.GPTLOCK_LICENSE_ADMIN_LOGIN_WINDOW_MS || 15 * 60 * 1000));
+const ACTIVATE_MAX_ATTEMPTS = Math.max(10, Number(env.GPTLOCK_LICENSE_ACTIVATE_MAX_ATTEMPTS || 60));
+const ACTIVATE_WINDOW_MS = Math.max(60_000, Number(env.GPTLOCK_LICENSE_ACTIVATE_WINDOW_MS || 60 * 1000));
 const MAX_BODY = 64 * 1024;
 const LICENSE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -87,6 +94,11 @@ CREATE TABLE IF NOT EXISTS audit_log (
   detail TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 ) STRICT;
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
 CREATE INDEX IF NOT EXISTS idx_devices_license ON devices(license_id);
 CREATE INDEX IF NOT EXISTS idx_activations_license ON activations(license_id);
 CREATE INDEX IF NOT EXISTS idx_window_leases_seen ON window_leases(last_seen_at);
@@ -104,6 +116,77 @@ function safeEqual(a, b) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 function normalizeCode(value) { return String(value || '').trim().toUpperCase().replace(/\s+/g, ''); }
+function normalizeHttpsUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (raw.length > 2048) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:' || !parsed.hostname || parsed.username || parsed.password) return null;
+    parsed.hash = '';
+    return parsed.toString();
+  } catch { return null; }
+}
+function getSetting(key) {
+  const row = db.prepare('SELECT value FROM app_settings WHERE key=?').get(key);
+  return row ? row.value : null;
+}
+function setSetting(key, value) {
+  db.prepare(`INSERT INTO app_settings(key,value,updated_at) VALUES(?,?,?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`)
+    .run(key, String(value), nowIso());
+}
+function purchaseUrl() {
+  const stored = getSetting('purchase_url');
+  const raw = stored === null ? (env.GPTLOCK_LICENSE_PURCHASE_URL || '') : stored;
+  return normalizeHttpsUrl(raw) || '';
+}
+function extensionIdFromOrigin(originValue) {
+  const match = String(originValue || '').match(/^chrome-extension:\/\/([a-z]{32})$/i);
+  return match ? match[1].toLowerCase() : null;
+}
+function clientIp(req) {
+  const remote = String(req.socket?.remoteAddress || 'unknown');
+  const loopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+  if (loopback) {
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    if (forwarded && /^[0-9A-Fa-f:.]{3,64}$/.test(forwarded)) return forwarded;
+  }
+  return remote.slice(0, 64);
+}
+const rateWindows = new Map();
+function rateKey(scope, req) { return `${scope}:${clientIp(req)}`; }
+function rateStatus(scope, req, windowMs) {
+  const now = Date.now();
+  const key = rateKey(scope, req);
+  const previous = rateWindows.get(key);
+  if (!previous || previous.resetAt <= now) {
+    if (previous) rateWindows.delete(key);
+    return { key, count: 0, resetAt: now + windowMs };
+  }
+  return { key, ...previous };
+}
+function rateRetryAfter(scope, req, maxAttempts, windowMs) {
+  const entry = rateStatus(scope, req, windowMs);
+  return entry.count >= maxAttempts ? Math.max(1, Math.ceil((entry.resetAt - Date.now()) / 1000)) : 0;
+}
+function recordRateFailure(scope, req, windowMs) {
+  const entry = rateStatus(scope, req, windowMs);
+  rateWindows.set(entry.key, { count: entry.count + 1, resetAt: entry.resetAt });
+  if (rateWindows.size > 4096) {
+    const now = Date.now();
+    for (const [candidate, value] of rateWindows) if (value.resetAt <= now) rateWindows.delete(candidate);
+  }
+}
+function clearRateLimit(scope, req) { rateWindows.delete(rateKey(scope, req)); }
+function extensionClientAllowed(req, extensionId) {
+  const claimed = String(extensionId || '').trim().toLowerCase();
+  if (!ALLOWED_EXTENSION_IDS.has(claimed)) return false;
+  const origin = String(req.headers.origin || '');
+  if (!origin) return true;
+  const originId = extensionIdFromOrigin(origin);
+  return Boolean(originId && originId === claimed && ALLOWED_EXTENSION_IDS.has(originId));
+}
 function encryptLicenseCode(code, licenseId) {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', LICENSE_CODE_KEY, iv);
@@ -246,7 +329,8 @@ async function bodyJson(req) {
 }
 function corsHeaders(req) {
   const origin = String(req.headers.origin || '');
-  if (!origin.startsWith('chrome-extension://')) return {};
+  const extensionId = extensionIdFromOrigin(origin);
+  if (!extensionId || !ALLOWED_EXTENSION_IDS.has(extensionId)) return {};
   return {
     'access-control-allow-origin': origin,
     'access-control-allow-headers': 'authorization,content-type',
@@ -306,14 +390,27 @@ async function handleApi(req, res, url) {
     return res.end();
   }
   if (url.pathname === '/api/v1/health' && req.method === 'GET') return json(res, 200, { ok: true, service: 'gptlock-license', time: nowIso() }, cors);
+  if (url.pathname === '/api/v1/config' && req.method === 'GET') {
+    return json(res, 200, { ok: true, purchaseUrl: purchaseUrl(), licenseRequired: true }, cors);
+  }
 
   if (url.pathname === '/api/v1/licenses/activate' && req.method === 'POST') {
+    const retryAfter = rateRetryAfter('license-activate', req, ACTIVATE_MAX_ATTEMPTS, ACTIVATE_WINDOW_MS);
+    if (retryAfter) return json(res, 429, { ok: false, error: { code: 'RATE_LIMITED', message: '授权尝试过于频繁，请稍后重试' } }, { ...cors, 'retry-after': String(retryAfter) });
     const input = await bodyJson(req);
+    if (!extensionClientAllowed(req, input.extensionId)) {
+      recordRateFailure('license-activate', req, ACTIVATE_WINDOW_MS);
+      return apiError(res, 403, 'EXTENSION_NOT_ALLOWED', '此授权接口只允许官方 GPTLock 扩展使用');
+    }
     const code = normalizeCode(input.code);
     if (!code || !validId(input.deviceId) || !validId(input.browserInstanceId)) return apiError(res, 400, 'INVALID_REQUEST', '授权码、设备标识或浏览器标识无效');
     const row = findLicenseByCode(code);
     const validity = licenseValidity(row);
-    if (!validity.ok) return apiError(res, 403, validity.code, validity.message);
+    if (!validity.ok) {
+      recordRateFailure('license-activate', req, ACTIVATE_WINDOW_MS);
+      return apiError(res, 403, validity.code, validity.message);
+    }
+    clearRateLimit('license-activate', req);
     const existingDevice = db.prepare('SELECT * FROM devices WHERE license_id=? AND device_id=?').get(row.id, input.deviceId);
     if (!existingDevice) {
       const count = db.prepare('SELECT COUNT(*) AS count FROM devices WHERE license_id=?').get(row.id).count;
@@ -377,8 +474,14 @@ async function handleApi(req, res, url) {
 
 async function handleAdmin(req, res, url) {
   if (url.pathname === '/admin/api/login' && req.method === 'POST') {
+    const retryAfter = rateRetryAfter('admin-login', req, ADMIN_LOGIN_MAX_ATTEMPTS, ADMIN_LOGIN_WINDOW_MS);
+    if (retryAfter) return json(res, 429, { ok: false, error: { code: 'RATE_LIMITED', message: '登录失败次数过多，请稍后再试' } }, { 'retry-after': String(retryAfter) });
     const input = await bodyJson(req);
-    if (!safeEqual(input.password || '', ADMIN_PASSWORD)) return apiError(res, 401, 'LOGIN_FAILED', '密码错误');
+    if (!safeEqual(input.password || '', ADMIN_PASSWORD)) {
+      recordRateFailure('admin-login', req, ADMIN_LOGIN_WINDOW_MS);
+      return apiError(res, 401, 'LOGIN_FAILED', '密码错误');
+    }
+    clearRateLimit('admin-login', req);
     const token = adminToken(Date.now() + ADMIN_SESSION_HOURS * 3600 * 1000);
     return json(res, 200, { ok: true }, { 'set-cookie': `gptlock_admin=${encodeURIComponent(token)}; Path=/admin; HttpOnly; Secure; SameSite=Strict; Max-Age=${ADMIN_SESSION_HOURS * 3600}` });
   }
@@ -386,6 +489,18 @@ async function handleAdmin(req, res, url) {
     return json(res, 200, { ok: true }, { 'set-cookie': 'gptlock_admin=; Path=/admin; HttpOnly; Secure; SameSite=Strict; Max-Age=0' });
   }
   if (!isAdmin(req)) return apiError(res, 401, 'ADMIN_REQUIRED', '需要管理员登录');
+
+  if (url.pathname === '/admin/api/settings' && req.method === 'GET') {
+    return json(res, 200, { ok: true, purchaseUrl: purchaseUrl(), allowedExtensionIds: [...ALLOWED_EXTENSION_IDS] });
+  }
+  if (url.pathname === '/admin/api/settings' && req.method === 'PUT') {
+    const input = await bodyJson(req);
+    const normalized = normalizeHttpsUrl(input.purchaseUrl);
+    if (normalized === null) return apiError(res, 400, 'INVALID_PURCHASE_URL', '获取授权码地址必须为空或有效的 HTTPS 地址');
+    setSetting('purchase_url', normalized);
+    audit('public_settings_updated', null, { purchaseUrlConfigured: Boolean(normalized) });
+    return json(res, 200, { ok: true, purchaseUrl: purchaseUrl(), allowedExtensionIds: [...ALLOWED_EXTENSION_IDS] });
+  }
 
   if (url.pathname === '/admin/api/runtime-logs' && req.method === 'GET') {
     const limit = clampInt(url.searchParams.get('limit'), 1, 2000, 300);
