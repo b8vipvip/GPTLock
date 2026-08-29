@@ -28,6 +28,9 @@
   const LEARNING_HEADROOM_MAX_TOKENS = 128_000;
   const MAX_ADAPTIVE_LIMIT_TOKENS = 16_000_000;
   const CONTEXT_PROFILE_STORAGE_PREFIX = 'gptlock.context-profile.v1:';
+  const CONTEXT_STATE_STORAGE_PREFIX = 'gptlock.context-state.v1:';
+  const PENDING_BYPASS_STORAGE_PREFIX = 'gptlock.context-pending-bypass.v1:';
+  const CONTEXT_CHECKPOINT_PERSIST_DEBOUNCE_MS = 800;
   const AUTO_PROBE_PREFIX = 'GPTLock 自动验证';
   const COMPOSER_SELECTORS = [
     '#prompt-textarea',
@@ -85,6 +88,11 @@
   let conversationMetricsCache = null;
   let conversationMetricsCheckedAt = 0;
   let conversationMetricsPromise = null;
+  let restoredCheckpoint = null;
+  let restoredCheckpointKey = null;
+  let checkpointLoadSequence = 0;
+  let checkpointPersistTimer = null;
+  let restoredPendingKey = null;
 
   function normalizeModelId(value) {
     const model = String(value ?? '').trim().toLowerCase();
@@ -282,6 +290,7 @@
       tokens: Math.max(0, Math.ceil(tokens)),
       characters: Math.max(0, Math.ceil(characters)),
       messageCount: countedMessages,
+      currentNode: payload?.current_node ? String(payload.current_node).slice(0, 256) : null,
     };
   }
 
@@ -290,6 +299,121 @@
     const normalizedModel = normalizeModelId(model);
     if (!account || !normalizedModel) return null;
     return `${CONTEXT_PROFILE_STORAGE_PREFIX}${account}:${normalizedModel}`;
+  }
+
+  function checkpointStorageKey(accountScope, conversationId, model) {
+    const account = String(accountScope ?? '').trim();
+    const conversation = String(conversationId ?? '').trim();
+    const normalizedModel = normalizeModelId(model);
+    if (!account || !conversation || !normalizedModel) return null;
+    return `${CONTEXT_STATE_STORAGE_PREFIX}${account}:${conversation}:${normalizedModel}`;
+  }
+
+  function pendingBypassStorageKey(accountScope, conversationId, model) {
+    const account = String(accountScope ?? '').trim();
+    const conversation = String(conversationId ?? '').trim();
+    const normalizedModel = normalizeModelId(model);
+    if (!account || !conversation || !normalizedModel) return null;
+    return `${PENDING_BYPASS_STORAGE_PREFIX}${account}:${conversation}:${normalizedModel}`;
+  }
+
+  function buildContextCheckpoint({
+    previous = null,
+    accountScope,
+    accountScopeSource = 'unknown',
+    conversationId,
+    conversationKey,
+    model,
+    snapshot,
+    currentNode = null,
+    measuredAt = new Date().toISOString(),
+  } = {}) {
+    const normalizedModel = normalizeModelId(model);
+    const account = String(accountScope ?? '').trim();
+    const conversation = String(conversationId ?? '').trim();
+    if (!account || !conversation || !normalizedModel || !snapshot) return null;
+    const activeTokens = Math.max(0, Math.ceil(Number(snapshot.historyTokens) || 0));
+    const activeCharacters = Math.max(0, Math.ceil(Number(snapshot.historyCharacters) || 0));
+    const activeMessages = Math.max(0, Math.ceil(Number(snapshot.messageCount) || 0));
+    const previousActiveTokens = Math.max(0, Math.ceil(Number(previous?.activeContextTokens) || 0));
+    const previousActiveCharacters = Math.max(0, Math.ceil(Number(previous?.activeContextCharacters) || 0));
+    const previousActiveMessages = Math.max(0, Math.ceil(Number(previous?.activeMessageCount) || 0));
+    const cumulativeTokens = Math.max(
+      activeTokens,
+      Math.max(0, Math.ceil(Number(previous?.cumulativeTokens) || 0)) + Math.max(0, activeTokens - previousActiveTokens),
+    );
+    const cumulativeCharacters = Math.max(
+      activeCharacters,
+      Math.max(0, Math.ceil(Number(previous?.cumulativeCharacters) || 0)) + Math.max(0, activeCharacters - previousActiveCharacters),
+    );
+    const cumulativeMessages = Math.max(
+      activeMessages,
+      Math.max(0, Math.ceil(Number(previous?.cumulativeMessages) || 0)) + Math.max(0, activeMessages - previousActiveMessages),
+    );
+    return {
+      schemaVersion: 1,
+      accountScope: account,
+      accountScopeSource,
+      conversationId: conversation,
+      conversationKey: String(conversationKey || `conversation:${conversation}`).slice(0, 256),
+      model: normalizedModel,
+      activeContextTokens: activeTokens,
+      activeContextCharacters: activeCharacters,
+      activeMessageCount: activeMessages,
+      cumulativeTokens,
+      cumulativeCharacters,
+      cumulativeMessages,
+      lastCurrentNode: currentNode ? String(currentNode).slice(0, 256) : null,
+      measurementSource: String(snapshot.historyMeasurementSource || 'unknown').slice(0, 80),
+      lastMeasuredAt: measuredAt,
+      lastLiveSyncedAt: measuredAt,
+    };
+  }
+
+  function serializePendingBypassRecord(pending) {
+    if (!pending?.accountScope || !pending?.model || !pending?.conversationKey) return null;
+    const startedAt = Math.max(0, Number(pending.startedAt) || 0);
+    if (!startedAt) return null;
+    return {
+      schemaVersion: 1,
+      startedAt,
+      expiresAt: startedAt + BYPASS_OBSERVATION_TIMEOUT_MS,
+      conversationKey: String(pending.conversationKey).slice(0, 256),
+      model: normalizeModelId(pending.model),
+      accountScope: String(pending.accountScope),
+      accountScopeSource: String(pending.accountScopeSource || 'unknown').slice(0, 80),
+      baselineAssistantCount: Math.max(0, Math.floor(Number(pending.baselineAssistantCount) || 0)),
+      requestId: pending.requestId ? String(pending.requestId).slice(0, 256) : null,
+      requestObserved: Boolean(pending.requestObserved),
+      responseSeen: Boolean(pending.responseSeen),
+      responseSuccessful: pending.responseSuccessful === true ? true : pending.responseSuccessful === false ? false : null,
+      preSnapshot: pending.preSnapshot ? {
+        usedTokens: Math.max(0, Math.ceil(Number(pending.preSnapshot.usedTokens) || 0)),
+        fullConversationCharacters: Math.max(0, Math.ceil(Number(pending.preSnapshot.fullConversationCharacters) || 0)),
+        conversationKey: String(pending.preSnapshot.conversationKey || pending.conversationKey).slice(0, 256),
+        model: normalizeModelId(pending.preSnapshot.model || pending.model),
+      } : null,
+    };
+  }
+
+  function restorePendingBypassRecord(record, {
+    now = Date.now(),
+    accountScope,
+    conversationKey,
+    model,
+  } = {}) {
+    if (!record || Number(record.schemaVersion) !== 1) return null;
+    if (Number(record.expiresAt) <= Number(now)) return null;
+    if (String(record.accountScope || '') !== String(accountScope || '')) return null;
+    if (String(record.conversationKey || '') !== String(conversationKey || '')) return null;
+    if (normalizeModelId(record.model) !== normalizeModelId(model)) return null;
+    if (!record.requestObserved || !record.preSnapshot?.usedTokens) return null;
+    return {
+      ...record,
+      learningStarted: false,
+      stableSignature: null,
+      stableSince: 0,
+    };
   }
 
   function nextLearnedProfile({
@@ -344,8 +468,14 @@
     profileStorageKey,
     nextLearnedProfile,
     extractConversationMetrics,
+    checkpointStorageKey,
+    pendingBypassStorageKey,
+    buildContextCheckpoint,
+    serializePendingBypassRecord,
+    restorePendingBypassRecord,
     snapshot: () => lastSnapshot,
     learningProfile: () => activeProfile,
+    checkpoint: () => restoredCheckpoint,
   };
   globalThis.__GPTLOCK_CONTEXT_BUDGET__ = api;
 
@@ -461,6 +591,136 @@
     }
   }
 
+  async function loadConversationCheckpoint() {
+    const sequence = ++checkpointLoadSequence;
+    const conversationId = currentConversationId();
+    const model = detectModel();
+    const key = checkpointStorageKey(currentAccountScope, conversationId, model);
+    restoredCheckpointKey = key;
+    if (!key) {
+      restoredCheckpoint = null;
+      scheduleRefresh();
+      return null;
+    }
+    try {
+      const stored = await chrome.storage.local.get(key);
+      if (sequence !== checkpointLoadSequence) return null;
+      const checkpoint = stored[key] ?? null;
+      if (
+        checkpoint
+        && checkpoint.accountScope === currentAccountScope
+        && checkpoint.conversationId === conversationId
+        && normalizeModelId(checkpoint.model) === normalizeModelId(model)
+      ) {
+        restoredCheckpoint = checkpoint;
+      } else {
+        restoredCheckpoint = null;
+      }
+    } catch {
+      if (sequence !== checkpointLoadSequence) return null;
+      restoredCheckpoint = null;
+    }
+    scheduleRefresh();
+    return restoredCheckpoint;
+  }
+
+  async function persistConversationCheckpoint(snapshot) {
+    const conversationId = currentConversationId();
+    const model = normalizeModelId(snapshot?.model) || detectModel();
+    const key = checkpointStorageKey(currentAccountScope, conversationId, model);
+    if (!key || snapshot?.historyMeasurementSource !== 'conversation-tree+dom-reconcile') return null;
+    if (snapshot.conversationKey !== currentConversationKey()) return null;
+    try {
+      const stored = restoredCheckpointKey === key && restoredCheckpoint
+        ? { [key]: restoredCheckpoint }
+        : await chrome.storage.local.get(key);
+      const previous = stored[key] ?? null;
+      const next = buildContextCheckpoint({
+        previous,
+        accountScope: currentAccountScope,
+        accountScopeSource: currentAccountScopeSource || 'unknown',
+        conversationId,
+        conversationKey: snapshot.conversationKey,
+        model,
+        snapshot,
+        currentNode: conversationMetricsCache?.currentNode || null,
+        measuredAt: new Date().toISOString(),
+      });
+      if (!next) return null;
+      await chrome.storage.local.set({ [key]: next });
+      restoredCheckpoint = next;
+      restoredCheckpointKey = key;
+      return next;
+    } catch {
+      return null;
+    }
+  }
+
+  function queueConversationCheckpointPersist(snapshot) {
+    if (checkpointPersistTimer !== null) window.clearTimeout(checkpointPersistTimer);
+    checkpointPersistTimer = window.setTimeout(() => {
+      checkpointPersistTimer = null;
+      void persistConversationCheckpoint(snapshot);
+    }, CONTEXT_CHECKPOINT_PERSIST_DEBOUNCE_MS);
+  }
+
+  async function persistPendingBypassState() {
+    if (!pendingBypass) return null;
+    const conversationId = currentConversationId();
+    const model = normalizeModelId(pendingBypass.model) || detectModel();
+    const key = pendingBypassStorageKey(pendingBypass.accountScope || currentAccountScope, conversationId, model);
+    const record = serializePendingBypassRecord(pendingBypass);
+    if (!key || !record) return null;
+    try {
+      await chrome.storage.local.set({ [key]: record });
+      restoredPendingKey = key;
+      return record;
+    } catch {
+      return null;
+    }
+  }
+
+  async function discardPendingBypass(removeStorage = true) {
+    const old = pendingBypass;
+    pendingBypass = null;
+    const conversationId = currentConversationId();
+    const model = normalizeModelId(old?.model) || detectModel();
+    const key = restoredPendingKey || pendingBypassStorageKey(old?.accountScope || currentAccountScope, conversationId, model);
+    restoredPendingKey = null;
+    if (removeStorage && key) {
+      try { await chrome.storage.local.remove(key); } catch { /* best effort */ }
+    }
+  }
+
+  async function restorePendingBypass() {
+    if (pendingBypass) return pendingBypass;
+    const conversationId = currentConversationId();
+    const conversationKey = currentConversationKey();
+    const model = detectModel();
+    const key = pendingBypassStorageKey(currentAccountScope, conversationId, model);
+    if (!key) return null;
+    try {
+      const stored = await chrome.storage.local.get(key);
+      const restored = restorePendingBypassRecord(stored[key], {
+        now: Date.now(),
+        accountScope: currentAccountScope,
+        conversationKey,
+        model,
+      });
+      if (!restored) {
+        if (stored[key]) await chrome.storage.local.remove(key);
+        return null;
+      }
+      pendingBypass = restored;
+      restoredPendingKey = key;
+      scheduleRefresh();
+      void maybeFinalizeBypassLearning();
+      return pendingBypass;
+    } catch {
+      return null;
+    }
+  }
+
   async function fetchConversationMetrics(conversationId) {
     if (!conversationId) return null;
     const controller = new AbortController();
@@ -546,13 +806,24 @@
       && conversationMetricsCache.conversationKey === currentConversationKey()
       && Date.now() - conversationMetricsCheckedAt <= CONVERSATION_METRICS_MAX_AGE_MS
     );
+    const checkpointUsable = Boolean(
+      !cacheFresh
+      && restoredCheckpoint
+      && restoredCheckpoint.accountScope === currentAccountScope
+      && restoredCheckpoint.conversationKey === currentConversationKey()
+    );
     const history = cacheFresh ? {
       tokens: Math.max(domHistory.tokens, conversationMetricsCache.tokens),
       characters: Math.max(domHistory.characters, conversationMetricsCache.characters),
+    } : checkpointUsable ? {
+      tokens: Math.max(domHistory.tokens, Number(restoredCheckpoint.activeContextTokens) || 0),
+      characters: Math.max(domHistory.characters, Number(restoredCheckpoint.activeContextCharacters) || 0),
     } : domHistory;
     const historyMessageCount = cacheFresh
       ? Math.max(messages.length, conversationMetricsCache.messageCount)
-      : messages.length;
+      : checkpointUsable
+        ? Math.max(messages.length, Number(restoredCheckpoint.activeMessageCount) || 0)
+        : messages.length;
     const composer = findComposer();
     const draft = composerText(composer);
     const composerRoot = composer?.closest('form') || composer?.parentElement;
@@ -575,7 +846,22 @@
       contextWindowSource: windowProfile.source,
       messageCount: historyMessageCount,
       historyCharacters: history.characters,
-      historyMeasurementSource: cacheFresh ? 'conversation-tree+dom-reconcile' : 'dom-fallback',
+      historyMeasurementSource: cacheFresh
+        ? 'conversation-tree+dom-reconcile'
+        : checkpointUsable
+          ? 'checkpoint+dom-restore'
+          : 'dom-fallback',
+      checkpointRestored: checkpointUsable,
+      checkpointMeasuredAt: checkpointUsable ? restoredCheckpoint.lastMeasuredAt ?? null : null,
+      cumulativeConversationTokens: checkpointUsable || restoredCheckpoint
+        ? Math.max(history.tokens, Number(restoredCheckpoint?.cumulativeTokens) || 0)
+        : history.tokens,
+      cumulativeConversationCharacters: checkpointUsable || restoredCheckpoint
+        ? Math.max(history.characters, Number(restoredCheckpoint?.cumulativeCharacters) || 0)
+        : history.characters,
+      cumulativeMessageCount: checkpointUsable || restoredCheckpoint
+        ? Math.max(historyMessageCount, Number(restoredCheckpoint?.cumulativeMessages) || 0)
+        : historyMessageCount,
       draftCharacters: draft.length,
       fullConversationCharacters: history.characters + draft.length,
       fullConversationTokens: budget.usedTokens,
@@ -603,6 +889,12 @@
       `当前完整聊天：约 ${formatCompactTokens(snapshot.fullConversationTokens)} tokens · ${formatCompactNumber(snapshot.fullConversationCharacters)} 字符 · ${snapshot.messageCount} 条消息 · ${snapshot.historyMeasurementSource === 'conversation-tree+dom-reconcile' ? '完整活动分支' : 'DOM 回退'}`,
       `基础安全预算：${formatCompactTokens(snapshot.baseSafeLimitTokens)} / 公开窗口 ${formatCompactTokens(snapshot.nominalLimitTokens)}`,
     ];
+    if (snapshot.checkpointRestored) {
+      rows.push(`恢复状态：已从上次本地检查点恢复（${snapshot.checkpointMeasuredAt || '时间未知'}），正在与 ChatGPT 当前活动会话重新对账。`);
+    }
+    if (snapshot.cumulativeConversationTokens > snapshot.fullConversationTokens || snapshot.cumulativeMessageCount > snapshot.messageCount) {
+      rows.push(`会话累计观测：约 ${formatCompactTokens(snapshot.cumulativeConversationTokens)} tokens · ${formatCompactNumber(snapshot.cumulativeConversationCharacters)} 字符 · ${snapshot.cumulativeMessageCount} 条消息`);
+    }
     if (snapshot.adaptiveActive) {
       rows.push(
         `账户实测成功下限：至少 ${formatCompactTokens(snapshot.learnedConfirmedTokens)} tokens（${snapshot.learnedSuccessCount} 次超限成功）`,
@@ -663,6 +955,9 @@
       : '';
     lastSnapshot = next;
     mountIndicatorRow(next);
+    if (next.historyMeasurementSource === 'conversation-tree+dom-reconcile') {
+      queueConversationCheckpointPersist(next);
+    }
     const fingerprint = `${Math.round(next.percent * 10)}:${next.model}:${next.messageCount}:${next.wouldExceed}:${next.safeLimitTokens}`;
     if (fingerprint !== previousFingerprint) {
       window.dispatchEvent(new CustomEvent('gptlock:context-budget', { detail: next }));
@@ -757,10 +1052,12 @@
       learningStarted: false,
     };
     const observation = pendingBypass;
+    if (observation.accountScope) void persistPendingBypassState();
     void refreshAccountScope(true).then(() => {
       if (pendingBypass !== observation) return;
       observation.accountScope = currentAccountScope;
       observation.accountScopeSource = currentAccountScopeSource;
+      void persistPendingBypassState();
       void maybeFinalizeBypassLearning();
     });
   }
@@ -959,7 +1256,11 @@
       const changed = nextScope !== currentAccountScope || nextSource !== currentAccountScopeSource;
       currentAccountScope = nextScope;
       currentAccountScopeSource = nextSource;
-      if (changed) await loadActiveProfile();
+      if (changed) {
+        await loadActiveProfile();
+        await loadConversationCheckpoint();
+        await restorePendingBypass();
+      }
       return currentAccountScope;
     })().finally(() => {
       accountScopePromise = null;
@@ -992,15 +1293,18 @@
     }
 
     if (!pendingBypass.requestObserved) return;
+    void persistPendingBypassState();
     if (state?.phase === 'error' && state?.lastError) {
       pendingBypass.responseSeen = true;
       pendingBypass.responseSuccessful = false;
+      void persistPendingBypassState();
       return;
     }
     if (state?.lastEvidenceDiagnostics) {
       const status = Number(state.lastEvidenceDiagnostics.httpStatus);
       pendingBypass.responseSeen = true;
       pendingBypass.responseSuccessful = !Number.isFinite(status) || status === 0 || (status >= 200 && status < 400);
+      void persistPendingBypassState();
     }
   }
 
@@ -1020,7 +1324,7 @@
     const model = normalizeModelId(pendingBypass.model) || normalizeModelId(postSnapshot.model);
     const key = profileStorageKey(accountScope, model);
     if (!key) {
-      pendingBypass = null;
+      await discardPendingBypass();
       return null;
     }
     // A successful answer proves the input accepted at send time, not the answer-inclusive post state.
@@ -1042,7 +1346,7 @@
         baseSafeLimitTokens,
       });
       if (!next) {
-        pendingBypass = null;
+        await discardPendingBypass();
         return null;
       }
       await chrome.storage.local.set({ [key]: next });
@@ -1055,13 +1359,13 @@
         adaptiveSafeLimitTokens: next.adaptiveSafeLimitTokens,
         successfulBypassCount: next.successfulBypassCount,
       };
-      pendingBypass = null;
+      await discardPendingBypass();
       window.dispatchEvent(new CustomEvent('gptlock:context-limit-learned', { detail }));
       showLearningToast(next);
       recompute();
       return next;
     } catch {
-      pendingBypass = null;
+      await discardPendingBypass();
       return null;
     }
   }
@@ -1070,7 +1374,7 @@
     const pending = pendingBypass;
     if (!pending || pending.learningStarted) return;
     if (Date.now() - pending.startedAt > BYPASS_OBSERVATION_TIMEOUT_MS) {
-      pendingBypass = null;
+      await discardPendingBypass();
       return;
     }
     if (pending.conversationKey !== currentConversationKey()) {
@@ -1079,7 +1383,7 @@
     }
     if (!pending.requestObserved) return;
     if (pending.responseSuccessful === false) {
-      pendingBypass = null;
+      await discardPendingBypass();
       return;
     }
     if (isGenerating()) {
@@ -1088,7 +1392,7 @@
       return;
     }
     if (hasVisibleGenerationError()) {
-      pendingBypass = null;
+      await discardPendingBypass();
       return;
     }
     const assistant = assistantStats();
@@ -1163,6 +1467,8 @@
     const nextModel = detectModel();
     if (normalizeModelId(previousModel) !== normalizeModelId(nextModel) || normalizeModelId(lastLoadedProfileModel) !== normalizeModelId(nextModel)) {
       void loadActiveProfile();
+      void loadConversationCheckpoint();
+      void restorePendingBypass();
     }
     if (!currentAccountScope) void refreshAccountScope();
     scheduleRefresh();
@@ -1191,11 +1497,18 @@
     characterData: true,
   });
   function handleConversationNavigation() {
+    // Detach only. The old conversation's pending record remains recoverable until its TTL expires.
     pendingBypass = null;
+    restoredPendingKey = null;
+    restoredCheckpoint = null;
+    restoredCheckpointKey = null;
     conversationMetricsCache = null;
     conversationMetricsCheckedAt = 0;
     scheduleRefresh();
-    void refreshAccountScope(true);
+    void refreshAccountScope(true).then(() => {
+      void loadConversationCheckpoint();
+      void restorePendingBypass();
+    });
     void refreshConversationMetrics(true);
   }
   window.addEventListener('popstate', handleConversationNavigation);
@@ -1208,7 +1521,10 @@
     }
   });
   window.setInterval(recompute, PERIODIC_REFRESH_MS);
-  void refreshAccountScope(true);
+  void refreshAccountScope(true).then(() => {
+    void loadConversationCheckpoint();
+    void restorePendingBypass();
+  });
   void refreshConversationMetrics(true);
   recompute();
 })();
