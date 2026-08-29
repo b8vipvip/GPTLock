@@ -282,4 +282,35 @@ mod tests {
         assert!(!unblock_verified_download(&installer).unwrap());
         assert!(!unblock_verified_download(&installer).unwrap());
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn unblock_verified_download_removes_mark_of_the_web() {
+        use std::process::Command;
+
+        let directory = tempfile::tempdir().unwrap();
+        let installer = directory.path().join(INSTALLER_FILE_NAME);
+        std::fs::write(&installer, b"test installer placeholder").unwrap();
+
+        let output = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "$ErrorActionPreference='Stop'; Set-Content -LiteralPath $env:GPTLOCK_INSTALLER_PATH -Stream Zone.Identifier -Value \"[ZoneTransfer]`r`nZoneId=3\" -Encoding ASCII",
+            ])
+            .env("GPTLOCK_INSTALLER_PATH", &installer)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "failed to create Zone.Identifier: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        assert!(unblock_verified_download(&installer).unwrap());
+        assert!(!unblock_verified_download(&installer).unwrap());
+    }
 }
