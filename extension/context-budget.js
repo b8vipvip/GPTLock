@@ -629,6 +629,7 @@
     const model = normalizeModelId(snapshot?.model) || detectModel();
     const key = checkpointStorageKey(currentAccountScope, conversationId, model);
     if (!key || snapshot?.historyMeasurementSource !== 'conversation-tree+dom-reconcile') return null;
+    if (snapshot.conversationKey !== currentConversationKey()) return null;
     try {
       const stored = restoredCheckpointKey === key && restoredCheckpoint
         ? { [key]: restoredCheckpoint }
