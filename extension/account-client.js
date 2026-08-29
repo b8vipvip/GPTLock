@@ -1,0 +1,227 @@
+const API_BASE = 'https://gptlock.mv3.cn';
+const SESSION_KEY = 'gptlockAccountSessionToken';
+const DEVICE_KEY = 'gptlockAccountDeviceId';
+const BROWSER_KEY = 'gptlockAccountBrowserInstanceId';
+const SNAPSHOT_KEY = 'gptlockAccountSnapshot';
+
+function randomId(prefix) {
+  const value = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}:${value}`;
+}
+
+function platformInfo() {
+  return new Promise((resolve) => chrome.runtime.getPlatformInfo((info) => resolve(info || {})));
+}
+
+function normalizeAccount(account, extra = {}) {
+  if (!account?.authenticated) {
+    return {
+      authenticated: false,
+      authorized: false,
+      allowedWindowKeys: [],
+      deniedWindowKeys: [],
+      lastError: extra.lastError || null,
+    };
+  }
+  return {
+    ...account,
+    authenticated: true,
+    authorized: Boolean(account.entitlement?.active),
+    allowedWindowKeys: Array.isArray(extra.allowedWindowKeys) ? extra.allowedWindowKeys : [],
+    deniedWindowKeys: Array.isArray(extra.deniedWindowKeys) ? extra.deniedWindowKeys : [],
+    lastError: extra.lastError || null,
+  };
+}
+
+export function createAccountClient({ baseUrl = API_BASE } = {}) {
+  let token = '';
+  let deviceId = '';
+  let browserInstanceId = '';
+  let state = normalizeAccount(null);
+
+  async function ensureIds() {
+    const stored = await chrome.storage.local.get([DEVICE_KEY, BROWSER_KEY, SESSION_KEY, SNAPSHOT_KEY]);
+    deviceId = typeof stored[DEVICE_KEY] === 'string' && stored[DEVICE_KEY] ? stored[DEVICE_KEY] : randomId('device');
+    browserInstanceId = typeof stored[BROWSER_KEY] === 'string' && stored[BROWSER_KEY] ? stored[BROWSER_KEY] : randomId('browser');
+    token = typeof stored[SESSION_KEY] === 'string' ? stored[SESSION_KEY] : '';
+    state = normalizeAccount(stored[SNAPSHOT_KEY]);
+    await chrome.storage.local.set({ [DEVICE_KEY]: deviceId, [BROWSER_KEY]: browserInstanceId });
+    return { deviceId, browserInstanceId };
+  }
+
+  async function persist(next) {
+    state = normalizeAccount(next, {
+      allowedWindowKeys: next?.allowedWindowKeys || state.allowedWindowKeys,
+      deniedWindowKeys: next?.deniedWindowKeys || state.deniedWindowKeys,
+      lastError: next?.lastError || null,
+    });
+    await chrome.storage.local.set({ [SNAPSHOT_KEY]: state });
+    return state;
+  }
+
+  async function request(path, { method = 'GET', body, auth = false } = {}) {
+    const headers = { 'content-type': 'application/json' };
+    if (auth && token) headers.authorization = `Bearer ${token}`;
+    const response = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: 'no-store',
+      credentials: 'omit',
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      if (auth && response.status === 401) await clearSession();
+      const error = new Error(data.error?.message || `HTTP ${response.status}`);
+      error.code = data.error?.code || `HTTP_${response.status}`;
+      error.status = response.status;
+      throw error;
+    }
+    return data;
+  }
+
+  async function clientIdentity(extra = {}) {
+    await ensureIds();
+    const platform = await platformInfo();
+    return {
+      deviceId,
+      browserInstanceId,
+      extensionId: chrome.runtime.id,
+      extensionVersion: chrome.runtime.getManifest().version,
+      platform: [platform.os, platform.arch].filter(Boolean).join('/') || navigator.platform || 'unknown',
+      ...extra,
+    };
+  }
+
+  async function initialize() {
+    await ensureIds();
+    if (!token) return persist(null);
+    try { return await me(); }
+    catch (error) {
+      return persist({ authenticated: false, lastError: error.message });
+    }
+  }
+
+  async function clearSession() {
+    token = '';
+    state = normalizeAccount(null);
+    await chrome.storage.local.remove([SESSION_KEY, SNAPSHOT_KEY]);
+    return state;
+  }
+
+  async function config() {
+    const data = await request('/api/v1/account/config');
+    return data;
+  }
+
+  async function register(email, password) {
+    const identity = await clientIdentity({ email, password });
+    return request('/api/v1/auth/register', { method: 'POST', body: identity });
+  }
+
+  async function resendVerification(email) {
+    const identity = await clientIdentity({ email });
+    return request('/api/v1/auth/resend-verification', { method: 'POST', body: identity });
+  }
+
+  async function verifyEmail(email, code) {
+    const identity = await clientIdentity({ email, code });
+    return request('/api/v1/auth/verify-email', { method: 'POST', body: identity });
+  }
+
+  async function login(email, password) {
+    const identity = await clientIdentity({ email, password });
+    const data = await request('/api/v1/auth/login', { method: 'POST', body: identity });
+    token = String(data.sessionToken || '');
+    if (!token) throw new Error('登录响应缺少会话令牌');
+    await chrome.storage.local.set({ [SESSION_KEY]: token });
+    return persist(data.account);
+  }
+
+  async function logout() {
+    try { if (token) await request('/api/v1/account/logout', { method: 'POST', body: {}, auth: true }); }
+    catch {}
+    return clearSession();
+  }
+
+  async function requestPasswordReset(email) {
+    const identity = await clientIdentity({ email });
+    return request('/api/v1/auth/forgot-password', { method: 'POST', body: identity });
+  }
+
+  async function resetPassword(email, code, newPassword) {
+    const identity = await clientIdentity({ email, code, newPassword });
+    const data = await request('/api/v1/auth/reset-password', { method: 'POST', body: identity });
+    await clearSession();
+    return data;
+  }
+
+  async function me() {
+    if (!token) return persist(null);
+    try {
+      const data = await request('/api/v1/account/me', { auth: true });
+      return persist(data.account);
+    } catch (error) {
+      if (error.status === 401) return persist(null);
+      throw error;
+    }
+  }
+
+  async function heartbeat(windowKeys = []) {
+    if (!token) return persist(null);
+    const identity = await clientIdentity({ windowKeys });
+    try {
+      const data = await request('/api/v1/account/heartbeat', { method: 'POST', body: identity, auth: true });
+      return persist({
+        ...data.account,
+        allowedWindowKeys: data.allowedWindowKeys || [],
+        deniedWindowKeys: data.deniedWindowKeys || [],
+      });
+    } catch (error) {
+      if (error.status === 401) return persist(null);
+      state = { ...state, lastError: error.message };
+      await chrome.storage.local.set({ [SNAPSHOT_KEY]: state });
+      throw error;
+    }
+  }
+
+  async function changePassword(currentPassword, newPassword) {
+    const data = await request('/api/v1/account/change-password', {
+      method: 'POST', body: { currentPassword, newPassword }, auth: true,
+    });
+    return data;
+  }
+
+  async function createOrder(planCode, paymentMethod) {
+    return request('/api/v1/account/orders', {
+      method: 'POST', body: { planCode, paymentMethod }, auth: true,
+    });
+  }
+
+  async function getOrder(orderId) {
+    return request(`/api/v1/account/orders/${encodeURIComponent(orderId)}`, { auth: true });
+  }
+
+  function snapshot() { return state; }
+  function hasSession() { return Boolean(token); }
+
+  return {
+    initialize,
+    config,
+    register,
+    resendVerification,
+    verifyEmail,
+    login,
+    logout,
+    requestPasswordReset,
+    resetPassword,
+    me,
+    heartbeat,
+    changePassword,
+    createOrder,
+    getOrder,
+    snapshot,
+    hasSession,
+    clearSession,
+  };
+}

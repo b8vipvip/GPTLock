@@ -16,6 +16,7 @@ import {
   getRuntimeLogs,
   sanitizeLogValue,
 } from './runtime-log.js';
+import { createAccountClient } from './account-client.js';
 
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
@@ -26,6 +27,7 @@ const AUTO_VERIFY_POLL_MS = 200;
 const AUTO_VERIFY_HANDOFF_MIN_WAIT_MS = 9000;
 const AUTO_VERIFY_HANDOFF_IDLE_MS = 1200;
 const DIAGNOSTIC_SSE_STORAGE_KEY = 'autoVerificationSseCapture';
+const ACCOUNT_REFRESH_ALARM = 'gptlock-account-refresh';
 
 let nativePort = null;
 let requestSequence = 0;
@@ -34,6 +36,8 @@ let currentSettings = DEFAULT_SETTINGS;
 let coreConnection = { connected: false, error: null };
 const pendingRequests = new Map();
 const tabStates = new Map();
+const accountClient = createAccountClient();
+let accountState = { authenticated: false, authorized: false, allowedWindowKeys: [], deniedWindowKeys: [] };
 
 function errorText(error) {
   return error instanceof Error ? error.message : String(error);
@@ -143,6 +147,7 @@ function createTabState(tabId, url = '') {
   return {
     tabId,
     url,
+    windowId: null,
     contextKey: contextKey(url),
     core: coreConnection,
     monitor: { attached: false, error: null },
@@ -195,11 +200,19 @@ function ensureTabState(tabId, url = '') {
   return state;
 }
 
+function accountAllowsState(state) {
+  if (!accountState?.authenticated || !accountState?.entitlement?.active) return false;
+  if (!Number.isInteger(state?.windowId)) return false;
+  return Array.isArray(accountState.allowedWindowKeys) && accountState.allowedWindowKeys.includes(`chrome:${state.windowId}`);
+}
+function effectiveSettingsForState(state) {
+  return { ...currentSettings, enabled: Boolean(currentSettings.enabled && accountAllowsState(state)) };
+}
 function guardFor(state) {
   return evaluateGuard({
     state,
     policy: currentPolicy,
-    settings: currentSettings,
+    settings: effectiveSettingsForState(state),
     inScope: isChatGptUrl(state.url),
   });
 }
@@ -265,7 +278,7 @@ async function broadcastTabState(tabId) {
       type: 'GPTLOCK_GUARD_STATE',
       state: publicTabState(state),
       policy: currentPolicy,
-      settings: currentSettings,
+      settings: effectiveSettingsForState(state),
     });
   } catch {
     // A content script may not exist yet while a tab is loading.
@@ -635,7 +648,8 @@ const networkMonitor = new ChatGptNetworkMonitor({
 async function configureTab(tab) {
   if (!tab?.id || !isChatGptUrl(tab.url ?? '')) return;
   const state = ensureTabState(tab.id, tab.url);
-  if (currentSettings.enabled) await networkMonitor.attach(tab.id);
+  state.windowId = Number.isInteger(tab.windowId) ? tab.windowId : null;
+  if (effectiveSettingsForState(state).enabled) await networkMonitor.attach(tab.id);
   else await networkMonitor.detach(tab.id);
   await broadcastTabState(tab.id);
   return state;
@@ -644,6 +658,25 @@ async function configureTab(tab) {
 async function configureOpenTabs() {
   const tabs = await chrome.tabs.query({ url: 'https://chatgpt.com/*' });
   await Promise.all(tabs.map((tab) => configureTab(tab)));
+}
+
+async function refreshAccountHeartbeat({ reconfigure = true } = {}) {
+  if (!accountClient.hasSession()) {
+    accountState = accountClient.snapshot();
+    if (reconfigure) await configureOpenTabs();
+    return accountState;
+  }
+  const chatTabs = await chrome.tabs.query({ url: 'https://chatgpt.com/*' });
+  const windowKeys = [...new Set(chatTabs
+    .filter((tab) => Number.isInteger(tab.windowId))
+    .map((tab) => `chrome:${tab.windowId}`))];
+  try {
+    accountState = await accountClient.heartbeat(windowKeys);
+  } catch (error) {
+    accountState = { ...accountClient.snapshot(), lastError: errorText(error) };
+  }
+  if (reconfigure) await configureOpenTabs();
+  return accountState;
 }
 
 async function refreshNativeCore({ tolerateFailure = false } = {}) {
@@ -672,9 +705,12 @@ async function initialize() {
   logRuntime('info', 'extension', 'initialize_started', {
     version: chrome.runtime.getManifest().version,
   });
+  accountState = await accountClient.initialize();
   await ensureConfiguration();
   await refreshNativeCore({ tolerateFailure: true });
+  await refreshAccountHeartbeat({ reconfigure: false });
   await configureOpenTabs();
+  chrome.alarms.create(ACCOUNT_REFRESH_ALARM, { periodInMinutes: 1 });
   logRuntime('info', 'extension', 'initialize_completed', {
     enabled: currentSettings.enabled,
     responseVerificationEnabled: currentSettings.networkVerificationEnabled,
@@ -1170,7 +1206,11 @@ chrome.runtime.onStartup.addListener(() => void initialize());
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === RECONNECT_ALARM) void initialize();
+  if (alarm.name === ACCOUNT_REFRESH_ALARM) void refreshAccountHeartbeat();
 });
+
+chrome.windows.onCreated.addListener(() => void refreshAccountHeartbeat());
+chrome.windows.onRemoved.addListener(() => void refreshAccountHeartbeat());
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.url && !isChatGptUrl(changeInfo.url)) {
@@ -1242,8 +1282,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           nativeStatus: nativeStatus ?? { connected: false },
           tabState: state ? publicTabState(state) : null,
           extensionVersion: chrome.runtime.getManifest().version,
+          account: accountState,
+          accountWindowAllowed: state ? accountAllowsState(state) : false,
         };
       }
+      case 'GPTLOCK_ACCOUNT_CONFIG':
+        return accountClient.config();
+      case 'GPTLOCK_ACCOUNT_REGISTER':
+        return accountClient.register(message.email, message.password);
+      case 'GPTLOCK_ACCOUNT_RESEND_VERIFICATION':
+        return accountClient.resendVerification(message.email);
+      case 'GPTLOCK_ACCOUNT_VERIFY_EMAIL':
+        return accountClient.verifyEmail(message.email, message.code);
+      case 'GPTLOCK_ACCOUNT_LOGIN': {
+        accountState = await accountClient.login(message.email, message.password);
+        await refreshAccountHeartbeat();
+        return accountState;
+      }
+      case 'GPTLOCK_ACCOUNT_FORGOT_PASSWORD':
+        return accountClient.requestPasswordReset(message.email);
+      case 'GPTLOCK_ACCOUNT_RESET_PASSWORD': {
+        const result = await accountClient.resetPassword(message.email, message.code, message.newPassword);
+        accountState = accountClient.snapshot();
+        await configureOpenTabs();
+        return result;
+      }
+      case 'GPTLOCK_ACCOUNT_LOGOUT': {
+        accountState = await accountClient.logout();
+        await configureOpenTabs();
+        return accountState;
+      }
+      case 'GPTLOCK_ACCOUNT_REFRESH':
+        return refreshAccountHeartbeat();
+      case 'GPTLOCK_ACCOUNT_CHANGE_PASSWORD':
+        return accountClient.changePassword(message.currentPassword, message.newPassword);
+      case 'GPTLOCK_ACCOUNT_CREATE_ORDER':
+        return accountClient.createOrder(message.planCode, message.paymentMethod);
+      case 'GPTLOCK_ACCOUNT_GET_ORDER':
+        return accountClient.getOrder(message.orderId);
       case 'GPTLOCK_RECONNECT': {
         const previousPort = nativePort;
         nativePort = null;
@@ -1254,6 +1330,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return { ok: true };
       }
       case 'GPTLOCK_SET_ENABLED': {
+        if (message.enabled) {
+          const tabId = sender.tab?.id ?? await activeTabId();
+          const state = tabId === null ? null : tabStates.get(tabId);
+          if (!state || !accountAllowsState(state)) throw new Error('当前账号没有有效权益，或当前窗口已超过同时窗口上限');
+        }
         currentSettings = normalizeSettings({
           ...currentSettings,
           enabled: Boolean(message.enabled),
@@ -1353,6 +1434,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'GPTLOCK_AUTO_VERIFY': {
         const tabId = await chatGptTabId(Number.isInteger(message.tabId) ? message.tabId : null);
         if (tabId === null) throw new Error('No ChatGPT tab / 没有打开的 ChatGPT 标签页');
+        const state = tabStates.get(tabId);
+        if (!state || !accountAllowsState(state)) throw new Error('当前账号没有有效权益，或当前窗口已超过同时窗口上限');
         return autoVerify(tabId);
       }
       case 'GPTLOCK_SEND_BLOCKED': {

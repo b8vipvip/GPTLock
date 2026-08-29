@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GPTLock 账户中心</title>
+  <link rel="stylesheet" href="account.css">
+</head>
+<body>
+<main>
+  <header>
+    <div><p class="eyebrow">GPTLOCK ACCOUNT</p><h1>账户中心 <small>Account center</small></h1></div>
+    <button id="refresh">刷新</button>
+  </header>
+
+  <section id="notLogged" class="card" hidden>
+    <h2>尚未登录</h2><p>请先从 GPTLock 插件弹窗登录账号。</p>
+  </section>
+
+  <div id="app" hidden>
+    <section class="hero card">
+      <div><p class="muted">当前账号</p><h2 id="email">—</h2><span id="statusBadge" class="badge">—</span></div>
+      <div class="hero-right"><strong id="tier">—</strong><span id="expiry">—</span></div>
+    </section>
+
+    <section class="stats">
+      <article class="card"><span>设备</span><strong id="deviceUsage">—</strong></article>
+      <article class="card"><span>同时窗口</span><strong id="windowUsage">—</strong></article>
+      <article class="card"><span>免费期限</span><strong id="freeExpiry">—</strong></article>
+      <article class="card"><span>会员期限</span><strong id="memberExpiry">—</strong></article>
+    </section>
+
+    <section class="card">
+      <div class="section-title"><div><h2>会员方案</h2><p class="muted">价格、设备与窗口权益由服务端统一配置。</p></div></div>
+      <div id="plans" class="plans"></div>
+      <p id="orderMessage" class="message"></p>
+    </section>
+
+    <section class="card">
+      <h2>修改密码</h2>
+      <form id="passwordForm" class="form-grid">
+        <label>当前密码<input id="currentPassword" type="password" autocomplete="current-password" required></label>
+        <label>新密码<input id="newPassword" type="password" autocomplete="new-password" minlength="10" required></label>
+        <label>确认新密码<input id="newPassword2" type="password" autocomplete="new-password" minlength="10" required></label>
+        <button class="primary" type="submit">修改密码</button>
+      </form>
+      <p id="passwordMessage" class="message"></p>
+    </section>
+
+    <section class="card security-note">
+      <h2>安全说明</h2>
+      <p>密码仅发送到 GPTLock 服务端验证；服务端使用带随机盐的 scrypt 保存密码摘要。登录会话令牌只保存在本机浏览器存储，不进入 Chrome 同步。</p>
+    </section>
+  </div>
+</main>
+<script type="module" src="account.js"></script>
+</body>
+</html>

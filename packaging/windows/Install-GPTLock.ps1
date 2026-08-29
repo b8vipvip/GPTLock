@@ -53,13 +53,11 @@ function Copy-FileIfDifferent {
 }
 
 Copy-FileIfDifferent -Source $BinaryPath -Destination $installedBinary
-$runtimeFiles = @(
-    'background.js', 'content.js', 'diagnostics.css', 'diagnostics.html', 'diagnostics.js', 'guard.js', 'manifest.json',
-    'native-status.js', 'network-evidence.js', 'network-monitor.js', 'options.css', 'options.html', 'options.js',
-    'policy.js', 'popup.css', 'popup.html', 'popup.js', 'runtime-log.js'
-)
+$runtimeFiles = Get-ChildItem -LiteralPath $extensionSource -File | Where-Object {
+    $_.Name -eq 'manifest.json' -or $_.Extension -in @('.js', '.css', '.html')
+}
 foreach ($file in $runtimeFiles) {
-    Copy-FileIfDifferent -Source (Join-Path $extensionSource $file) -Destination (Join-Path $extensionDirectory $file)
+    Copy-FileIfDifferent -Source $file.FullName -Destination (Join-Path $extensionDirectory $file.Name)
 }
 $installedRepair = Join-Path $toolsDirectory 'Repair-GPTLock.ps1'
 Copy-FileIfDifferent -Source (Join-Path $scriptDirectory 'Repair-GPTLock.ps1') -Destination $installedRepair

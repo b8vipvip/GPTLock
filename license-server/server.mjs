@@ -6,6 +6,7 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRuntimeLogger } from './runtime-log.mjs';
 import { createUpdateManager } from './update-manager.mjs';
+import { createAccountSystem } from './account-system.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(ROOT, 'public');
@@ -292,6 +293,10 @@ function cookie(req, name) {
   return '';
 }
 function isAdmin(req) { return verifyAdminToken(cookie(req, 'gptlock_admin')); }
+function adminMutationOriginAllowed(req) {
+  const origin = String(req.headers.origin || '');
+  return !origin || origin === PUBLIC_ORIGIN;
+}
 function json(res, status, body, extra = {}) {
   const payload = Buffer.from(JSON.stringify(body));
   res.writeHead(status, {
@@ -354,34 +359,10 @@ function staticFile(res, path) {
   } catch { res.writeHead(404).end('Not found'); }
 }
 
-function createLicense(input) {
-  const maxDevices = clampInt(input.maxDevices, 1, 10000, 1);
-  const maxWindows = clampInt(input.maxWindows, 1, 10000, 1);
-  const validFrom = parseIso(input.validFrom) || nowIso();
-  const expiresAt = parseIso(input.expiresAt);
-  if (!expiresAt || Date.parse(expiresAt) <= Date.parse(validFrom)) throw Object.assign(new Error('有效期结束时间必须晚于开始时间'), { status: 400 });
-  let code;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    code = generateLicenseCode();
-    if (!findLicenseByCode(code)) break;
-  }
-  const now = nowIso();
-  let licenseId;
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    const result = db.prepare(`INSERT INTO licenses(code_hash,code_hint,label,note,status,max_devices,max_windows,valid_from,expires_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(hmac(code), `${code.slice(0,9)}…${code.slice(-4)}`, String(input.label || '').slice(0,120), String(input.note || '').slice(0,500), 'active', maxDevices, maxWindows, validFrom, expiresAt, now, now);
-    licenseId = Number(result.lastInsertRowid);
-    db.prepare('INSERT INTO license_secrets(license_id,code_ciphertext) VALUES(?,?)')
-      .run(licenseId, encryptLicenseCode(code, licenseId));
-    db.exec('COMMIT');
-  } catch (error) {
-    try { db.exec('ROLLBACK'); } catch {}
-    throw error;
-  }
-  audit('license_created', licenseId, { maxDevices, maxWindows, expiresAt });
-  return { code, license: licenseSummary(db.prepare('SELECT * FROM licenses WHERE id=?').get(licenseId)) };
-}
+const accountSystem = createAccountSystem({
+  db, env, secret: SECRET, publicOrigin: PUBLIC_ORIGIN, allowedExtensionIds: ALLOWED_EXTENSION_IDS,
+  windowTtlSeconds: WINDOW_TTL_SECONDS, json, bodyJson, clientIp,
+});
 
 async function handleApi(req, res, url) {
   const cors = corsHeaders(req);
@@ -391,82 +372,12 @@ async function handleApi(req, res, url) {
   }
   if (url.pathname === '/api/v1/health' && req.method === 'GET') return json(res, 200, { ok: true, service: 'gptlock-license', time: nowIso() }, cors);
   if (url.pathname === '/api/v1/config' && req.method === 'GET') {
-    return json(res, 200, { ok: true, purchaseUrl: purchaseUrl(), licenseRequired: true }, cors);
+    return json(res, 200, { ok: true, accountRequired: true, licenseRequired: false }, cors);
   }
-
-  if (url.pathname === '/api/v1/licenses/activate' && req.method === 'POST') {
-    const retryAfter = rateRetryAfter('license-activate', req, ACTIVATE_MAX_ATTEMPTS, ACTIVATE_WINDOW_MS);
-    if (retryAfter) return json(res, 429, { ok: false, error: { code: 'RATE_LIMITED', message: '授权尝试过于频繁，请稍后重试' } }, { ...cors, 'retry-after': String(retryAfter) });
-    const input = await bodyJson(req);
-    if (!extensionClientAllowed(req, input.extensionId)) {
-      recordRateFailure('license-activate', req, ACTIVATE_WINDOW_MS);
-      return apiError(res, 403, 'EXTENSION_NOT_ALLOWED', '此授权接口只允许官方 GPTLock 扩展使用');
-    }
-    const code = normalizeCode(input.code);
-    if (!code || !validId(input.deviceId) || !validId(input.browserInstanceId)) return apiError(res, 400, 'INVALID_REQUEST', '授权码、设备标识或浏览器标识无效');
-    const row = findLicenseByCode(code);
-    const validity = licenseValidity(row);
-    if (!validity.ok) {
-      recordRateFailure('license-activate', req, ACTIVATE_WINDOW_MS);
-      return apiError(res, 403, validity.code, validity.message);
-    }
-    clearRateLimit('license-activate', req);
-    const existingDevice = db.prepare('SELECT * FROM devices WHERE license_id=? AND device_id=?').get(row.id, input.deviceId);
-    if (!existingDevice) {
-      const count = db.prepare('SELECT COUNT(*) AS count FROM devices WHERE license_id=?').get(row.id).count;
-      if (count >= row.max_devices) return apiError(res, 409, 'DEVICE_LIMIT', `设备数量已达到上限 ${row.max_devices}`);
-      db.prepare('INSERT INTO devices(license_id,device_id,first_seen_at,last_seen_at,platform) VALUES(?,?,?,?,?)')
-        .run(row.id, input.deviceId, nowIso(), nowIso(), String(input.platform || '').slice(0,80));
-      audit('device_bound', row.id, { deviceId: input.deviceId });
-    } else {
-      db.prepare('UPDATE devices SET last_seen_at=?, platform=? WHERE id=?').run(nowIso(), String(input.platform || '').slice(0,80), existingDevice.id);
-    }
-    const previous = db.prepare('SELECT * FROM activations WHERE license_id=? AND device_id=? AND browser_instance_id=?').get(row.id, input.deviceId, input.browserInstanceId);
-    const token = generateToken();
-    const now = nowIso();
-    if (previous) {
-      db.prepare('UPDATE activations SET token_hash=?,extension_id=?,extension_version=?,last_seen_at=?,revoked_at=NULL WHERE id=?')
-        .run(sha256(token), String(input.extensionId || '').slice(0,80), String(input.extensionVersion || '').slice(0,40), now, previous.id);
-      db.prepare('DELETE FROM window_leases WHERE activation_id=?').run(previous.id);
-    } else {
-      db.prepare(`INSERT INTO activations(license_id,device_id,browser_instance_id,token_hash,extension_id,extension_version,created_at,last_seen_at) VALUES(?,?,?,?,?,?,?,?)`)
-        .run(row.id, input.deviceId, input.browserInstanceId, sha256(token), String(input.extensionId || '').slice(0,80), String(input.extensionVersion || '').slice(0,40), now, now);
-    }
-    audit('activation_issued', row.id, { deviceId: input.deviceId, browserInstanceId: input.browserInstanceId });
-    return json(res, 200, { ok: true, activationToken: token, license: licenseSummary(row), heartbeatSeconds: 60, windowLeaseTtlSeconds: WINDOW_TTL_SECONDS }, cors);
-  }
-
-  if (url.pathname === '/api/v1/licenses/heartbeat' && req.method === 'POST') {
-    const activation = activationFromToken(bearer(req));
-    if (!activation) return apiError(res, 401, 'ACTIVATION_INVALID', '授权会话无效，请重新输入授权码');
-    const validity = licenseValidity(activation);
-    if (!validity.ok) return apiError(res, 403, validity.code, validity.message);
-    const input = await bodyJson(req);
-    const requested = [...new Set(Array.isArray(input.windowKeys) ? input.windowKeys.filter((key) => validId(key, 220)).slice(0, 128) : [])];
-    purgeWindowLeases();
-    const existingRows = db.prepare('SELECT window_key FROM window_leases WHERE activation_id=? ORDER BY first_seen_at').all(activation.id);
-    const existing = existingRows.map((row) => row.window_key).filter((key) => requested.includes(key));
-    const otherCount = db.prepare(`SELECT COUNT(*) AS count FROM window_leases wl JOIN activations a ON a.id=wl.activation_id WHERE a.license_id=? AND a.revoked_at IS NULL AND a.id<>?`).get(activation.license_id, activation.id).count;
-    const capacity = Math.max(0, activation.max_windows - otherCount);
-    const allowed = [...existing];
-    for (const key of requested) if (!allowed.includes(key) && allowed.length < capacity) allowed.push(key);
-    const now = nowIso();
-    db.prepare('DELETE FROM window_leases WHERE activation_id=?').run(activation.id);
-    const insertLease = db.prepare('INSERT INTO window_leases(activation_id,window_key,first_seen_at,last_seen_at) VALUES(?,?,?,?)');
-    for (const key of allowed) insertLease.run(activation.id, key, now, now);
-    db.prepare('UPDATE activations SET last_seen_at=?,extension_version=? WHERE id=?').run(now, String(input.extensionVersion || activation.extension_version).slice(0,40), activation.id);
-    db.prepare('UPDATE devices SET last_seen_at=? WHERE license_id=? AND device_id=?').run(now, activation.license_id, activation.device_id);
-    const license = db.prepare('SELECT * FROM licenses WHERE id=?').get(activation.license_id);
-    return json(res, 200, { ok: true, authorized: true, allowedWindowKeys: allowed, deniedWindowKeys: requested.filter((key) => !allowed.includes(key)), license: licenseSummary(license), heartbeatSeconds: 60, windowLeaseTtlSeconds: WINDOW_TTL_SECONDS }, cors);
-  }
-
-  if (url.pathname === '/api/v1/licenses/deactivate' && req.method === 'POST') {
-    const activation = activationFromToken(bearer(req));
-    if (!activation) return json(res, 200, { ok: true }, cors);
-    db.prepare('UPDATE activations SET revoked_at=? WHERE id=?').run(nowIso(), activation.id);
-    db.prepare('DELETE FROM window_leases WHERE activation_id=?').run(activation.id);
-    audit('activation_revoked_by_client', activation.license_id, { activationId: activation.id });
-    return json(res, 200, { ok: true }, cors);
+  const accountHandled = await accountSystem.handleApi(req, res, url, cors);
+  if (accountHandled) return;
+  if (url.pathname.startsWith('/api/v1/licenses/')) {
+    return apiError(res, 410, 'LICENSE_API_REMOVED', '授权码验证已停用，请使用 GPTLock 账号登录');
   }
 
   return apiError(res, 404, 'NOT_FOUND', 'Not found');
@@ -489,17 +400,13 @@ async function handleAdmin(req, res, url) {
     return json(res, 200, { ok: true }, { 'set-cookie': 'gptlock_admin=; Path=/admin; HttpOnly; Secure; SameSite=Strict; Max-Age=0' });
   }
   if (!isAdmin(req)) return apiError(res, 401, 'ADMIN_REQUIRED', '需要管理员登录');
-
-  if (url.pathname === '/admin/api/settings' && req.method === 'GET') {
-    return json(res, 200, { ok: true, purchaseUrl: purchaseUrl(), allowedExtensionIds: [...ALLOWED_EXTENSION_IDS] });
+  if (!['GET','HEAD'].includes(req.method || '') && !adminMutationOriginAllowed(req)) {
+    return apiError(res, 403, 'ADMIN_ORIGIN_MISMATCH', '后台写操作来源校验失败');
   }
-  if (url.pathname === '/admin/api/settings' && req.method === 'PUT') {
-    const input = await bodyJson(req);
-    const normalized = normalizeHttpsUrl(input.purchaseUrl);
-    if (normalized === null) return apiError(res, 400, 'INVALID_PURCHASE_URL', '获取授权码地址必须为空或有效的 HTTPS 地址');
-    setSetting('purchase_url', normalized);
-    audit('public_settings_updated', null, { purchaseUrlConfigured: Boolean(normalized) });
-    return json(res, 200, { ok: true, purchaseUrl: purchaseUrl(), allowedExtensionIds: [...ALLOWED_EXTENSION_IDS] });
+  const accountAdminHandled = await accountSystem.handleAdmin(req, res, url);
+  if (accountAdminHandled) return;
+  if (url.pathname.startsWith('/admin/api/licenses')) {
+    return apiError(res, 410, 'LICENSE_ADMIN_REMOVED', '授权码管理已停用，请使用用户账户管理');
   }
 
   if (url.pathname === '/admin/api/runtime-logs' && req.method === 'GET') {
@@ -517,74 +424,6 @@ async function handleAdmin(req, res, url) {
     const result = updateManager.request();
     audit('server_update_requested', null, { requestId: result.requestId, ref: env.GPTLOCK_UPDATE_REF || 'main' });
     return json(res, 202, result);
-  }
-  if (url.pathname === '/admin/api/licenses' && req.method === 'GET') {
-    purgeWindowLeases();
-    const rows = db.prepare(`
-      SELECT l.*, CASE WHEN s.license_id IS NULL THEN 0 ELSE 1 END AS code_available
-      FROM licenses l
-      LEFT JOIN license_secrets s ON s.license_id=l.id
-      ORDER BY l.id DESC
-      LIMIT 1000
-    `).all();
-    return json(res, 200, { ok: true, licenses: rows.map(licenseSummary) });
-  }
-  if (url.pathname === '/admin/api/licenses' && req.method === 'POST') {
-    const created = createLicense(await bodyJson(req));
-    return json(res, 201, { ok: true, ...created });
-  }
-  const codeMatch = url.pathname.match(/^\/admin\/api\/licenses\/(\d+)\/code$/);
-  if (codeMatch && req.method === 'GET') {
-    const id = Number(codeMatch[1]);
-    const row = db.prepare(`
-      SELECT l.id, s.code_ciphertext
-      FROM licenses l
-      LEFT JOIN license_secrets s ON s.license_id=l.id
-      WHERE l.id=?
-    `).get(id);
-    if (!row) return apiError(res, 404, 'LICENSE_NOT_FOUND', '授权不存在');
-    if (!row.code_ciphertext) return apiError(res, 409, 'LICENSE_CODE_UNAVAILABLE', '该历史授权码创建时未保存完整值，无法恢复');
-    const code = decryptLicenseCode(row.code_ciphertext, id);
-    if (!code) return apiError(res, 500, 'LICENSE_CODE_DECRYPT_FAILED', '授权码解密失败，请检查服务端密钥配置');
-    audit('license_code_accessed', id, {});
-    return json(res, 200, { ok: true, code });
-  }
-  const match = url.pathname.match(/^\/admin\/api\/licenses\/(\d+)$/);
-  if (match && req.method === 'PATCH') {
-    const id = Number(match[1]);
-    const row = db.prepare('SELECT * FROM licenses WHERE id=?').get(id);
-    if (!row) return apiError(res, 404, 'LICENSE_NOT_FOUND', '授权不存在');
-    const input = await bodyJson(req);
-    const next = {
-      label: input.label === undefined ? row.label : String(input.label).slice(0,120),
-      note: input.note === undefined ? row.note : String(input.note).slice(0,500),
-      status: input.status === undefined ? row.status : (input.status === 'active' ? 'active' : 'revoked'),
-      maxDevices: input.maxDevices === undefined ? row.max_devices : clampInt(input.maxDevices, 1, 10000, row.max_devices),
-      maxWindows: input.maxWindows === undefined ? row.max_windows : clampInt(input.maxWindows, 1, 10000, row.max_windows),
-      validFrom: input.validFrom === undefined ? row.valid_from : parseIso(input.validFrom),
-      expiresAt: input.expiresAt === undefined ? row.expires_at : parseIso(input.expiresAt),
-    };
-    if (!next.validFrom || !next.expiresAt || Date.parse(next.expiresAt) <= Date.parse(next.validFrom)) return apiError(res, 400, 'INVALID_EXPIRY', '有效期设置无效');
-    db.prepare('UPDATE licenses SET label=?,note=?,status=?,max_devices=?,max_windows=?,valid_from=?,expires_at=?,updated_at=? WHERE id=?')
-      .run(next.label, next.note, next.status, next.maxDevices, next.maxWindows, next.validFrom, next.expiresAt, nowIso(), id);
-    if (next.status === 'revoked') {
-      db.prepare('UPDATE activations SET revoked_at=? WHERE license_id=? AND revoked_at IS NULL').run(nowIso(), id);
-      db.prepare('DELETE FROM window_leases WHERE activation_id IN (SELECT id FROM activations WHERE license_id=?)').run(id);
-    }
-    audit('license_updated', id, next);
-    return json(res, 200, { ok: true, license: licenseSummary(db.prepare('SELECT * FROM licenses WHERE id=?').get(id)) });
-  }
-  const releaseMatch = url.pathname.match(/^\/admin\/api\/licenses\/(\d+)\/release-devices$/);
-  if (releaseMatch && req.method === 'POST') {
-    const id = Number(releaseMatch[1]);
-    db.prepare('DELETE FROM devices WHERE license_id=?').run(id);
-    db.prepare('DELETE FROM activations WHERE license_id=?').run(id);
-    audit('devices_released', id, {});
-    return json(res, 200, { ok: true });
-  }
-  if (url.pathname === '/admin/api/audit' && req.method === 'GET') {
-    const rows = db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT 300').all();
-    return json(res, 200, { ok: true, audit: rows });
   }
   return apiError(res, 404, 'NOT_FOUND', 'Not found');
 }
