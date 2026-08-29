@@ -41,3 +41,11 @@ test('legacy polluted Sol fragments are migrated out of discoveries and locked p
   assert.match(optionsSource, /patch\.policy = \{ \.\.\.stored\.policy, lockedModels \}/);
   assert.match(optionsSource, /removeDuplicateDiscoveredRows/);
 });
+
+
+test('trusted network evidence can restore a future model that resembles a legacy artifact', () => {
+  assert.match(catalogSource, /function hasTrustedNetworkEvidence/);
+  assert.match(catalogSource, /!legacySuspiciousModel\(model\) \|\| hasTrustedNetworkEvidence\(item\)/);
+  assert.match(optionsSource, /const trusted = \(model\) => hasTrustedNetworkEvidence/);
+  assert.match(optionsSource, /!legacySuspiciousModel\(model\) \|\| trusted\(model\)/);
+});

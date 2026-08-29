@@ -21,6 +21,12 @@
     return model !== 'gpt-5.6-sol' && /^gpt-5\.6-sol[a-z0-9]+$/.test(model);
   }
 
+  function hasTrustedNetworkEvidence(item) {
+    const sources = Array.isArray(item?.sources) ? item.sources : [];
+    return sources.includes('network_request_metadata')
+      || sources.includes('network_response_metadata');
+  }
+
   function evidenceLabel(model, evidence) {
     const sources = Array.isArray(evidence?.[model]?.sources) ? evidence[model].sources : [];
     if (sources.includes('network_response_metadata')) return '网络响应确认 / Response confirmed';
@@ -109,16 +115,18 @@
     const discoveredBefore = Array.isArray(stored[STORAGE_KEY])
       ? [...new Set(stored[STORAGE_KEY].map(normalizeModelId).filter(Boolean))]
       : [];
-    const discovered = discoveredBefore.filter((model) => !legacySuspiciousModel(model));
     const lockedBefore = Array.isArray(stored.policy?.lockedModels)
       ? stored.policy.lockedModels.map(normalizeModelId).filter(Boolean)
       : [];
-    const lockedModels = lockedBefore.filter((model) => !legacySuspiciousModel(model));
     const evidenceBefore = stored[EVIDENCE_STORAGE_KEY] && typeof stored[EVIDENCE_STORAGE_KEY] === 'object'
       ? stored[EVIDENCE_STORAGE_KEY]
       : {};
+    const trusted = (model) => hasTrustedNetworkEvidence(evidenceBefore?.[model]);
+    const discovered = discoveredBefore.filter((model) => !legacySuspiciousModel(model) || trusted(model));
+    const lockedModels = lockedBefore.filter((model) => !legacySuspiciousModel(model) || trusted(model));
     const evidence = Object.fromEntries(
-      Object.entries(evidenceBefore).filter(([model]) => !legacySuspiciousModel(model)),
+      Object.entries(evidenceBefore).filter(([model, item]) =>
+        !legacySuspiciousModel(model) || hasTrustedNetworkEvidence(item)),
     );
 
     if (

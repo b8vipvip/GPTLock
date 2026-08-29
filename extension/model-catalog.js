@@ -143,6 +143,12 @@
     return model !== 'gpt-5.6-sol' && /^gpt-5\.6-sol[a-z0-9]+$/.test(model);
   }
 
+  function hasTrustedNetworkEvidence(item) {
+    const sources = Array.isArray(item?.sources) ? item.sources : [];
+    return sources.includes('network_request_metadata')
+      || sources.includes('network_response_metadata');
+  }
+
   function responseAppliesToLatestRequest(state) {
     const requestAt = timestamp(state?.lastRequest?.capturedAt);
     const verificationAt = timestamp(state?.lastVerification?.verifiedAt);
@@ -228,7 +234,8 @@
       }
 
       const entries = Object.entries(evidence)
-        .filter(([model, item]) => normalizeModelId(model) && item?.confirmed && !legacySuspiciousModel(model))
+        .filter(([model, item]) => normalizeModelId(model) && item?.confirmed
+          && (!legacySuspiciousModel(model) || hasTrustedNetworkEvidence(item)))
         .sort((a, b) => String(a[1]?.lastSeenAt || '').localeCompare(String(b[1]?.lastSeenAt || '')))
         .slice(-MAX_DISCOVERED_MODELS);
       const nextEvidence = Object.fromEntries(entries);
