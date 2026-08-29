@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 const INSTALLER_FILE_NAME: &str = "GPTLockSetup-x64.exe";
+const UPDATE_HELPER_LOG_NAME: &str = "update-helper.log";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +21,9 @@ pub struct PrepareUpdateResult {
     pub installer_path: String,
     pub install_root: String,
     pub current_pid: u32,
+    pub signature_status: String,
+    pub download_unblocked: bool,
+    pub helper_log_path: String,
 }
 
 fn normalized_sha256(value: &str) -> Result<String> {
@@ -103,6 +107,66 @@ fn powershell_hash(path: &Path) -> Result<String> {
 }
 
 #[cfg(windows)]
+fn powershell_signature_status(path: &Path) -> Result<String> {
+    use std::process::Command;
+
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "$ErrorActionPreference='Stop'; (Get-AuthenticodeSignature -LiteralPath $env:GPTLOCK_INSTALLER_PATH).Status.ToString()",
+        ])
+        .env("GPTLOCK_INSTALLER_PATH", path)
+        .output()
+        .context("failed to inspect installer signature / 无法检查安装器数字签名")?;
+    if !output.status.success() {
+        bail!(
+            "installer signature inspection failed / 安装器数字签名检查失败: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let status = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok(if status.is_empty() {
+        "Unknown".to_owned()
+    } else {
+        status
+    })
+}
+
+#[cfg(windows)]
+fn unblock_verified_download(path: &Path) -> Result<bool> {
+    use std::process::Command;
+
+    // Chrome/Edge attach Mark-of-the-Web (Zone.Identifier) to downloaded EXEs. Launching
+    // an unsigned MOTW file from a hidden updater helper can strand the update behind an
+    // interactive Attachment Manager/SmartScreen prompt. We remove MOTW only *after* the
+    // file has matched the exact SHA-256 published by the trusted GitHub Release metadata.
+    // Manual downloads are never modified by GPTLock.
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "$ErrorActionPreference='Stop'; $hadZone = @((Get-Item -LiteralPath $env:GPTLOCK_INSTALLER_PATH -Stream Zone.Identifier -ErrorAction SilentlyContinue)).Count -gt 0; if ($hadZone) { Unblock-File -LiteralPath $env:GPTLOCK_INSTALLER_PATH }; $hasZone = @((Get-Item -LiteralPath $env:GPTLOCK_INSTALLER_PATH -Stream Zone.Identifier -ErrorAction SilentlyContinue)).Count -gt 0; if ($hasZone) { throw 'Zone.Identifier remains after Unblock-File' }; if ($hadZone) { 'removed' } else { 'absent' }",
+        ])
+        .env("GPTLOCK_INSTALLER_PATH", path)
+        .output()
+        .context("failed to unblock verified installer / 无法解除已校验安装器的下载阻止")?;
+    if !output.status.success() {
+        bail!(
+            "verified installer unblock failed / 已校验安装器解除下载阻止失败: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim() == "removed")
+}
+
+#[cfg(windows)]
 fn powershell_literal(value: &Path) -> Result<String> {
     let text = value
         .to_str()
@@ -111,15 +175,21 @@ fn powershell_literal(value: &Path) -> Result<String> {
 }
 
 #[cfg(windows)]
-fn launch_installer_helper(installer: &Path, install_root: &Path) -> Result<()> {
+fn launch_installer_helper(
+    installer: &Path,
+    install_root: &Path,
+    current_pid: u32,
+    helper_log_path: &Path,
+) -> Result<()> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let installer = powershell_literal(installer)?;
     let install_root = powershell_literal(install_root)?;
+    let helper_log = powershell_literal(helper_log_path)?;
     let command = format!(
-        "$ErrorActionPreference='Stop'; Start-Sleep -Milliseconds 1500; Get-Process -Name 'gptlock-core' -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Milliseconds 400; $arguments=@('/SUPPRESSMSGBOXES','/NORESTART','/VERYSILENT','/DIR=\"{install_root}\"'); $process=Start-Process -FilePath '{installer}' -ArgumentList $arguments -Wait -PassThru; exit $process.ExitCode"
+        "$ErrorActionPreference='Stop'; $log='{helper_log}'; function Write-UpdateLog([string]$message) {{ try {{ $stamp=(Get-Date).ToString('o'); Add-Content -LiteralPath $log -Value (\"$stamp $message\") -Encoding UTF8 }} catch {{ }} }}; try {{ Write-UpdateLog 'helper_started'; Start-Sleep -Milliseconds 1500; Stop-Process -Id {current_pid} -Force -ErrorAction SilentlyContinue; Write-UpdateLog 'current_core_stopped'; Start-Sleep -Milliseconds 400; $arguments=@('/SUPPRESSMSGBOXES','/NORESTART','/VERYSILENT','/DIR=\"{install_root}\"'); Write-UpdateLog 'installer_starting'; $process=Start-Process -FilePath '{installer}' -ArgumentList $arguments -Wait -PassThru; Write-UpdateLog (\"installer_exit=\" + $process.ExitCode); exit $process.ExitCode }} catch {{ Write-UpdateLog (\"helper_error=\" + $_.Exception.Message); exit 1 }}"
     );
 
     Command::new("powershell.exe")
@@ -160,13 +230,21 @@ pub fn prepare_update(request: PrepareUpdateRequest) -> Result<PrepareUpdateResu
         if actual_sha256 != expected_sha256 {
             bail!("installer SHA-256 mismatch / 安装器 SHA-256 校验失败");
         }
+
+        let signature_status = powershell_signature_status(&installer_path)?;
+        let download_unblocked = unblock_verified_download(&installer_path)?;
         let pid = std::process::id();
-        launch_installer_helper(&installer_path, &install_root)?;
+        let helper_log_path = install_root.join(UPDATE_HELPER_LOG_NAME);
+        launch_installer_helper(&installer_path, &install_root, pid, &helper_log_path)?;
+
         Ok(PrepareUpdateResult {
             target_version,
             installer_path: installer_path.to_string_lossy().into_owned(),
             install_root: install_root.to_string_lossy().into_owned(),
             current_pid: pid,
+            signature_status,
+            download_unblocked,
+            helper_log_path: helper_log_path.to_string_lossy().into_owned(),
         })
     }
 }
@@ -192,5 +270,15 @@ mod tests {
     fn rejects_wrong_installer_filename_before_touching_disk() {
         let error = validate_installer_path(Path::new("evil.exe")).unwrap_err();
         assert!(error.to_string().contains("filename"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unblock_verified_download_is_idempotent_without_motw() {
+        let directory = tempfile::tempdir().unwrap();
+        let installer = directory.path().join(INSTALLER_FILE_NAME);
+        std::fs::write(&installer, b"test installer placeholder").unwrap();
+        assert!(!unblock_verified_download(&installer).unwrap());
+        assert!(!unblock_verified_download(&installer).unwrap());
     }
 }
