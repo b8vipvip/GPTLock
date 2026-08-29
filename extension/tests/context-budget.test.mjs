@@ -100,3 +100,33 @@ test('learned profile keys are account-scoped and model-aware', () => {
   assert.notEqual(one, otherModel);
   assert.equal(budget.profileStorageKey(null, 'gpt-5.6-sol'), null);
 });
+
+
+test('full conversation metrics follow only the active current_node branch instead of counting abandoned forks', () => {
+  const payload = {
+    current_node: 'a2',
+    mapping: {
+      root: { parent: null, children: ['u1'], message: null },
+      u1: {
+        parent: 'root', children: ['a1', 'fork'],
+        message: { author: { role: 'user' }, content: { parts: ['hello active branch'] }, metadata: {} },
+      },
+      a1: {
+        parent: 'u1', children: ['a2'],
+        message: { author: { role: 'assistant' }, content: { parts: ['active answer'] }, metadata: {} },
+      },
+      a2: {
+        parent: 'a1', children: [],
+        message: { author: { role: 'user' }, content: { parts: ['latest user turn'] }, metadata: {} },
+      },
+      fork: {
+        parent: 'u1', children: [],
+        message: { author: { role: 'assistant' }, content: { parts: ['x'.repeat(100_000)] }, metadata: {} },
+      },
+    },
+  };
+  const metrics = budget.extractConversationMetrics(payload);
+  assert.equal(metrics.messageCount, 3);
+  assert.ok(metrics.characters < 1_000);
+  assert.ok(metrics.tokens > 10);
+});

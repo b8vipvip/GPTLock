@@ -20,6 +20,9 @@
   const RESPONSE_SETTLE_MS = 1_200;
   const ACCOUNT_SCOPE_REFRESH_MS = 5 * 60 * 1000;
   const ACCOUNT_FETCH_TIMEOUT_MS = 4_000;
+  const CONVERSATION_FETCH_TIMEOUT_MS = 5_000;
+  const CONVERSATION_METRICS_REFRESH_MS = 5_000;
+  const CONVERSATION_METRICS_MAX_AGE_MS = 30_000;
   const LEARNING_HEADROOM_RATIO = 0.06;
   const LEARNING_HEADROOM_MIN_TOKENS = 8_192;
   const LEARNING_HEADROOM_MAX_TOKENS = 128_000;
@@ -79,6 +82,9 @@
   let activeProfileKey = null;
   let profileLoadSequence = 0;
   let lastLoadedProfileModel = null;
+  let conversationMetricsCache = null;
+  let conversationMetricsCheckedAt = 0;
+  let conversationMetricsPromise = null;
 
   function normalizeModelId(value) {
     const model = String(value ?? '').trim().toLowerCase();
@@ -194,6 +200,91 @@
     };
   }
 
+  function conversationMessageText(message) {
+    const content = message?.content;
+    if (!content || typeof content !== 'object') return '';
+    const pieces = [];
+    const append = (value) => {
+      if (typeof value === 'string' && value) pieces.push(value);
+    };
+    if (Array.isArray(content.parts)) {
+      for (const part of content.parts) {
+        if (typeof part === 'string') append(part);
+        else if (part && typeof part === 'object') {
+          append(part.text);
+          append(part.content);
+          append(part.result);
+          append(part.output);
+        }
+      }
+    }
+    append(content.text);
+    append(content.result);
+    append(content.output);
+    return pieces.join('\n');
+  }
+
+  function conversationMessageMediaCounts(message) {
+    const content = message?.content;
+    let images = 0;
+    let attachments = 0;
+    if (content && typeof content === 'object' && Array.isArray(content.parts)) {
+      for (const part of content.parts) {
+        if (!part || typeof part !== 'object') continue;
+        const kind = String(part.content_type || part.type || '').toLowerCase();
+        if (part.asset_pointer || kind.includes('image')) images += 1;
+        else if (kind.includes('file') || kind.includes('attachment')) attachments += 1;
+      }
+    }
+    const metadataAttachments = message?.metadata?.attachments;
+    if (Array.isArray(metadataAttachments)) attachments += metadataAttachments.length;
+    return {
+      images: Math.min(32, images),
+      attachments: Math.min(32, attachments),
+    };
+  }
+
+  function activeConversationMessages(payload) {
+    const mapping = payload?.mapping;
+    let cursor = String(payload?.current_node || '').trim();
+    if (!mapping || typeof mapping !== 'object' || !cursor) return [];
+    const reversed = [];
+    const seen = new Set();
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      const node = mapping[cursor];
+      if (!node || typeof node !== 'object') break;
+      if (node.message && typeof node.message === 'object') reversed.push(node.message);
+      cursor = String(node.parent || '').trim();
+    }
+    return reversed.reverse();
+  }
+
+  function extractConversationMetrics(payload) {
+    const messages = activeConversationMessages(payload);
+    if (!messages.length) return null;
+    let tokens = 0;
+    let characters = 0;
+    let countedMessages = 0;
+    for (const message of messages) {
+      const text = conversationMessageText(message);
+      const media = conversationMessageMediaCounts(message);
+      if (!text && media.images === 0 && media.attachments === 0) continue;
+      characters += text.length;
+      tokens += estimateTextTokens(text)
+        + (media.images * IMAGE_TOKEN_ESTIMATE)
+        + (media.attachments * ATTACHMENT_TOKEN_ESTIMATE)
+        + MESSAGE_OVERHEAD_TOKENS;
+      countedMessages += 1;
+    }
+    if (!countedMessages) return null;
+    return {
+      tokens: Math.max(0, Math.ceil(tokens)),
+      characters: Math.max(0, Math.ceil(characters)),
+      messageCount: countedMessages,
+    };
+  }
+
   function profileStorageKey(accountScope, model) {
     const account = String(accountScope ?? '').trim();
     const normalizedModel = normalizeModelId(model);
@@ -252,6 +343,7 @@
     learningHeadroomTokens,
     profileStorageKey,
     nextLearnedProfile,
+    extractConversationMetrics,
     snapshot: () => lastSnapshot,
     learningProfile: () => activeProfile,
   };
@@ -351,14 +443,73 @@
     return normalizeModelId(lastKnownModel) || pageModel || null;
   }
 
+  function currentConversationId() {
+    try {
+      return new URL(location.href).pathname.match(/(?:^|\/)c\/([a-zA-Z0-9_-]+)/)?.[1] || null;
+    } catch {
+      return null;
+    }
+  }
+
   function currentConversationKey() {
     try {
       const url = new URL(location.href);
-      const conversation = url.pathname.match(/(?:^|\/)c\/([a-zA-Z0-9_-]+)/);
-      return conversation ? `conversation:${conversation[1]}` : `page:${url.pathname}`;
+      const conversationId = currentConversationId();
+      return conversationId ? `conversation:${conversationId}` : `page:${url.pathname}`;
     } catch {
       return 'unknown';
     }
+  }
+
+  async function fetchConversationMetrics(conversationId) {
+    if (!conversationId) return null;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), CONVERSATION_FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(`/backend-api/conversation/${encodeURIComponent(conversationId)}`, {
+        method: 'GET',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: { accept: 'application/json' },
+        signal: controller.signal,
+      });
+      if (!response.ok) return null;
+      const payload = await response.json();
+      return extractConversationMetrics(payload);
+    } catch {
+      return null;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
+  async function refreshConversationMetrics(force = false) {
+    const conversationId = currentConversationId();
+    const conversationKey = currentConversationKey();
+    if (!conversationId) {
+      conversationMetricsCache = null;
+      conversationMetricsCheckedAt = Date.now();
+      return null;
+    }
+    const now = Date.now();
+    if (
+      !force
+      && conversationMetricsCache?.conversationKey === conversationKey
+      && now - conversationMetricsCheckedAt < CONVERSATION_METRICS_REFRESH_MS
+    ) return conversationMetricsCache;
+    if (conversationMetricsPromise) return conversationMetricsPromise;
+    conversationMetricsPromise = (async () => {
+      const metrics = await fetchConversationMetrics(conversationId);
+      conversationMetricsCheckedAt = Date.now();
+      if (metrics && currentConversationKey() === conversationKey) {
+        conversationMetricsCache = { ...metrics, conversationKey, measuredAt: new Date().toISOString() };
+        scheduleRefresh();
+      }
+      return conversationMetricsCache;
+    })().finally(() => {
+      conversationMetricsPromise = null;
+    });
+    return conversationMetricsPromise;
   }
 
   function formatCompactTokens(tokens) {
@@ -384,12 +535,24 @@
 
   function snapshotNow() {
     const messages = conversationElements();
-    const history = messages.reduce((total, element) => {
+    const domHistory = messages.reduce((total, element) => {
       const metrics = elementMetrics(element);
       total.tokens += metrics.tokens;
       total.characters += metrics.characters;
       return total;
     }, { tokens: 0, characters: 0 });
+    const cacheFresh = Boolean(
+      conversationMetricsCache
+      && conversationMetricsCache.conversationKey === currentConversationKey()
+      && Date.now() - conversationMetricsCheckedAt <= CONVERSATION_METRICS_MAX_AGE_MS
+    );
+    const history = cacheFresh ? {
+      tokens: Math.max(domHistory.tokens, conversationMetricsCache.tokens),
+      characters: Math.max(domHistory.characters, conversationMetricsCache.characters),
+    } : domHistory;
+    const historyMessageCount = cacheFresh
+      ? Math.max(messages.length, conversationMetricsCache.messageCount)
+      : messages.length;
     const composer = findComposer();
     const draft = composerText(composer);
     const composerRoot = composer?.closest('form') || composer?.parentElement;
@@ -410,8 +573,9 @@
       ...budget,
       model: windowProfile.model,
       contextWindowSource: windowProfile.source,
-      messageCount: messages.length,
+      messageCount: historyMessageCount,
       historyCharacters: history.characters,
+      historyMeasurementSource: cacheFresh ? 'conversation-tree+dom-reconcile' : 'dom-fallback',
       draftCharacters: draft.length,
       fullConversationCharacters: history.characters + draft.length,
       fullConversationTokens: budget.usedTokens,
@@ -436,7 +600,7 @@
       : '保守回退窗口';
     const rows = [
       `上下文额度：${snapshot.percent.toFixed(1)}%（本地完整聊天估算）`,
-      `当前完整聊天：约 ${formatCompactTokens(snapshot.fullConversationTokens)} tokens · ${formatCompactNumber(snapshot.fullConversationCharacters)} 字符 · ${snapshot.messageCount} 条消息`,
+      `当前完整聊天：约 ${formatCompactTokens(snapshot.fullConversationTokens)} tokens · ${formatCompactNumber(snapshot.fullConversationCharacters)} 字符 · ${snapshot.messageCount} 条消息 · ${snapshot.historyMeasurementSource === 'conversation-tree+dom-reconcile' ? '完整活动分支' : 'DOM 回退'}`,
       `基础安全预算：${formatCompactTokens(snapshot.baseSafeLimitTokens)} / 公开窗口 ${formatCompactTokens(snapshot.nominalLimitTokens)}`,
     ];
     if (snapshot.adaptiveActive) {
@@ -454,7 +618,7 @@
       snapshot.accountScopeAvailable
         ? '账户学习：已建立本地匿名账户范围；成功超限发送会自动抬高该账户/模型的发送预算。'
         : '账户学习：尚未识别当前 ChatGPT 账户；识别成功前不会跨账户学习。',
-      '说明：插件统计当前页面完整聊天内容并做本地 token 估算；ChatGPT 隐藏系统提示、工具上下文、服务端压缩/裁剪和精确 tokenizer 不对扩展完整开放，因此“实测成功下限”代表该可见聊天长度下服务仍成功生成，不等同于官方物理上下文窗口。',
+      '说明：插件优先读取当前会话 conversation tree 并沿 current_node 活动分支统计，再与 DOM 新内容取较大值；读取失败时退回 DOM。ChatGPT 隐藏系统提示、服务端压缩/裁剪和精确 tokenizer 仍不对扩展完整开放，因此“实测成功下限”代表该活动会话长度下服务仍成功生成，不等同于官方物理上下文窗口。',
     );
     return rows.join('\n');
   }
@@ -509,6 +673,7 @@
     refreshTimer = null;
     try {
       publishSnapshot(snapshotNow());
+      void refreshConversationMetrics();
       void maybeFinalizeBypassLearning();
     } catch {
       // ChatGPT DOM can be replaced during navigation; the periodic refresh self-heals.
@@ -858,10 +1023,8 @@
       pendingBypass = null;
       return null;
     }
-    const confirmedConversationTokens = Math.max(
-      Math.ceil(postSnapshot.historyTokens || 0),
-      Math.ceil(pendingBypass.preSnapshot?.usedTokens || 0),
-    );
+    // A successful answer proves the input accepted at send time, not the answer-inclusive post state.
+    const confirmedConversationTokens = Math.ceil(pendingBypass.preSnapshot?.usedTokens || 0);
     const windowProfile = contextWindowForModel(model);
     const baseSafeLimitTokens = Math.floor(windowProfile.tokens * SAFETY_BUDGET_RATIO);
     try {
@@ -873,7 +1036,7 @@
         accountScopeSource,
         model,
         confirmedConversationTokens,
-        confirmedCharacters: postSnapshot.historyCharacters,
+        confirmedCharacters: pendingBypass.preSnapshot?.fullConversationCharacters || 0,
         conversationKey: postSnapshot.conversationKey,
         measuredAt: new Date().toISOString(),
         baseSafeLimitTokens,
@@ -947,6 +1110,7 @@
     }
     if (!pending.accountScope) return;
 
+    await refreshConversationMetrics(true);
     recomputeSnapshotOnly();
     const postSnapshot = lastSnapshot;
     if (!postSnapshot) return;
@@ -1026,21 +1190,25 @@
     subtree: true,
     characterData: true,
   });
-  window.addEventListener('popstate', () => {
+  function handleConversationNavigation() {
     pendingBypass = null;
+    conversationMetricsCache = null;
+    conversationMetricsCheckedAt = 0;
     scheduleRefresh();
-    void refreshAccountScope();
-  });
-  window.addEventListener('hashchange', () => {
-    pendingBypass = null;
-    scheduleRefresh();
-    void refreshAccountScope();
-  });
+    void refreshAccountScope(true);
+    void refreshConversationMetrics(true);
+  }
+  window.addEventListener('popstate', handleConversationNavigation);
+  window.addEventListener('hashchange', handleConversationNavigation);
   window.addEventListener('resize', scheduleRefresh);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') void refreshAccountScope();
+    if (document.visibilityState === 'visible') {
+      void refreshAccountScope(true);
+      void refreshConversationMetrics(true);
+    }
   });
   window.setInterval(recompute, PERIODIC_REFRESH_MS);
   void refreshAccountScope(true);
+  void refreshConversationMetrics(true);
   recompute();
 })();
