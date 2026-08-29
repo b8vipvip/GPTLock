@@ -7,6 +7,8 @@ import {
   isInstallActionReady,
   normalizeVersion,
   parseLatestRelease,
+  RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION,
+  supportsReliableWindowsOneClickUpdate,
   updateStatusEventName,
   WINDOWS_INSTALLER_NAME,
 } from '../update-manager.js';
@@ -17,6 +19,16 @@ test('normalizes and compares release versions', () => {
   assert.equal(compareVersions('0.4.0', '0.4'), 0);
   assert.equal(compareVersions('0.3.9', '0.4.0'), -1);
   assert.equal(compareVersions('bad', '0.4.0'), null);
+});
+
+test('requires the safe updater core baseline for Windows one-click installs', () => {
+  assert.equal(RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION, '0.5.6');
+  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.5'), false);
+  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.6'), true);
+  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.7'), true);
+  assert.equal(supportsReliableWindowsOneClickUpdate('1.0.0'), true);
+  assert.equal(supportsReliableWindowsOneClickUpdate('bad'), false);
+  assert.equal(supportsReliableWindowsOneClickUpdate(null), false);
 });
 
 test('parses a verified Windows installer from GitHub release metadata', () => {

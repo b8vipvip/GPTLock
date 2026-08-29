@@ -2,6 +2,8 @@ import { classifyNativeError, nativeHelp, RELEASES_URL } from './native-status.j
 import {
   compareVersions,
   fetchLatestRelease,
+  RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION,
+  supportsReliableWindowsOneClickUpdate,
   WINDOWS_DOWNLOAD_FILENAME,
 } from './update-manager.js';
 
@@ -188,9 +190,21 @@ function renderUpdate(release = latestRelease) {
     return;
   }
   if (release.updateAvailable) {
-    elements.updateDetail.textContent = `当前 ${currentVersion} · 最新 ${release.latestVersion} · ${platform?.os === 'win' ? '支持一键更新' : '当前系统请从发布页安装'}`;
+    const nativeVersion = lastState?.nativeStatus?.version ?? null;
+    const canOneClick = platform?.os === 'win'
+      && Boolean(lastState?.nativeStatus?.connected)
+      && supportsReliableWindowsOneClickUpdate(nativeVersion);
+    if (canOneClick) {
+      elements.updateDetail.textContent = `当前 ${currentVersion} · 最新 ${release.latestVersion} · Core ${nativeVersion} 支持安全一键更新`;
+      elements.installUpdate.textContent = '立即更新';
+    } else if (platform?.os === 'win') {
+      elements.updateDetail.textContent = `当前 ${currentVersion} · 最新 ${release.latestVersion} · Core ${nativeVersion || '未知'} 低于安全更新基线 ${RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION}；需一次性从发布页安装`;
+      elements.installUpdate.textContent = '打开发布页';
+    } else {
+      elements.updateDetail.textContent = `当前 ${currentVersion} · 最新 ${release.latestVersion} · 当前系统请从发布页安装`;
+      elements.installUpdate.textContent = '打开发布页';
+    }
     elements.installUpdate.hidden = false;
-    elements.installUpdate.textContent = platform?.os === 'win' ? '立即更新' : '打开发布页';
     return;
   }
   const comparison = compareVersions(currentVersion, release.latestVersion);
@@ -213,6 +227,7 @@ async function renderStoredUpdateStatus() {
 
 function render(state) {
   lastState = state;
+  renderUpdate(latestRelease);
   elements.version.textContent = state.extensionVersion || '';
   elements.currentVersion.textContent = state.extensionVersion || chrome.runtime.getManifest().version;
   const native = state.nativeStatus ?? {};
@@ -378,6 +393,12 @@ async function installUpdate() {
     const state = lastState || await sendMessage({ type: 'GPTLOCK_GET_STATE' });
     if (!state?.nativeStatus?.connected) {
       throw new Error('本地核心离线，无法执行一键安装；请先点击“重新连接”或运行一次安装器修复 / Native Core is offline');
+    }
+    if (!supportsReliableWindowsOneClickUpdate(state.nativeStatus.version)) {
+      elements.message.textContent = `当前 Core ${state.nativeStatus.version || '未知'} 低于安全更新基线 ${RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION}；请完成一次性手工升级。`;
+      await chrome.tabs.create({ url: release.releaseUrl || RELEASES_URL });
+      window.close();
+      return;
     }
 
     elements.updateDetail.textContent = `正在下载 ${release.latestVersion} 安装器…`;

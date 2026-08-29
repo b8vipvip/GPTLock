@@ -4,6 +4,12 @@ GPTLock 的 Windows 一键更新会先验证 GitHub Release 元数据中公布�
 
 手工从浏览器下载并双击 `GPTLockSetup-x64.exe` 时，Windows 是否显示“未知发布者”取决于 Authenticode 数字签名。SHA-256 校验不能替代发布者签名。要让手工安装也显示可信发布者，需要为 Release 配置受 Windows 信任的代码签名证书。
 
+## 首次引导升级 / Bootstrap Upgrade
+
+`v0.5.5` 及更早版本的本地 Core 本身不具备“SHA-256 校验后解除 Mark-of-the-Web”的能力，因此旧 Core 无法通过发布一个新版本来被追溯修复。也就是说，从 `v0.5.5`（或更早）第一次跨到 `v0.5.6+` 时，如果 Windows 对未签名安装器触发 SmartScreen，必须完成一次人工确认/安装；或者使用公开受信任的 Authenticode 签名安装包。
+
+从 `v0.5.6` Core 起，安全一键更新基线已经建立：安装器先匹配 GitHub Release 的精确 SHA-256，再移除该已验证下载文件的 `Zone.Identifier`，之后才启动静默安装。扩展也会检查本地 Core 版本；低于 `0.5.6` 时不会再错误触发旧的一键更新链路，而是引导到发布页完成一次性 bootstrap。
+
 ## GitHub Actions Secrets
 
 Release 工作流支持以下仓库 Secrets：

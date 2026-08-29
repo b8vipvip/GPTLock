@@ -5,6 +5,7 @@ export const RELEASES_URL = 'https://github.com/b8vipvip/GPTLock/releases/latest
 export const WINDOWS_INSTALLER_NAME = 'GPTLockSetup-x64.exe';
 export const WINDOWS_DOWNLOAD_FILENAME = 'GPTLock/GPTLockSetup-x64.exe';
 export const UPDATE_STATUS_KEY = 'gptlockUiUpdateStatus';
+export const RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION = '0.5.6';
 
 function numericParts(value) {
   const normalized = String(value || '').trim().replace(/^v/i, '');
@@ -29,6 +30,11 @@ export function compareVersions(left, right) {
     if (leftValue < rightValue) return -1;
   }
   return 0;
+}
+
+export function supportsReliableWindowsOneClickUpdate(nativeVersion) {
+  const comparison = compareVersions(nativeVersion, RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION);
+  return comparison === 0 || comparison === 1;
 }
 
 function sha256FromDigest(value) {
