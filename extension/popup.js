@@ -24,6 +24,12 @@ const elements = {
   pageState: document.getElementById('pageState'),
   responseState: document.getElementById('responseState'),
   enabled: document.getElementById('enabled'),
+  licenseBadge: document.getElementById('licenseBadge'),
+  licensePurchase: document.getElementById('licensePurchase'),
+  licenseDetail: document.getElementById('licenseDetail'),
+  licenseCode: document.getElementById('licenseCode'),
+  licenseActivate: document.getElementById('licenseActivate'),
+  licenseMessage: document.getElementById('licenseMessage'),
   autoVerify: document.getElementById('autoVerify'),
   reconnect: document.getElementById('reconnect'),
   logs: document.getElementById('logs'),
@@ -41,6 +47,8 @@ const elements = {
 
 let lastState = null;
 let latestRelease = null;
+const LICENSE_CONFIG_URL = 'https://gptlock.mv3.cn/api/v1/config';
+let purchaseUrl = null;
 let updateBusy = false;
 let platform = null;
 
@@ -178,6 +186,72 @@ function autoReasonText(auto) {
   return reasons[auto?.reason] || auto?.reason || null;
 }
 
+function safeHttpsUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) return null;
+    return url.href;
+  } catch { return null; }
+}
+
+function renderLicense(license) {
+  if (!elements.licenseBadge) return;
+  const authorized = Boolean(license?.authorized);
+  const grace = license?.status === 'grace';
+  elements.licenseBadge.textContent = authorized ? (grace ? '离线宽限' : '已授权') : '未授权';
+  elements.licenseBadge.className = `license-badge ${authorized ? 'good' : (license?.status === 'invalid' ? 'bad' : 'wait')}`;
+  elements.enabled.disabled = !authorized;
+  if (authorized) {
+    const expires = license?.license?.expiresAt ? new Date(license.license.expiresAt).toLocaleString() : '—';
+    const usage = license?.license?.usage;
+    const limits = license?.license?.limits;
+    const usageText = usage && limits ? `设备 ${usage.devices}/${limits.devices} · 窗口 ${usage.windows}/${limits.windows}` : '';
+    elements.licenseDetail.textContent = [usageText, `有效期至 ${expires}`].filter(Boolean).join(' · ');
+    elements.licenseMessage.textContent = grace ? '授权服务器暂时不可达，当前处于短时离线宽限。' : '';
+  } else {
+    elements.licenseDetail.textContent = '请输入获得的授权码。授权码仅发送到 GPTLock 授权服务器验证。';
+    elements.licenseMessage.textContent = license?.lastError ? `授权状态：${license.lastError}` : '';
+  }
+}
+
+async function loadLicenseConfig() {
+  try {
+    const response = await fetch(LICENSE_CONFIG_URL, { cache: 'no-store' });
+    const data = await response.json().catch(() => ({}));
+    purchaseUrl = response.ok ? safeHttpsUrl(data.purchaseUrl) : null;
+    elements.licensePurchase.disabled = !purchaseUrl;
+    elements.licensePurchase.innerHTML = purchaseUrl
+      ? '获取授权码 <small>Get license</small>'
+      : '获取授权码（暂未配置）';
+    elements.licensePurchase.title = purchaseUrl ? '打开服务端配置的授权获取页面' : '服务端尚未配置授权获取地址';
+  } catch {
+    purchaseUrl = null;
+    elements.licensePurchase.disabled = true;
+    elements.licensePurchase.textContent = '获取授权码（配置读取失败）';
+  }
+}
+
+async function activateLicense() {
+  const code = String(elements.licenseCode.value || '').trim();
+  if (!code) {
+    elements.licenseMessage.textContent = '请先输入授权码。';
+    return;
+  }
+  elements.licenseActivate.disabled = true;
+  elements.licenseMessage.textContent = '正在验证授权码…';
+  try {
+    const license = await sendMessage({ type: 'GPTLOCK_LICENSE_ACTIVATE', code });
+    elements.licenseCode.value = '';
+    renderLicense(license);
+    elements.licenseMessage.textContent = '授权成功。';
+    await load();
+  } catch (error) {
+    elements.licenseMessage.textContent = `授权失败：${error.message}`;
+  } finally {
+    elements.licenseActivate.disabled = false;
+  }
+}
+
 function renderUpdate(release = latestRelease) {
   const currentVersion = chrome.runtime.getManifest().version;
   elements.currentVersion.textContent = currentVersion;
@@ -227,6 +301,7 @@ async function renderStoredUpdateStatus() {
 
 function render(state) {
   lastState = state;
+  renderLicense(state?.license);
   renderUpdate(latestRelease);
   elements.version.textContent = state.extensionVersion || '';
   elements.currentVersion.textContent = state.extensionVersion || chrome.runtime.getManifest().version;
@@ -468,6 +543,18 @@ async function installUpdate() {
   }
 }
 
+elements.licensePurchase?.addEventListener('click', () => {
+  if (!purchaseUrl) {
+    elements.licenseMessage.textContent = '服务端尚未配置获取授权码地址。';
+    return;
+  }
+  void chrome.tabs.create({ url: purchaseUrl }).then(() => window.close());
+});
+elements.licenseActivate?.addEventListener('click', () => { void activateLicense(); });
+elements.licenseCode?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') void activateLicense();
+});
+
 elements.enabled.addEventListener('change', () => {
   elements.enabled.disabled = true;
   elements.message.textContent = elements.enabled.checked
@@ -526,7 +613,7 @@ elements.logs.addEventListener('click', () => {
   void sendMessage({ type: 'GPTLOCK_OPEN_DIAGNOSTICS' }).then(() => window.close());
 });
 
-void Promise.all([load(), getPlatformInfo().then((info) => { platform = info; renderUpdate(); })]).catch((error) => {
+void Promise.all([load(), loadLicenseConfig(), getPlatformInfo().then((info) => { platform = info; renderUpdate(); })]).catch((error) => {
   elements.guardTitle.textContent = '读取失败 / Failed to load';
   elements.guardDetail.textContent = error.message;
   elements.verdict.textContent = '错误';

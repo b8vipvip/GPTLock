@@ -38,6 +38,9 @@ test('license server enforces limits, securely exposes copyable codes, and expor
       GPTLOCK_LICENSE_PUBLIC_ORIGIN: `http://127.0.0.1:${port}`,
       GPTLOCK_LICENSE_ADMIN_PASSWORD: 'test-password-12345',
       GPTLOCK_LICENSE_SECRET: '0123456789abcdef0123456789abcdef',
+      GPTLOCK_LICENSE_PURCHASE_URL: 'https://example.com/get-license',
+      GPTLOCK_LICENSE_ALLOWED_EXTENSION_IDS: 'bhchcpeodphgjfjoookncemnamdbfcof',
+      GPTLOCK_LICENSE_ADMIN_LOGIN_MAX_ATTEMPTS: '3',
       GPTLOCK_UPDATE_DATA_DIR: dir,
       GPTLOCK_UPDATE_ALLOW_WITHOUT_SYSTEMD: '1',
     },
@@ -45,9 +48,28 @@ test('license server enforces limits, securely exposes copyable codes, and expor
   let inspectDb;
   try {
     await waitForHealth(port, child);
-    const login = await fetch(`http://127.0.0.1:${port}/admin/api/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: 'test-password-12345' }) });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const failed = await fetch(`http://127.0.0.1:${port}/admin/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.10' }, body: JSON.stringify({ password: 'wrong-password' }) });
+      assert.equal(failed.status, 401);
+    }
+    const limited = await fetch(`http://127.0.0.1:${port}/admin/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.10' }, body: JSON.stringify({ password: 'wrong-password' }) });
+    assert.equal(limited.status, 429);
+    const login = await fetch(`http://127.0.0.1:${port}/admin/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.11' }, body: JSON.stringify({ password: 'test-password-12345' }) });
     assert.equal(login.status, 200);
     const cookie = login.headers.get('set-cookie').split(';')[0];
+    const initialConfig = await fetch(`http://127.0.0.1:${port}/api/v1/config`, { headers: { origin: 'chrome-extension://bhchcpeodphgjfjoookncemnamdbfcof' } });
+    assert.equal(initialConfig.status, 200);
+    assert.equal(initialConfig.headers.get('access-control-allow-origin'), 'chrome-extension://bhchcpeodphgjfjoookncemnamdbfcof');
+    assert.equal((await initialConfig.json()).purchaseUrl, 'https://example.com/get-license');
+    const foreignConfig = await fetch(`http://127.0.0.1:${port}/api/v1/config`, { headers: { origin: 'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } });
+    assert.equal(foreignConfig.headers.get('access-control-allow-origin'), null);
+    const invalidSetting = await fetch(`http://127.0.0.1:${port}/admin/api/settings`, { method: 'PUT', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify({ purchaseUrl: 'javascript:alert(1)' }) });
+    assert.equal(invalidSetting.status, 400);
+    const saveSetting = await fetch(`http://127.0.0.1:${port}/admin/api/settings`, { method: 'PUT', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify({ purchaseUrl: 'https://example.net/license#ignored' }) });
+    assert.equal(saveSetting.status, 200);
+    const publicConfig = await fetch(`http://127.0.0.1:${port}/api/v1/config`, { headers: { origin: 'chrome-extension://bhchcpeodphgjfjoookncemnamdbfcof' } });
+    assert.equal((await publicConfig.json()).purchaseUrl, 'https://example.net/license');
+
     const create = await fetch(`http://127.0.0.1:${port}/admin/api/licenses`, { method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify({ maxDevices: 1, maxWindows: 2, expiresAt: new Date(Date.now() + 86400000).toISOString() }) });
     const created = await create.json();
     assert.equal(created.ok, true);
@@ -70,7 +92,14 @@ test('license server enforces limits, securely exposes copyable codes, and expor
     assert.equal(codeResponse.status, 200);
     assert.equal((await codeResponse.json()).code, created.code);
 
-    const activate = await fetch(`http://127.0.0.1:${port}/api/v1/licenses/activate`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'chrome-extension://testextensionid' }, body: JSON.stringify({ code: created.code, deviceId: 'device-12345678', browserInstanceId: 'browser-12345678', extensionId: 'testextensionid', extensionVersion: 'test' }) });
+    const rejectedExtension = await fetch(`http://127.0.0.1:${port}/api/v1/licenses/activate`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }, body: JSON.stringify({ code: created.code, deviceId: 'device-reject01', browserInstanceId: 'browser-reject01', extensionId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', extensionVersion: 'test' }) });
+    assert.equal(rejectedExtension.status, 403);
+    assert.equal((await rejectedExtension.json()).error.code, 'EXTENSION_NOT_ALLOWED');
+
+    const mismatchedOrigin = await fetch(`http://127.0.0.1:${port}/api/v1/licenses/activate`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }, body: JSON.stringify({ code: created.code, deviceId: 'device-reject02', browserInstanceId: 'browser-reject02', extensionId: 'bhchcpeodphgjfjoookncemnamdbfcof', extensionVersion: 'test' }) });
+    assert.equal(mismatchedOrigin.status, 403);
+
+    const activate = await fetch(`http://127.0.0.1:${port}/api/v1/licenses/activate`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'chrome-extension://bhchcpeodphgjfjoookncemnamdbfcof' }, body: JSON.stringify({ code: created.code, deviceId: 'device-12345678', browserInstanceId: 'browser-12345678', extensionId: 'bhchcpeodphgjfjoookncemnamdbfcof', extensionVersion: 'test' }) });
     const activated = await activate.json();
     assert.equal(activated.ok, true);
     assert.equal(Object.hasOwn(activated.license, 'code'), false);
@@ -81,7 +110,7 @@ test('license server enforces limits, securely exposes copyable codes, and expor
     assert.deepEqual(beat.allowedWindowKeys, ['browser-12345678:1', 'browser-12345678:2']);
     assert.deepEqual(beat.deniedWindowKeys, ['browser-12345678:3']);
 
-    const secondDevice = await fetch(`http://127.0.0.1:${port}/api/v1/licenses/activate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: created.code, deviceId: 'device-87654321', browserInstanceId: 'browser-87654321' }) });
+    const secondDevice = await fetch(`http://127.0.0.1:${port}/api/v1/licenses/activate`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'chrome-extension://bhchcpeodphgjfjoookncemnamdbfcof' }, body: JSON.stringify({ code: created.code, deviceId: 'device-87654321', browserInstanceId: 'browser-87654321', extensionId: 'bhchcpeodphgjfjoookncemnamdbfcof' }) });
     assert.equal(secondDevice.status, 409);
     assert.equal((await secondDevice.json()).error.code, 'DEVICE_LIMIT');
 
