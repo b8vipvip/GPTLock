@@ -149,18 +149,79 @@ jobs:
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+          GPTLOCK_CODESIGN_PFX_BASE64: ${{ secrets.GPTLOCK_CODESIGN_PFX_BASE64 }}
+          GPTLOCK_CODESIGN_PFX_PASSWORD: ${{ secrets.GPTLOCK_CODESIGN_PFX_PASSWORD }}
+          GPTLOCK_CODESIGN_TIMESTAMP_URL: ${{ secrets.GPTLOCK_CODESIGN_TIMESTAMP_URL }}
         run: |
+          $ErrorActionPreference = 'Stop'
           $version = $env:RELEASE_VERSION
           $manifest = Get-Content 'extension\manifest.json' -Raw | ConvertFrom-Json
           if ($manifest.version -ne $version) { throw 'Tag and extension version differ.' }
-          cargo build --locked --release --manifest-path native-core/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-          if (-not (Test-Path -LiteralPath $iscc)) {
-            choco install innosetup --yes --no-progress
+
+          $signingEnabled = -not [string]::IsNullOrWhiteSpace($env:GPTLOCK_CODESIGN_PFX_BASE64)
+          $certPath = Join-Path $env:RUNNER_TEMP 'gptlock-codesign.pfx'
+          $timestampUrl = if ([string]::IsNullOrWhiteSpace($env:GPTLOCK_CODESIGN_TIMESTAMP_URL)) {
+            'http://timestamp.digicert.com'
+          } else {
+            $env:GPTLOCK_CODESIGN_TIMESTAMP_URL
           }
-          & $iscc "/DMyAppVersion=$version" 'packaging\windows\GPTLock.iss'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          function Find-SignTool {
+            $root = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+            $tool = Get-ChildItem -Path $root -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+            if (-not $tool) { throw 'signtool.exe was not found on the Windows runner.' }
+            return $tool.FullName
+          }
+
+          function Sign-GPTLockFile([string]$Path, [string]$SignTool) {
+            & $SignTool sign /fd SHA256 /td SHA256 /tr $timestampUrl /f $certPath /p $env:GPTLOCK_CODESIGN_PFX_PASSWORD $Path
+            if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed: $Path" }
+            $signature = Get-AuthenticodeSignature -LiteralPath $Path
+            if ($signature.Status -ne 'Valid') {
+              throw "Authenticode signature is not valid for $Path: $($signature.Status)"
+            }
+            Write-Host "Authenticode signature valid: $Path"
+          }
+
+          try {
+            if ($signingEnabled) {
+              if ([string]::IsNullOrWhiteSpace($env:GPTLOCK_CODESIGN_PFX_PASSWORD)) {
+                throw 'GPTLOCK_CODESIGN_PFX_PASSWORD must be configured when signing certificate is present.'
+              }
+              [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:GPTLOCK_CODESIGN_PFX_BASE64))
+              $signTool = Find-SignTool
+              Write-Host 'Windows Authenticode signing is enabled.'
+            } else {
+              $signTool = $null
+              Write-Warning 'Windows code-signing certificate is not configured. Setup will be unsigned and manual downloads may trigger SmartScreen.'
+            }
+
+            cargo build --locked --release --manifest-path native-core/Cargo.toml
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            if ($signingEnabled) {
+              Sign-GPTLockFile 'native-core\target\release\gptlock-core.exe' $signTool
+            }
+
+            $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+            if (-not (Test-Path -LiteralPath $iscc)) {
+              choco install innosetup --yes --no-progress
+            }
+            & $iscc "/DMyAppVersion=$version" 'packaging\windows\GPTLock.iss'
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            if ($signingEnabled) {
+              Sign-GPTLockFile 'dist\windows\GPTLockSetup-x64.exe' $signTool
+            }
+          }
+          finally {
+            if (Test-Path -LiteralPath $certPath) {
+              Remove-Item -LiteralPath $certPath -Force
+            }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: release-windows
