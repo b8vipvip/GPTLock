@@ -1,0 +1,59 @@
+name: Temporary v0.5.6 Version Bump
+
+on:
+  push:
+    branches:
+      - release/v0.5.6
+
+permissions:
+  contents: write
+
+jobs:
+  bump-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/v0.5.6
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Bump source versions
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for name in ('extension/manifest.json', 'extension/package.json'):
+              path = Path(name)
+              data = json.loads(path.read_text(encoding='utf-8'))
+              if data.get('version') != '0.5.5':
+                  raise SystemExit(f'{name}: expected 0.5.5, got {data.get("version")}')
+              data['version'] = '0.5.6'
+              path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          cargo = Path('native-core/Cargo.toml')
+          text = cargo.read_text(encoding='utf-8')
+          old = 'version = "0.5.5"'
+          if old not in text:
+              raise SystemExit('native-core/Cargo.toml: expected 0.5.5')
+          cargo.write_text(text.replace(old, 'version = "0.5.6"', 1), encoding='utf-8')
+          PY
+      - name: Refresh Cargo lockfile with Cargo
+        run: cargo check --manifest-path native-core/Cargo.toml
+      - name: Verify extension and license tests
+        working-directory: extension
+        run: npm test
+      - name: Verify Rust tests
+        run: cargo test --locked --manifest-path native-core/Cargo.toml
+      - name: Remove temporary tooling
+        run: rm -f .github/workflows/_tmp-release-056.yml
+      - name: Commit final v0.5.6 metadata
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'release: GPTLock v0.5.6'
+          git push origin HEAD:release/v0.5.6
