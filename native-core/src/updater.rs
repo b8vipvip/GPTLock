@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 const INSTALLER_FILE_NAME: &str = "GPTLockSetup-x64.exe";
+#[cfg(windows)]
 const UPDATE_HELPER_LOG_NAME: &str = "update-helper.log";
 
 #[derive(Debug, Clone, Deserialize)]
