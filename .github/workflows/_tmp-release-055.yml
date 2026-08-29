@@ -1,0 +1,46 @@
+name: Temporary v0.5.5 Version Bump
+
+on:
+  push:
+    branches:
+      - release/v0.5.5
+
+permissions:
+  contents: write
+
+jobs:
+  bump-and-verify:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/v0.5.5
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Bump source versions
+        run: python3 tools/_tmp_bump_055.py
+      - name: Refresh Cargo lockfile with Cargo
+        working-directory: native-core
+        run: cargo check
+      - name: Verify release source tests
+        working-directory: extension
+        run: npm test
+      - name: Verify Rust tests
+        working-directory: native-core
+        run: cargo test --locked
+      - name: Remove temporary tooling
+        run: |
+          rm -f tools/_tmp_bump_055.py
+          rm -f .github/workflows/_tmp-release-055.yml
+      - name: Commit final v0.5.5 metadata
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "release: GPTLock v0.5.5"
+          git push origin HEAD:release/v0.5.5
