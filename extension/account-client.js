@@ -75,6 +75,7 @@ export function createAccountClient({ baseUrl = API_BASE } = {}) {
       const error = new Error(data.error?.message || `HTTP ${response.status}`);
       error.code = data.error?.code || `HTTP_${response.status}`;
       error.status = response.status;
+      error.details = data.error?.details && typeof data.error.details === 'object' ? data.error.details : null;
       throw error;
     }
     return data;
@@ -129,8 +130,8 @@ export function createAccountClient({ baseUrl = API_BASE } = {}) {
     return request('/api/v1/auth/verify-email', { method: 'POST', body: identity });
   }
 
-  async function login(email, password) {
-    const identity = await clientIdentity({ email, password });
+  async function login(email, password, replaceDeviceRecordIds = []) {
+    const identity = await clientIdentity({ email, password, replaceDeviceRecordIds });
     const data = await request('/api/v1/auth/login', { method: 'POST', body: identity });
     token = String(data.sessionToken || '');
     if (!token) throw new Error('登录响应缺少会话令牌');
@@ -185,6 +186,22 @@ export function createAccountClient({ baseUrl = API_BASE } = {}) {
     }
   }
 
+  async function security() {
+    return request('/api/v1/account/security', { auth: true });
+  }
+
+  async function releaseDevice(deviceRecordId) {
+    return request('/api/v1/account/devices/release', { method: 'POST', body: { deviceRecordId }, auth: true });
+  }
+
+  async function revokeSession(sessionId) {
+    return request('/api/v1/account/sessions/revoke', { method: 'POST', body: { sessionId }, auth: true });
+  }
+
+  async function revokeOtherSessions() {
+    return request('/api/v1/account/sessions/revoke-others', { method: 'POST', body: {}, auth: true });
+  }
+
   async function changePassword(currentPassword, newPassword) {
     const data = await request('/api/v1/account/change-password', {
       method: 'POST', body: { currentPassword, newPassword }, auth: true,
@@ -217,6 +234,10 @@ export function createAccountClient({ baseUrl = API_BASE } = {}) {
     resetPassword,
     me,
     heartbeat,
+    security,
+    releaseDevice,
+    revokeSession,
+    revokeOtherSessions,
     changePassword,
     createOrder,
     getOrder,

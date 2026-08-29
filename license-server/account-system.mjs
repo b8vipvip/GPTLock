@@ -14,10 +14,11 @@ import { sendSmtpMail } from './smtp-client.mjs';
 const scryptAsync = promisify(scrypt);
 
 class AccountError extends Error {
-  constructor(status, code, message) {
+  constructor(status, code, message, details = null) {
     super(message);
     this.status = status;
     this.code = code;
+    this.details = details && typeof details === 'object' ? details : null;
   }
 }
 
@@ -363,10 +364,12 @@ export function createAccountSystem({
       .run(event, userId, JSON.stringify(sanitized).slice(0, 4000), nowIso());
   }
 
-  function replyError(res, status, code, message, headers = {}) {
-    json(res, status, { ok: false, error: { code, message } }, headers);
+  function replyError(res, status, code, message, headers = {}, details = null) {
+    const error = { code, message };
+    if (details && typeof details === 'object') error.details = details;
+    json(res, status, { ok: false, error }, headers);
   }
-  function fail(status, code, message) { throw new AccountError(status, code, message); }
+  function fail(status, code, message, details = null) { throw new AccountError(status, code, message, details); }
 
   function extensionAllowed(req, extensionId) {
     const claimed = String(extensionId || '').trim().toLowerCase();
@@ -631,6 +634,62 @@ export function createAccountSystem({
     }));
   }
 
+  function securitySnapshot(userId, currentSession = null) {
+    const now = nowIso();
+    const devices = db.prepare(`SELECT d.*,COUNT(CASE WHEN s.revoked_at IS NULL AND s.expires_at>? THEN 1 END) AS active_sessions
+      FROM user_devices d LEFT JOIN user_sessions s ON s.user_id=d.user_id AND s.device_id=d.device_id
+      WHERE d.user_id=? GROUP BY d.id ORDER BY d.last_seen_at DESC,d.id DESC`).all(now, userId).map((row) => ({
+        id: row.id,
+        platform: row.platform || 'unknown',
+        firstSeenAt: row.first_seen_at,
+        lastSeenAt: row.last_seen_at,
+        activeSessions: Number(row.active_sessions || 0),
+        current: Boolean(currentSession && row.device_id === currentSession.device_id),
+      }));
+    const sessions = db.prepare(`SELECT s.*,d.id AS device_record_id,d.platform AS device_platform
+      FROM user_sessions s LEFT JOIN user_devices d ON d.user_id=s.user_id AND d.device_id=s.device_id
+      WHERE s.user_id=? AND s.revoked_at IS NULL AND s.expires_at>? ORDER BY s.last_seen_at DESC,s.id DESC`).all(userId, now).map((row) => ({
+        id: row.id,
+        deviceRecordId: row.device_record_id || null,
+        platform: row.device_platform || row.platform || 'unknown',
+        extensionVersion: row.extension_version || '',
+        createdAt: row.created_at,
+        lastSeenAt: row.last_seen_at,
+        expiresAt: row.expires_at,
+        current: Boolean(currentSession && row.id === currentSession.id),
+        currentDevice: Boolean(currentSession && row.device_id === currentSession.device_id),
+      }));
+    return { devices, sessions };
+  }
+
+  function revokeSessionsForDevice(userId, deviceId, revokedAt = nowIso()) {
+    const sessionRows = db.prepare('SELECT id FROM user_sessions WHERE user_id=? AND device_id=? AND revoked_at IS NULL').all(userId, deviceId);
+    for (const row of sessionRows) db.prepare('DELETE FROM user_window_leases WHERE session_id=?').run(row.id);
+    db.prepare('UPDATE user_sessions SET revoked_at=? WHERE user_id=? AND device_id=? AND revoked_at IS NULL').run(revokedAt, userId, deviceId);
+    return sessionRows.length;
+  }
+
+  function releaseDeviceRecord(userId, deviceRecordId, { currentSession = null, reason = 'self_service' } = {}) {
+    const id = Number(deviceRecordId);
+    if (!Number.isInteger(id) || id <= 0) fail(400, 'INVALID_DEVICE_RECORD', '设备记录无效');
+    const device = db.prepare('SELECT * FROM user_devices WHERE id=? AND user_id=?').get(id, userId);
+    if (!device) fail(404, 'DEVICE_NOT_FOUND', '设备不存在或已释放');
+    if (currentSession && device.device_id === currentSession.device_id) {
+      fail(409, 'CURRENT_DEVICE', '不能从当前会话释放当前设备；如需退出当前设备请使用退出登录');
+    }
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      revokeSessionsForDevice(userId, device.device_id);
+      db.prepare('DELETE FROM user_devices WHERE id=? AND user_id=?').run(id, userId);
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+    audit('device_released_by_user', userId, { deviceRecordId: id, platform: device.platform, reason });
+    return device;
+  }
+
   function ensureDevice(user, input) {
     const deviceId = String(input.deviceId || '');
     if (!validId(deviceId)) fail(400, 'INVALID_DEVICE', '设备标识无效');
@@ -642,8 +701,37 @@ export function createAccountSystem({
     }
     const entitlement = entitlementFor(user);
     const limit = Math.max(1, entitlement.limits.devices);
-    const count = db.prepare('SELECT COUNT(*) AS count FROM user_devices WHERE user_id=?').get(user.id).count;
-    if (count >= limit) fail(409, 'DEVICE_LIMIT', `设备数量已达到上限 ${limit}`);
+    let count = Number(db.prepare('SELECT COUNT(*) AS count FROM user_devices WHERE user_id=?').get(user.id).count || 0);
+    if (count >= limit) {
+      const requested = [...new Set((Array.isArray(input.replaceDeviceRecordIds) ? input.replaceDeviceRecordIds : [])
+        .map(Number).filter((id) => Number.isInteger(id) && id > 0).slice(0, 128))];
+      const requiredReleaseCount = Math.max(1, count - limit + 1);
+      if (requested.length < requiredReleaseCount) {
+        fail(409, 'DEVICE_LIMIT', `设备数量已达到上限 ${limit}，请选择至少 ${requiredReleaseCount} 台旧设备释放后登录`, {
+          limit, requiredReleaseCount, devices: securitySnapshot(user.id).devices,
+        });
+      }
+      const owned = requested.map((id) => db.prepare('SELECT * FROM user_devices WHERE id=? AND user_id=?').get(id, user.id));
+      if (owned.some((row) => !row)) fail(400, 'INVALID_REPLACEMENT_DEVICE', '选择的旧设备无效，请刷新后重试');
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const row of owned) {
+          revokeSessionsForDevice(user.id, row.device_id);
+          db.prepare('DELETE FROM user_devices WHERE id=? AND user_id=?').run(row.id, user.id);
+        }
+        db.exec('COMMIT');
+      } catch (error) {
+        try { db.exec('ROLLBACK'); } catch {}
+        throw error;
+      }
+      audit('devices_replaced_on_login', user.id, { deviceRecordIds: owned.map((row) => row.id), releasedCount: owned.length });
+      count = Number(db.prepare('SELECT COUNT(*) AS count FROM user_devices WHERE user_id=?').get(user.id).count || 0);
+      if (count >= limit) {
+        fail(409, 'DEVICE_LIMIT', `仍有 ${count} 台已绑定设备，当前上限 ${limit}，请继续释放旧设备`, {
+          limit, requiredReleaseCount: Math.max(1, count - limit + 1), devices: securitySnapshot(user.id).devices,
+        });
+      }
+    }
     const result = db.prepare('INSERT INTO user_devices(user_id,device_id,platform,first_seen_at,last_seen_at) VALUES(?,?,?,?,?)')
       .run(user.id, deviceId, String(input.platform || '').slice(0, 80), nowIso(), nowIso());
     audit('device_bound', user.id, { deviceId, platform: String(input.platform || '').slice(0, 80) });
@@ -861,6 +949,41 @@ export function createAccountSystem({
         return json(res, 200, { ok: true }, cors), true;
       }
 
+      if (path === '/api/v1/account/security' && req.method === 'GET') {
+        const session = requireSession(req);
+        return json(res, 200, { ok: true, security: securitySnapshot(session.user_id, session) }, cors), true;
+      }
+
+      if (path === '/api/v1/account/devices/release' && req.method === 'POST') {
+        const session = requireSession(req);
+        const input = await bodyJson(req);
+        releaseDeviceRecord(session.user_id, input.deviceRecordId, { currentSession: session });
+        return json(res, 200, { ok: true, security: securitySnapshot(session.user_id, session) }, cors), true;
+      }
+
+      if (path === '/api/v1/account/sessions/revoke' && req.method === 'POST') {
+        const session = requireSession(req);
+        const input = await bodyJson(req);
+        const targetId = Number(input.sessionId);
+        if (!Number.isInteger(targetId) || targetId <= 0) fail(400, 'INVALID_SESSION', '登录会话无效');
+        if (targetId === session.id) fail(409, 'CURRENT_SESSION', '不能从此入口注销当前会话，请使用退出登录');
+        const target = db.prepare('SELECT * FROM user_sessions WHERE id=? AND user_id=? AND revoked_at IS NULL').get(targetId, session.user_id);
+        if (!target) fail(404, 'SESSION_NOT_FOUND', '登录会话不存在或已经失效');
+        db.prepare('DELETE FROM user_window_leases WHERE session_id=?').run(target.id);
+        db.prepare('UPDATE user_sessions SET revoked_at=? WHERE id=?').run(nowIso(), target.id);
+        audit('session_revoked_by_user', session.user_id, { sessionId: target.id });
+        return json(res, 200, { ok: true, security: securitySnapshot(session.user_id, session) }, cors), true;
+      }
+
+      if (path === '/api/v1/account/sessions/revoke-others' && req.method === 'POST') {
+        const session = requireSession(req);
+        const others = db.prepare('SELECT id FROM user_sessions WHERE user_id=? AND id<>? AND revoked_at IS NULL').all(session.user_id, session.id);
+        for (const row of others) db.prepare('DELETE FROM user_window_leases WHERE session_id=?').run(row.id);
+        db.prepare('UPDATE user_sessions SET revoked_at=? WHERE user_id=? AND id<>? AND revoked_at IS NULL').run(nowIso(), session.user_id, session.id);
+        audit('other_sessions_revoked_by_user', session.user_id, { revokedCount: others.length });
+        return json(res, 200, { ok: true, revokedCount: others.length, security: securitySnapshot(session.user_id, session) }, cors), true;
+      }
+
       if (path === '/api/v1/account/change-password' && req.method === 'POST') {
         const session = requireSession(req);
         const input = await bodyJson(req);
@@ -945,7 +1068,7 @@ export function createAccountSystem({
       return false;
     } catch (error) {
       if (error instanceof AccountError) {
-        replyError(res, error.status, error.code, error.message, cors);
+        replyError(res, error.status, error.code, error.message, cors, error.details);
         return true;
       }
       throw error;

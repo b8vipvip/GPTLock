@@ -37,6 +37,15 @@
     </section>
 
     <section class="card">
+      <div class="section-title"><div><h2>设备与登录会话</h2><p class="muted">释放不用的设备可立即腾出设备额度；注销其它会话不会删除设备绑定。</p></div><button id="revokeOtherSessions" type="button">退出其它会话</button></div>
+      <h3 class="subheading">已绑定设备</h3>
+      <div id="devices" class="security-list"></div>
+      <h3 class="subheading">活跃登录会话</h3>
+      <div id="sessions" class="security-list"></div>
+      <p id="securityMessage" class="message"></p>
+    </section>
+
+    <section class="card">
       <h2>修改密码</h2>
       <form id="passwordForm" class="form-grid">
         <label>当前密码<input id="currentPassword" type="password" autocomplete="current-password" required></label>
