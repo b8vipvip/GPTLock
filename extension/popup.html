@@ -3,11 +3,63 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GPTLock 状态 / Status</title>
+  <title>GPTLock</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <main>
+  <section id="authShell" class="auth-shell" aria-live="polite">
+    <div class="auth-brand">
+      <span class="auth-logo">G</span>
+      <div><p>GPTLOCK</p><h1>账号登录 <small>Account</small></h1></div>
+    </div>
+    <div class="auth-card">
+      <div class="auth-tabs" role="tablist">
+        <button id="showLogin" class="active" type="button">登录</button>
+        <button id="showRegister" type="button">注册</button>
+        <button id="showForgot" type="button">找回密码</button>
+      </div>
+
+      <form id="loginForm" class="auth-panel">
+        <label>邮箱<input id="loginEmail" type="email" autocomplete="email" placeholder="name@example.com" required></label>
+        <label>密码<input id="loginPassword" type="password" autocomplete="current-password" minlength="10" required></label>
+        <button id="loginButton" class="primary auth-submit" type="submit">登录 GPTLock</button>
+        <p class="auth-hint">登录后才能启用请求锁定。会话令牌仅保存在本机浏览器。</p>
+      </form>
+
+      <form id="registerForm" class="auth-panel" hidden>
+        <label>邮箱<input id="registerEmail" type="email" autocomplete="email" required></label>
+        <label>密码<input id="registerPassword" type="password" autocomplete="new-password" minlength="10" required></label>
+        <label>确认密码<input id="registerPassword2" type="password" autocomplete="new-password" minlength="10" required></label>
+        <button id="registerButton" class="primary auth-submit" type="submit">注册并发送验证码</button>
+        <p class="auth-hint">注册必须通过邮箱验证码。密码不会通过同步存储保存。</p>
+      </form>
+
+      <form id="verifyForm" class="auth-panel" hidden>
+        <p class="auth-title">验证邮箱</p>
+        <p id="verifyEmailText" class="auth-hint"></p>
+        <label>6 位验证码<input id="verifyCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required></label>
+        <button class="primary auth-submit" type="submit">完成邮箱验证</button>
+        <button id="resendVerification" type="button">重新发送验证码</button>
+      </form>
+
+      <form id="forgotForm" class="auth-panel" hidden>
+        <label>注册邮箱<input id="forgotEmail" type="email" autocomplete="email" required></label>
+        <button class="primary auth-submit" type="submit">发送重置验证码</button>
+        <p class="auth-hint">无论邮箱是否存在，界面都会显示相同提示，以减少账号枚举风险。</p>
+      </form>
+
+      <form id="resetForm" class="auth-panel" hidden>
+        <p class="auth-title">重置密码</p>
+        <p id="resetEmailText" class="auth-hint"></p>
+        <label>6 位验证码<input id="resetCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
+        <label>新密码<input id="resetPassword" type="password" autocomplete="new-password" minlength="10" required></label>
+        <button class="primary auth-submit" type="submit">重置密码</button>
+      </form>
+      <p id="authMessage" class="auth-message" role="status"></p>
+    </div>
+  </section>
+
+  <main id="appShell" hidden>
     <header>
       <div>
         <p class="eyebrow">GPTLOCK <span id="version"></span></p>
@@ -15,6 +67,21 @@
       </div>
       <span id="verdict" class="verdict wait">检查中</span>
     </header>
+
+    <section class="account-card">
+      <div class="account-main">
+        <div class="avatar" aria-hidden="true">G</div>
+        <div><strong id="accountEmail">—</strong><p id="accountTier">正在读取账户…</p></div>
+      </div>
+      <div class="account-meta">
+        <span id="accountExpiry">有效期 —</span>
+        <span id="accountUsage">设备/窗口 —</span>
+      </div>
+      <div class="account-actions">
+        <button id="accountCenter" class="primary" type="button">账户中心</button>
+        <button id="accountLogout" type="button">退出登录</button>
+      </div>
+    </section>
 
     <section class="summary" aria-live="polite">
       <strong id="guardTitle">正在读取状态…</strong>
@@ -27,20 +94,6 @@
         <input id="enabled" type="checkbox">
         <span aria-hidden="true"></span>
       </label>
-    </section>
-
-    <section class="license-card" aria-labelledby="licenseHeading">
-      <div class="license-heading">
-        <span><strong id="licenseHeading">授权验证 / License</strong><small>需要有效授权码才能启用正式锁定功能</small></span>
-        <span id="licenseBadge" class="license-badge wait">检查中</span>
-      </div>
-      <button id="licensePurchase" class="license-purchase" type="button" disabled>获取授权码 <small>Get license</small></button>
-      <p id="licenseDetail" class="license-detail">正在读取授权状态…</p>
-      <div class="license-entry">
-        <input id="licenseCode" type="text" spellcheck="false" autocomplete="off" placeholder="GPTL-XXXX-XXXX-XXXX-XXXX-XXXX">
-        <button id="licenseActivate" class="primary" type="button">验证授权码</button>
-      </div>
-      <p id="licenseMessage" class="license-message" role="status"></p>
     </section>
 
     <section id="installHelp" class="install-help" hidden>
@@ -70,6 +123,7 @@
     <span id="updateDetail" hidden></span>
     <p id="message" role="status"></p>
   </main>
+  <script type="module" src="auth-gate.js"></script>
   <script type="module" src="popup.js"></script>
 </body>
 </html>

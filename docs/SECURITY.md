@@ -18,13 +18,27 @@
 
 manifest 中提交的是稳定扩展 ID 所需的 RSA **公钥**，不是商店签名私钥，也不提供代码签名信任。不要向仓库提交私钥、API token、Cookie、浏览器 Profile、`.gptlock` 用户数据或任何真实聊天内容。
 
-## 面向公众分发时的授权服务加固
+## 面向公众分发时的账号与会员安全
 
-公开分发场景下，官方客户端仍必须持有服务端签发的授权码。授权服务默认只对固定扩展 ID `bhchcpeodphgjfjoookncemnamdbfcof` 返回浏览器 CORS 许可，并要求激活请求声明允许的扩展 ID；额外渠道必须通过 `GPTLOCK_LICENSE_ALLOWED_EXTENSION_IDS` 显式加入。管理员登录和授权激活端点还具有进程内失败尝试限流，以降低暴力尝试和低成本滥用。反向代理仍应配置连接数/请求速率限制，以应对分布式 DoS。
+公开分发版本不再以授权码作为终端用户凭据。用户必须使用 **账号 + 密码 + 已验证邮箱** 登录，服务端再根据免费期、会员计划、设备绑定和活动 ChatGPT 窗口租约返回实时权益。旧授权码表只为升级回滚/历史审计保留，旧客户端授权 API 返回 HTTP 410。
 
-“获取授权码”跳转地址由服务端 `app_settings` 保存，也可由 `GPTLOCK_LICENSE_PURCHASE_URL` 提供初始值。地址只接受 HTTPS，插件不会打开 `javascript:`、`file:` 等 scheme。
+密码使用随机盐 `scrypt` 派生摘要，CPU 密集计算通过 Node/libuv worker pool 异步执行，避免同步密码哈希阻塞 Web 事件循环。数据库从不保存明文密码。登录成功签发 32 字节随机会话令牌，服务端只保存令牌 SHA-256，原始令牌仅保存在扩展自己的 `chrome.storage.local`，不进入 Chrome Sync。修改密码会使其他会话失效；找回密码会使全部旧会话失效。
 
-扩展 ID、Origin 和 CORS 不是密码学客户端身份认证：非浏览器程序可以伪造 HTTP 头，因此真正的许可凭据仍是高熵授权码和服务端签发的激活令牌。更重要的是，GPTLock 客户端代码运行在用户自己的浏览器/操作系统中，具备修改二进制或扩展能力的用户可以尝试移除客户端授权检查。授权系统用于控制官方构建和正常用户的使用许可，不应宣称为不可绕过 DRM；若未来需要更强商业授权，关键能力必须由受控服务端提供。
+邮箱验证和找回密码使用 6 位一次性验证码。数据库只保存基于服务端密钥派生键计算的验证码 HMAC，并限制有效期和错误尝试次数。注册、重发验证码、找回密码以及登录同时具有 **IP 级总限流** 与 **IP+邮箱级限流**，降低暴力猜解、凭据填充和轮换邮箱绕过单账号限制的效果。进程内限流不能抵御分布式攻击，生产反向代理/WAF 仍必须设置请求速率、连接数和异常流量限制；用户规模扩大后建议把限流状态迁移到 Redis/网关并为注册/找回密码加入 CAPTCHA 或同等反自动化挑战。
+
+管理员 Cookie 为 `HttpOnly; Secure; SameSite=Strict`。后台写操作还检查同源 `Origin`，降低浏览器 CSRF 风险。管理员登录另有独立暴力尝试限流。`/admin/` 仍建议使用 Cloudflare Access、VPN 或 IP 白名单，不应只依靠应用层密码暴露在全互联网。
+
+账号、订单、套餐和配置的 SQL 均使用 SQLite prepared statements；数值、枚举、ID、邮箱和 URL 均进行边界验证。支付跳转地址只接受 HTTPS。SMTP 密码/授权码使用 AES-256-GCM 加密保存，密钥由生产服务端主密钥派生；SMTP 仅允许 SMTPS 或 STARTTLS，不允许明文传输凭据。
+
+扩展 ID、Origin 和 CORS 只是浏览器侧缩小攻击面的措施，不是密码学客户端身份证明：自写 HTTP 客户端可以伪造这些头。真正的账户身份仍由密码/会话令牌建立。更重要的是，GPTLock 扩展和 Native Core 运行在用户控制的机器上，因此账号门禁不能宣称为“不可破解 DRM”；能够修改本地扩展或二进制的用户理论上可以尝试移除本地检查。更强的商业防绕过需要把关键能力留在受控服务端，或引入服务端签名的短期权益证明并由更可信的本地组件验证。
+
+会员/邮箱/支付架构和上线检查详见 [`ACCOUNT_SYSTEM.md`](ACCOUNT_SYSTEM.md)。
+
+## Public account and membership security
+
+Public builds now use verified-email accounts instead of license codes. Passwords are stored as salted scrypt hashes; password derivation runs asynchronously through Node's worker pool. Session tokens are random and stored server-side only as SHA-256 hashes, while raw tokens remain in extension-local storage. Email verification/reset codes are persisted only as HMACs with expiration and attempt limits. Login and email-delivery flows have both per-IP and per-IP-plus-account rate limits, while production deployments must still enforce distributed rate/connection limits at the reverse proxy or WAF.
+
+Admin cookies use HttpOnly, Secure and SameSite=Strict, state-changing admin requests are origin-checked, SQLite access uses prepared statements, SMTP secrets are AES-256-GCM encrypted at rest, and payment links must be HTTPS. Extension ID/CORS checks are hardening rather than cryptographic identity, and local client checks must not be presented as unbreakable DRM.
 
 ## 请求锁定的最小修改范围
 

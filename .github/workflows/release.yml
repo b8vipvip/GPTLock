@@ -124,10 +124,10 @@ jobs:
           GPTLOCK_VERSION="$RELEASE_VERSION" packaging/linux/build-deb.sh dist
           tar -C native-core/target/release -czf "dist/gptlock-core-${RELEASE_VERSION}-linux-x64.tar.gz" gptlock-core
           cd extension
-          zip -9 "../dist/gptlock-extension-${RELEASE_VERSION}.zip" \
-            background.js content.js context-budget.js diagnostics.css diagnostics.html diagnostics.js guard.js manifest.json \
-            model-catalog.js model-catalog-options.js native-status.js network-evidence.js network-monitor.js \
-            options.css options.html options.js page-model-evidence.js policy.js popup.css popup.html popup.js runtime-log.js update-manager.js
+          zip -9 "../dist/gptlock-extension-${RELEASE_VERSION}.zip" *.js *.css *.html manifest.json
+          unzip -l "../dist/gptlock-extension-${RELEASE_VERSION}.zip" | grep -q 'account-client.js'
+          unzip -l "../dist/gptlock-extension-${RELEASE_VERSION}.zip" | grep -q 'auth-gate.js'
+          unzip -l "../dist/gptlock-extension-${RELEASE_VERSION}.zip" | grep -q 'account.html'
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux
