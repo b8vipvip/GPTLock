@@ -181,7 +181,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed: $Path" }
             $signature = Get-AuthenticodeSignature -LiteralPath $Path
             if ($signature.Status -ne 'Valid') {
-              throw "Authenticode signature is not valid for $Path: $($signature.Status)"
+              throw "Authenticode signature is not valid for ${Path}: $($signature.Status)"
             }
             Write-Host "Authenticode signature valid: $Path"
           }
