@@ -55,6 +55,14 @@
         <label>新密码<input id="resetPassword" type="password" autocomplete="new-password" minlength="10" required></label>
         <button class="primary auth-submit" type="submit">重置密码</button>
       </form>
+
+      <form id="deviceReplaceForm" class="auth-panel" hidden>
+        <p class="auth-title">设备数量已达上限</p>
+        <p id="deviceReplaceHint" class="auth-hint">请选择不再使用的旧设备。所选设备上的 GPTLock 登录会话会立即失效。</p>
+        <div id="deviceReplaceList" class="device-replace-list"></div>
+        <button class="primary auth-submit" type="submit">释放所选设备并登录</button>
+        <button id="cancelDeviceReplace" type="button">返回登录</button>
+      </form>
       <p id="authMessage" class="auth-message" role="status"></p>
     </div>
   </section>

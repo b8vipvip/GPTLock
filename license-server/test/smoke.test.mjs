@@ -194,6 +194,10 @@ test('account system verifies email, enforces entitlements, manages membership, 
     });
     assert.equal(secondDevice.response.status, 409);
     assert.equal(secondDevice.data.error.code, 'DEVICE_LIMIT');
+    assert.equal(secondDevice.data.error.details.limit, 1);
+    assert.equal(secondDevice.data.error.details.requiredReleaseCount, 1);
+    assert.equal(secondDevice.data.error.details.devices.length, 1);
+    assert.equal(Object.hasOwn(secondDevice.data.error.details.devices[0], 'device_id'), false);
 
     // Admin can find the user, override limits, and cross-origin browser writes are rejected.
     const listUsers = await jsonRequest(`${base}/admin/api/account/users?q=member%40example.com`, { headers: { cookie } });
@@ -220,6 +224,75 @@ test('account system verifies email, enforces entitlements, manages membership, 
       body: extensionBody({ email, password: initialPassword, deviceId: 'device-87654321', browserInstanceId: 'browser-87654321' }),
     });
     assert.equal(secondDeviceAllowed.response.status, 200);
+    const secondToken = secondDeviceAllowed.data.sessionToken;
+
+    // Account center can list its own devices/sessions without exposing raw device identifiers.
+    const securityBefore = await jsonRequest(`${base}/api/v1/account/security`, { headers: { origin: ORIGIN, authorization: `Bearer ${firstToken}` } });
+    assert.equal(securityBefore.response.status, 200);
+    assert.equal(securityBefore.data.security.devices.length, 2);
+    assert.equal(securityBefore.data.security.sessions.length, 2);
+    assert.equal(securityBefore.data.security.devices.filter((row) => row.current).length, 1);
+    assert.equal(JSON.stringify(securityBefore.data.security).includes('device-12345678'), false);
+    const secondDeviceRecord = securityBefore.data.security.devices.find((row) => !row.current);
+    assert.ok(secondDeviceRecord?.id);
+
+    // Multiple browser sessions on one device do not consume extra device slots and can be individually revoked.
+    const extraSessionLogin = await jsonRequest(`${base}/api/v1/auth/login`, {
+      method: 'POST', headers: { origin: ORIGIN, 'x-forwarded-for': '203.0.113.24' },
+      body: extensionBody({ email, password: initialPassword, browserInstanceId: 'browser-extra-12345' }),
+    });
+    assert.equal(extraSessionLogin.response.status, 200);
+    const extraToken = extraSessionLogin.data.sessionToken;
+    const securityWithExtra = await jsonRequest(`${base}/api/v1/account/security`, { headers: { origin: ORIGIN, authorization: `Bearer ${firstToken}` } });
+    const extraSession = securityWithExtra.data.security.sessions.find((row) => row.currentDevice && !row.current);
+    assert.ok(extraSession);
+    const revokeExtra = await jsonRequest(`${base}/api/v1/account/sessions/revoke`, {
+      method: 'POST', headers: { origin: ORIGIN, authorization: `Bearer ${firstToken}` }, body: { sessionId: extraSession.id },
+    });
+    assert.equal(revokeExtra.response.status, 200);
+    const extraAfterRevoke = await jsonRequest(`${base}/api/v1/account/me`, { headers: { origin: ORIGIN, authorization: `Bearer ${extraToken}` } });
+    assert.equal(extraAfterRevoke.response.status, 401);
+
+    // A third device can replace an explicitly selected old device after password verification.
+    const thirdBlocked = await jsonRequest(`${base}/api/v1/auth/login`, {
+      method: 'POST', headers: { origin: ORIGIN, 'x-forwarded-for': '203.0.113.25' },
+      body: extensionBody({ email, password: initialPassword, deviceId: 'device-33333333', browserInstanceId: 'browser-33333333' }),
+    });
+    assert.equal(thirdBlocked.response.status, 409);
+    assert.equal(thirdBlocked.data.error.code, 'DEVICE_LIMIT');
+    const replaceTarget = thirdBlocked.data.error.details.devices.find((row) => row.id === secondDeviceRecord.id);
+    assert.ok(replaceTarget?.id, 'the explicitly selected second device must be offered for replacement');
+    const thirdLogin = await jsonRequest(`${base}/api/v1/auth/login`, {
+      method: 'POST', headers: { origin: ORIGIN, 'x-forwarded-for': '203.0.113.26' },
+      body: extensionBody({
+        email, password: initialPassword, deviceId: 'device-33333333', browserInstanceId: 'browser-33333333',
+        replaceDeviceRecordIds: [replaceTarget.id],
+      }),
+    });
+    assert.equal(thirdLogin.response.status, 200);
+    const thirdToken = thirdLogin.data.sessionToken;
+    const replacedOldSession = await jsonRequest(`${base}/api/v1/account/me`, { headers: { origin: ORIGIN, authorization: `Bearer ${secondToken}` } });
+    assert.equal(replacedOldSession.response.status, 401);
+
+    // The still-logged-in first device can release the new third device and immediately free its slot.
+    const securityAfterReplace = await jsonRequest(`${base}/api/v1/account/security`, { headers: { origin: ORIGIN, authorization: `Bearer ${firstToken}` } });
+    const thirdDevice = securityAfterReplace.data.security.devices.find((row) => !row.current);
+    assert.ok(thirdDevice?.id);
+    const releaseThird = await jsonRequest(`${base}/api/v1/account/devices/release`, {
+      method: 'POST', headers: { origin: ORIGIN, authorization: `Bearer ${firstToken}` }, body: { deviceRecordId: thirdDevice.id },
+    });
+    assert.equal(releaseThird.response.status, 200);
+    assert.equal(releaseThird.data.security.devices.length, 1);
+    const thirdAfterRelease = await jsonRequest(`${base}/api/v1/account/me`, { headers: { origin: ORIGIN, authorization: `Bearer ${thirdToken}` } });
+    assert.equal(thirdAfterRelease.response.status, 401);
+
+    // Current device cannot be accidentally released through the self-service endpoint.
+    const currentDevice = releaseThird.data.security.devices.find((row) => row.current);
+    const releaseCurrent = await jsonRequest(`${base}/api/v1/account/devices/release`, {
+      method: 'POST', headers: { origin: ORIGIN, authorization: `Bearer ${firstToken}` }, body: { deviceRecordId: currentDevice.id },
+    });
+    assert.equal(releaseCurrent.response.status, 409);
+    assert.equal(releaseCurrent.data.error.code, 'CURRENT_DEVICE');
 
     // Configure encrypted SMTP credential and WeChat payment entry.
     const saveSettings = await jsonRequest(`${base}/admin/api/account/settings`, {

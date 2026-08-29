@@ -1295,7 +1295,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'GPTLOCK_ACCOUNT_VERIFY_EMAIL':
         return accountClient.verifyEmail(message.email, message.code);
       case 'GPTLOCK_ACCOUNT_LOGIN': {
-        accountState = await accountClient.login(message.email, message.password);
+        accountState = await accountClient.login(message.email, message.password, message.replaceDeviceRecordIds);
         await refreshAccountHeartbeat();
         return accountState;
       }
@@ -1314,6 +1314,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       case 'GPTLOCK_ACCOUNT_REFRESH':
         return refreshAccountHeartbeat();
+      case 'GPTLOCK_ACCOUNT_SECURITY':
+        return accountClient.security();
+      case 'GPTLOCK_ACCOUNT_RELEASE_DEVICE': {
+        const result = await accountClient.releaseDevice(message.deviceRecordId);
+        await refreshAccountHeartbeat();
+        return result;
+      }
+      case 'GPTLOCK_ACCOUNT_REVOKE_SESSION': {
+        const result = await accountClient.revokeSession(message.sessionId);
+        await refreshAccountHeartbeat();
+        return result;
+      }
+      case 'GPTLOCK_ACCOUNT_REVOKE_OTHER_SESSIONS': {
+        const result = await accountClient.revokeOtherSessions();
+        await refreshAccountHeartbeat();
+        return result;
+      }
       case 'GPTLOCK_ACCOUNT_CHANGE_PASSWORD':
         return accountClient.changePassword(message.currentPassword, message.newPassword);
       case 'GPTLOCK_ACCOUNT_CREATE_ORDER':
@@ -1479,7 +1496,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   run().then(
     (data) => sendResponse({ ok: true, data }),
-    (error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }),
+    (error) => sendResponse({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      code: error?.code || null,
+      status: error?.status || null,
+      details: error?.details && typeof error.details === 'object' ? error.details : null,
+    }),
   );
   return true;
 });

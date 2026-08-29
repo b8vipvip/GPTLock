@@ -2,18 +2,20 @@ const $ = (id) => document.getElementById(id);
 const el = {
   notLogged: $('notLogged'), app: $('app'), refresh: $('refresh'), email: $('email'), statusBadge: $('statusBadge'), tier: $('tier'), expiry: $('expiry'),
   deviceUsage: $('deviceUsage'), windowUsage: $('windowUsage'), freeExpiry: $('freeExpiry'), memberExpiry: $('memberExpiry'), plans: $('plans'), orderMessage: $('orderMessage'),
+  devices: $('devices'), sessions: $('sessions'), revokeOtherSessions: $('revokeOtherSessions'), securityMessage: $('securityMessage'),
   passwordForm: $('passwordForm'), currentPassword: $('currentPassword'), newPassword: $('newPassword'), newPassword2: $('newPassword2'), passwordMessage: $('passwordMessage'),
 };
 
 let account = null;
 let config = null;
+let security = { devices: [], sessions: [] };
 
 function sendMessage(message) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
       const error = chrome.runtime.lastError;
       if (error) return reject(new Error(error.message));
-      if (!response?.ok) return reject(new Error(response?.error || '请求失败'));
+      if (!response?.ok) return reject(Object.assign(new Error(response?.error || '请求失败'), { code: response?.code, status: response?.status, details: response?.details }));
       resolve(response.data);
     });
   });
@@ -52,6 +54,40 @@ function renderPlans() {
   }
 }
 
+function renderSecurity() {
+  el.devices.textContent = '';
+  for (const device of security.devices || []) {
+    const row = document.createElement('article'); row.className = 'security-row';
+    const copy = document.createElement('div');
+    const title = document.createElement('strong'); title.textContent = device.platform || '未知设备';
+    if (device.current) { const badge = document.createElement('span'); badge.className = 'mini-badge'; badge.textContent = '当前设备'; title.append(' ', badge); }
+    const meta = document.createElement('p'); meta.textContent = `首次 ${localDate(device.firstSeenAt)} · 最后 ${localDate(device.lastSeenAt)} · 活跃会话 ${device.activeSessions || 0}`;
+    copy.append(title, meta); row.append(copy);
+    const action = document.createElement('button');
+    if (device.current) { action.textContent = '当前设备'; action.disabled = true; }
+    else { action.textContent = '释放设备'; action.addEventListener('click', () => void releaseDevice(device, action)); }
+    row.append(action); el.devices.append(row);
+  }
+  if (!(security.devices || []).length) el.devices.textContent = '暂无已绑定设备';
+
+  el.sessions.textContent = '';
+  let otherSessions = 0;
+  for (const session of security.sessions || []) {
+    const row = document.createElement('article'); row.className = 'security-row';
+    const copy = document.createElement('div');
+    const title = document.createElement('strong'); title.textContent = session.platform || '未知会话';
+    if (session.current) { const badge = document.createElement('span'); badge.className = 'mini-badge'; badge.textContent = '当前会话'; title.append(' ', badge); }
+    const meta = document.createElement('p'); meta.textContent = `GPTLock ${session.extensionVersion || '—'} · 最后 ${localDate(session.lastSeenAt)} · 到期 ${localDate(session.expiresAt)}`;
+    copy.append(title, meta); row.append(copy);
+    const action = document.createElement('button');
+    if (session.current) { action.textContent = '当前会话'; action.disabled = true; }
+    else { otherSessions += 1; action.textContent = '退出会话'; action.addEventListener('click', () => void revokeSession(session, action)); }
+    row.append(action); el.sessions.append(row);
+  }
+  if (!(security.sessions || []).length) el.sessions.textContent = '暂无活跃登录会话';
+  el.revokeOtherSessions.disabled = otherSessions === 0;
+}
+
 function renderAccount() {
   const authenticated = Boolean(account?.authenticated);
   el.notLogged.hidden = authenticated;
@@ -69,6 +105,7 @@ function renderAccount() {
   el.freeExpiry.textContent = localDate(user.freeExpiresAt);
   el.memberExpiry.textContent = localDate(account.membership?.expiresAt);
   renderPlans();
+  renderSecurity();
 }
 
 async function load() {
@@ -79,10 +116,37 @@ async function load() {
     ]);
     account = state.account || { authenticated: false };
     config = remoteConfig;
+    security = account.authenticated
+      ? (await sendMessage({ type: 'GPTLOCK_ACCOUNT_SECURITY' })).security || { devices: [], sessions: [] }
+      : { devices: [], sessions: [] };
     renderAccount();
   } catch (error) {
     message(el.orderMessage, error.message, 'bad');
   }
+}
+
+async function releaseDevice(device, button) {
+  if (device.current || !confirm(`确认释放设备“${device.platform || '未知设备'}”？该设备上的 GPTLock 登录会话会立即失效。`)) return;
+  const original = button.textContent; button.disabled = true; button.textContent = '释放中…';
+  try {
+    const data = await sendMessage({ type: 'GPTLOCK_ACCOUNT_RELEASE_DEVICE', deviceRecordId: device.id });
+    security = data.security || security;
+    message(el.securityMessage, '旧设备已释放，设备额度已立即腾出。', 'good');
+    await load();
+  } catch (error) { message(el.securityMessage, `释放失败：${error.message}`, 'bad'); }
+  finally { button.disabled = false; button.textContent = original; }
+}
+
+async function revokeSession(session, button) {
+  if (session.current || !confirm('确认退出这个 GPTLock 登录会话？')) return;
+  const original = button.textContent; button.disabled = true; button.textContent = '退出中…';
+  try {
+    const data = await sendMessage({ type: 'GPTLOCK_ACCOUNT_REVOKE_SESSION', sessionId: session.id });
+    security = data.security || security;
+    message(el.securityMessage, '登录会话已注销。', 'good');
+    await load();
+  } catch (error) { message(el.securityMessage, `退出失败：${error.message}`, 'bad'); }
+  finally { button.disabled = false; button.textContent = original; }
 }
 
 async function createOrder(plan, method, button) {
@@ -100,6 +164,20 @@ async function createOrder(plan, method, button) {
     button.disabled = false; button.textContent = original;
   }
 }
+
+el.revokeOtherSessions.addEventListener('click', () => {
+  if (!confirm('确认退出除当前会话外的全部 GPTLock 登录会话？')) return;
+  el.revokeOtherSessions.disabled = true;
+  message(el.securityMessage, '正在退出其它会话…');
+  void sendMessage({ type: 'GPTLOCK_ACCOUNT_REVOKE_OTHER_SESSIONS' })
+    .then(async (data) => {
+      security = data.security || security;
+      message(el.securityMessage, `已退出 ${data.revokedCount || 0} 个其它会话。`, 'good');
+      await load();
+    })
+    .catch((error) => message(el.securityMessage, `操作失败：${error.message}`, 'bad'))
+    .finally(() => { el.revokeOtherSessions.disabled = false; renderSecurity(); });
+});
 
 el.passwordForm.addEventListener('submit', (event) => {
   event.preventDefault();

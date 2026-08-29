@@ -7,19 +7,21 @@ const el = {
   verifyForm: $('verifyForm'), verifyEmailText: $('verifyEmailText'), verifyCode: $('verifyCode'), resendVerification: $('resendVerification'),
   forgotForm: $('forgotForm'), forgotEmail: $('forgotEmail'),
   resetForm: $('resetForm'), resetEmailText: $('resetEmailText'), resetCode: $('resetCode'), resetPassword: $('resetPassword'),
+  deviceReplaceForm: $('deviceReplaceForm'), deviceReplaceHint: $('deviceReplaceHint'), deviceReplaceList: $('deviceReplaceList'), cancelDeviceReplace: $('cancelDeviceReplace'),
   accountEmail: $('accountEmail'), accountTier: $('accountTier'), accountExpiry: $('accountExpiry'), accountUsage: $('accountUsage'),
   accountCenter: $('accountCenter'), accountLogout: $('accountLogout'), enabled: $('enabled'),
 };
 
 let verificationEmail = '';
 let resetEmail = '';
+let deviceLimitDetails = null;
 
 function sendMessage(message) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
       const error = chrome.runtime.lastError;
       if (error) return reject(new Error(error.message));
-      if (!response?.ok) return reject(Object.assign(new Error(response?.error || '请求失败'), { code: response?.code }));
+      if (!response?.ok) return reject(Object.assign(new Error(response?.error || '请求失败'), { code: response?.code, status: response?.status, details: response?.details }));
       resolve(response.data);
     });
   });
@@ -43,6 +45,7 @@ function showPanel(name) {
     verify: el.verifyForm,
     forgot: el.forgotForm,
     reset: el.resetForm,
+    deviceReplace: el.deviceReplaceForm,
   };
   for (const panel of Object.values(map)) panel.hidden = true;
   map[name].hidden = false;
@@ -50,6 +53,43 @@ function showPanel(name) {
   el.showRegister.classList.toggle('active', name === 'register' || name === 'verify');
   el.showForgot.classList.toggle('active', name === 'forgot' || name === 'reset');
   setMessage('');
+}
+
+function renderDeviceReplacement(details) {
+  deviceLimitDetails = details || {};
+  const required = Math.max(1, Number(deviceLimitDetails.requiredReleaseCount || 1));
+  el.deviceReplaceHint.textContent = `当前最多允许 ${deviceLimitDetails.limit || '—'} 台设备。请选择至少 ${required} 台不再使用的旧设备；释放后这些设备上的 GPTLock 会话立即失效。`;
+  el.deviceReplaceList.textContent = '';
+  for (const device of deviceLimitDetails.devices || []) {
+    const label = document.createElement('label');
+    label.className = 'device-replace-item';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = String(device.id);
+    const copy = document.createElement('span');
+    const title = document.createElement('strong');
+    title.textContent = device.platform || '未知设备';
+    const meta = document.createElement('small');
+    meta.textContent = `最后使用 ${localDate(device.lastSeenAt)} · 活跃会话 ${device.activeSessions || 0}`;
+    copy.append(title, meta);
+    label.append(checkbox, copy);
+    el.deviceReplaceList.append(label);
+  }
+}
+
+async function finishLogin(replaceDeviceRecordIds = []) {
+  const account = await sendMessage({
+    type: 'GPTLOCK_ACCOUNT_LOGIN',
+    email: el.loginEmail.value.trim(),
+    password: el.loginPassword.value,
+    replaceDeviceRecordIds,
+  });
+  el.loginPassword.value = '';
+  deviceLimitDetails = null;
+  setMessage('登录成功。', 'good');
+  await refreshGate();
+  window.dispatchEvent(new CustomEvent('gptlock-account-changed'));
+  return account;
 }
 
 function renderAccount(account, windowAccess = true) {
@@ -99,14 +139,40 @@ el.showForgot.addEventListener('click', () => showPanel('forgot'));
 el.loginForm.addEventListener('submit', (event) => {
   event.preventDefault();
   setMessage('正在登录…');
-  void sendMessage({ type: 'GPTLOCK_ACCOUNT_LOGIN', email: el.loginEmail.value.trim(), password: el.loginPassword.value })
-    .then(async () => {
-      el.loginPassword.value = '';
-      setMessage('登录成功。', 'good');
-      await refreshGate();
-      window.dispatchEvent(new CustomEvent('gptlock-account-changed'));
-    })
-    .catch((error) => setMessage(`登录失败：${error.message}`, 'bad'));
+  void finishLogin().catch((error) => {
+    if (error.code === 'DEVICE_LIMIT' && Array.isArray(error.details?.devices)) {
+      renderDeviceReplacement(error.details);
+      showPanel('deviceReplace');
+      setMessage('密码验证成功，但设备数量已达上限。请选择旧设备替换。', 'bad');
+      return;
+    }
+    setMessage(`登录失败：${error.message}`, 'bad');
+  });
+});
+
+el.deviceReplaceForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const selected = [...el.deviceReplaceList.querySelectorAll('input[type="checkbox"]:checked')].map((item) => Number(item.value));
+  const required = Math.max(1, Number(deviceLimitDetails?.requiredReleaseCount || 1));
+  if (selected.length < required) {
+    setMessage(`请至少选择 ${required} 台旧设备。`, 'bad');
+    return;
+  }
+  if (!confirm(`确认释放 ${selected.length} 台旧设备并在当前设备登录 GPTLock？`)) return;
+  setMessage('正在释放旧设备并登录…');
+  void finishLogin(selected).catch((error) => {
+    if (error.code === 'DEVICE_LIMIT' && Array.isArray(error.details?.devices)) {
+      renderDeviceReplacement(error.details);
+      setMessage(`仍需释放至少 ${error.details.requiredReleaseCount || 1} 台设备。`, 'bad');
+      return;
+    }
+    setMessage(`设备替换登录失败：${error.message}`, 'bad');
+  });
+});
+
+el.cancelDeviceReplace.addEventListener('click', () => {
+  deviceLimitDetails = null;
+  showPanel('login');
 });
 
 el.registerForm.addEventListener('submit', (event) => {
