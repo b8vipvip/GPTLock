@@ -150,8 +150,11 @@ function clientIp(req) {
   const remote = String(req.socket?.remoteAddress || 'unknown');
   const loopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
   if (loopback) {
-    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-    if (forwarded && /^[0-9A-Fa-f:.]{3,64}$/.test(forwarded)) return forwarded;
+    const validProxyIp = (value) => /^[0-9A-Fa-f:.]{3,64}$/.test(String(value || '').trim());
+    const realIp = String(req.headers['x-real-ip'] || '').trim();
+    if (validProxyIp(realIp)) return realIp;
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',').map((item) => item.trim()).filter(validProxyIp);
+    if (forwarded.length) return forwarded[forwarded.length - 1];
   }
   return remote.slice(0, 64);
 }

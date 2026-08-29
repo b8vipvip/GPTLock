@@ -191,6 +191,7 @@ export function createAccountSystem({
     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
     source TEXT NOT NULL DEFAULT 'admin',
     order_id INTEGER,
+    plan_snapshot_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL
   ) STRICT;
   CREATE TABLE IF NOT EXISTS payment_methods (
@@ -212,7 +213,8 @@ export function createAccountSystem({
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     paid_at TEXT,
-    membership_id INTEGER
+    membership_id INTEGER,
+    plan_snapshot_json TEXT NOT NULL DEFAULT '{}'
   ) STRICT;
   CREATE TABLE IF NOT EXISTS secure_settings (
     key TEXT PRIMARY KEY,
@@ -234,6 +236,13 @@ export function createAccountSystem({
   CREATE INDEX IF NOT EXISTS idx_orders_user ON membership_orders(user_id,created_at);
   `);
 
+  function ensureColumn(table, column, definition) {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+  }
+  ensureColumn('memberships', 'plan_snapshot_json', "plan_snapshot_json TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn('membership_orders', 'plan_snapshot_json', "plan_snapshot_json TEXT NOT NULL DEFAULT '{}'");
+
   const insertPlan = db.prepare(`INSERT OR IGNORE INTO membership_plans
     (code,name,price_cents,duration_days,max_devices,max_windows,benefits_json,enabled,sort_order,updated_at)
     VALUES(?,?,?,?,?,?,?,?,?,?)`);
@@ -244,6 +253,46 @@ export function createAccountSystem({
   const insertPayment = db.prepare(`INSERT OR IGNORE INTO payment_methods(code,name,enabled,pay_url,instructions,updated_at) VALUES(?,?,?,?,?,?)`);
   insertPayment.run('wechat', '微信支付 / WeChat Pay', 0, '', '', nowIso());
   insertPayment.run('alipay', '支付宝 / Alipay', 0, '', '', nowIso());
+
+  function planSnapshotFromRow(plan) {
+    let benefits = [];
+    try { benefits = Array.isArray(plan?.benefits) ? plan.benefits : JSON.parse(plan?.benefits_json || '[]'); } catch {}
+    return {
+      code: String(plan?.code || plan?.plan_code || ''),
+      name: String(plan?.name || ''),
+      priceCents: clampInt(plan?.price_cents ?? plan?.priceCents, 0, 100000000, 0),
+      durationDays: clampInt(plan?.duration_days ?? plan?.durationDays, 1, 3650, 1),
+      maxDevices: clampInt(plan?.max_devices ?? plan?.maxDevices, 1, 1000, 1),
+      maxWindows: clampInt(plan?.max_windows ?? plan?.maxWindows, 1, 1000, 1),
+      benefits: benefits.map((item) => String(item).slice(0, 160)).slice(0, 20),
+    };
+  }
+  function normalizePlanSnapshot(value, fallback) {
+    let parsed = value;
+    if (typeof parsed === 'string') { try { parsed = JSON.parse(parsed || '{}'); } catch { parsed = null; } }
+    if (!parsed || typeof parsed !== 'object' || !parsed.code || !parsed.name) return planSnapshotFromRow(fallback);
+    return planSnapshotFromRow({
+      code: parsed.code, name: parsed.name, priceCents: parsed.priceCents, durationDays: parsed.durationDays,
+      maxDevices: parsed.maxDevices, maxWindows: parsed.maxWindows, benefits: parsed.benefits,
+    });
+  }
+  function freezeLegacyPlanSnapshots() {
+    const memberships = db.prepare(`SELECT m.id,m.plan_code,m.plan_snapshot_json,p.* FROM memberships m JOIN membership_plans p ON p.code=m.plan_code`).all();
+    const saveMembership = db.prepare('UPDATE memberships SET plan_snapshot_json=? WHERE id=?');
+    for (const row of memberships) {
+      let parsed = null;
+      try { parsed = JSON.parse(row.plan_snapshot_json || '{}'); } catch {}
+      if (!parsed?.code) saveMembership.run(JSON.stringify(planSnapshotFromRow(row)), row.id);
+    }
+    const orders = db.prepare(`SELECT o.id,o.plan_code,o.plan_snapshot_json,p.* FROM membership_orders o JOIN membership_plans p ON p.code=o.plan_code`).all();
+    const saveOrder = db.prepare('UPDATE membership_orders SET plan_snapshot_json=? WHERE id=?');
+    for (const row of orders) {
+      let parsed = null;
+      try { parsed = JSON.parse(row.plan_snapshot_json || '{}'); } catch {}
+      if (!parsed?.code) saveOrder.run(JSON.stringify(planSnapshotFromRow(row)), row.id);
+    }
+  }
+  freezeLegacyPlanSnapshots();
 
   const CONFIG_KEY = createHmac('sha256', secret).update('gptlock-account-secure-settings:v1').digest();
   const CODE_KEY = createHmac('sha256', secret).update('gptlock-account-email-code:v1').digest();
@@ -258,6 +307,7 @@ export function createAccountSystem({
   const EMAIL_CODE_MAX_ATTEMPTS = Math.max(3, Number(env.GPTLOCK_ACCOUNT_EMAIL_CODE_MAX_ATTEMPTS || 6));
   const TEST_EMAIL_MODE = env.GPTLOCK_ACCOUNT_EMAIL_TEST_MODE === '1';
   const testOutbox = TEST_EMAIL_MODE ? [] : null;
+  const dummyPasswordHashPromise = encodePassword(randomBytes(24).toString('base64url'));
 
   function getSetting(key, fallback = '') {
     const row = db.prepare('SELECT value FROM app_settings WHERE key=?').get(key);
@@ -367,19 +417,30 @@ export function createAccountSystem({
   }
   function userByEmail(email) { return db.prepare('SELECT * FROM users WHERE email=?').get(normalizeEmail(email)); }
   function userById(id) { return db.prepare('SELECT * FROM users WHERE id=?').get(Number(id)); }
+  function hydrateMembership(row) {
+    if (!row) return null;
+    const fallback = planSnapshotFromRow({
+      code: row.plan_code, name: row.current_plan_name, price_cents: row.current_price_cents, duration_days: row.current_duration_days,
+      max_devices: row.current_max_devices, max_windows: row.current_max_windows, benefits_json: row.current_benefits_json,
+    });
+    const terms = normalizePlanSnapshot(row.plan_snapshot_json, fallback);
+    return { ...row, name: terms.name, price_cents: terms.priceCents, duration_days: terms.durationDays,
+      max_devices: terms.maxDevices, max_windows: terms.maxWindows, benefits_json: JSON.stringify(terms.benefits) };
+  }
+  const MEMBERSHIP_SELECT = `SELECT m.*,p.name AS current_plan_name,p.price_cents AS current_price_cents,
+      p.duration_days AS current_duration_days,p.max_devices AS current_max_devices,p.max_windows AS current_max_windows,
+      p.benefits_json AS current_benefits_json FROM memberships m JOIN membership_plans p ON p.code=m.plan_code`;
   function currentMembership(userId) {
     const now = nowIso();
-    return db.prepare(`SELECT m.*,p.name,p.price_cents,p.duration_days,p.max_devices,p.max_windows,p.benefits_json
-      FROM memberships m JOIN membership_plans p ON p.code=m.plan_code
+    return hydrateMembership(db.prepare(`${MEMBERSHIP_SELECT}
       WHERE m.user_id=? AND m.status='active' AND m.starts_at<=? AND m.expires_at>?
-      ORDER BY m.expires_at DESC LIMIT 1`).get(userId, now, now) || null;
+      ORDER BY m.expires_at DESC LIMIT 1`).get(userId, now, now));
   }
   function nextMembership(userId) {
     const now = nowIso();
-    return db.prepare(`SELECT m.*,p.name,p.max_devices,p.max_windows
-      FROM memberships m JOIN membership_plans p ON p.code=m.plan_code
+    return hydrateMembership(db.prepare(`${MEMBERSHIP_SELECT}
       WHERE m.user_id=? AND m.status='active' AND m.starts_at>?
-      ORDER BY m.starts_at ASC LIMIT 1`).get(userId, now) || null;
+      ORDER BY m.starts_at ASC LIMIT 1`).get(userId, now));
   }
   function entitlementFor(user) {
     const free = freeConfig();
@@ -613,18 +674,19 @@ export function createAccountSystem({
     return { token, account: accountSummary(userById(user.id), session), heartbeatSeconds: 60 };
   }
 
-  function grantMembership(userId, planCode, source = 'admin', orderId = null) {
+  function grantMembership(userId, planCode, source = 'admin', orderId = null, frozenTerms = null) {
     const plan = db.prepare('SELECT * FROM membership_plans WHERE code=?').get(String(planCode || ''));
     if (!plan) fail(404, 'PLAN_NOT_FOUND', '会员套餐不存在');
+    const terms = normalizePlanSnapshot(frozenTerms, plan);
+    if (terms.code !== plan.code) fail(409, 'PLAN_SNAPSHOT_MISMATCH', '订单套餐快照与套餐不匹配');
     const latest = db.prepare(`SELECT expires_at FROM memberships WHERE user_id=? AND status='active' ORDER BY expires_at DESC LIMIT 1`).get(userId);
     const baseMs = Math.max(Date.now(), Date.parse(latest?.expires_at || '') || 0);
     const startsAt = new Date(baseMs).toISOString();
-    const expiresAt = new Date(baseMs + plan.duration_days * DAY_MS).toISOString();
-    const result = db.prepare(`INSERT INTO memberships(user_id,plan_code,starts_at,expires_at,status,source,order_id,created_at) VALUES(?,?,?,?, 'active',?,?,?)`)
-      .run(userId, plan.code, startsAt, expiresAt, source, orderId, nowIso());
+    const expiresAt = new Date(baseMs + terms.durationDays * DAY_MS).toISOString();
+    const result = db.prepare(`INSERT INTO memberships(user_id,plan_code,starts_at,expires_at,status,source,order_id,plan_snapshot_json,created_at) VALUES(?,?,?,?, 'active',?,?,?,?)`)
+      .run(userId, plan.code, startsAt, expiresAt, source, orderId, JSON.stringify(terms), nowIso());
     audit('membership_granted', userId, { membershipId: Number(result.lastInsertRowid), planCode: plan.code, startsAt, expiresAt, source });
-    return db.prepare(`SELECT m.*,p.name,p.price_cents,p.duration_days,p.max_devices,p.max_windows,p.benefits_json
-      FROM memberships m JOIN membership_plans p ON p.code=m.plan_code WHERE m.id=?`).get(Number(result.lastInsertRowid));
+    return hydrateMembership(db.prepare(`${MEMBERSHIP_SELECT} WHERE m.id=?`).get(Number(result.lastInsertRowid)));
   }
 
   function orderPublic(row) {
@@ -640,6 +702,7 @@ export function createAccountSystem({
       expiresAt: row.expires_at,
       paidAt: row.paid_at,
       membershipId: row.membership_id,
+      planSnapshot: normalizePlanSnapshot(row.plan_snapshot_json, db.prepare('SELECT * FROM membership_plans WHERE code=?').get(row.plan_code)),
     };
   }
   function markOrderPaid(row) {
@@ -650,7 +713,8 @@ export function createAccountSystem({
       db.prepare(`UPDATE membership_orders SET status='expired' WHERE id=? AND status='pending'`).run(row.id);
       fail(409, 'ORDER_EXPIRED', '订单已过期，请让用户重新创建订单');
     }
-    const membership = grantMembership(row.user_id, row.plan_code, 'order', row.id);
+    const frozenTerms = normalizePlanSnapshot(row.plan_snapshot_json, db.prepare('SELECT * FROM membership_plans WHERE code=?').get(row.plan_code));
+    const membership = grantMembership(row.user_id, row.plan_code, 'order', row.id, frozenTerms);
     db.prepare(`UPDATE membership_orders SET status='paid',paid_at=?,membership_id=? WHERE id=?`)
       .run(nowIso(), membership.id, row.id);
     audit('order_marked_paid', row.user_id, { orderId: row.id, membershipId: membership.id });
@@ -731,7 +795,9 @@ export function createAccountSystem({
         rateCheck('login-ip', req, LOGIN_IP_MAX, LOGIN_WINDOW_MS);
         rateCheck('login', req, LOGIN_MAX, LOGIN_WINDOW_MS, email);
         const user = userByEmail(email);
-        const valid = Boolean(user && await verifyPassword(input.password, user.password_hash));
+        const verificationHash = user?.password_hash || await dummyPasswordHashPromise;
+        const passwordMatches = await verifyPassword(input.password, verificationHash);
+        const valid = Boolean(user && passwordMatches);
         if (!valid) {
           rateFailure('login-ip', req, LOGIN_IP_MAX, LOGIN_WINDOW_MS);
           rateFailure('login', req, LOGIN_MAX, LOGIN_WINDOW_MS, email);
@@ -857,8 +923,9 @@ export function createAccountSystem({
         if (!method) fail(400, 'PAYMENT_METHOD_UNAVAILABLE', '支付方式未启用');
         const payUrl = normalizeHttpsUrl(method.pay_url) || '';
         const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-        const result = db.prepare(`INSERT INTO membership_orders(user_id,plan_code,payment_method,amount_cents,status,pay_url,created_at,expires_at)
-          VALUES(?,?,?,?, 'pending',?,?,?)`).run(session.user_id, plan.code, method.code, plan.price_cents, payUrl, nowIso(), expiresAt);
+        const frozenTerms = planSnapshotFromRow(plan);
+        const result = db.prepare(`INSERT INTO membership_orders(user_id,plan_code,payment_method,amount_cents,status,pay_url,created_at,expires_at,plan_snapshot_json)
+          VALUES(?,?,?,?, 'pending',?,?,?,?)`).run(session.user_id, plan.code, method.code, plan.price_cents, payUrl, nowIso(), expiresAt, JSON.stringify(frozenTerms));
         const order = db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(result.lastInsertRowid));
         audit('order_created', session.user_id, { orderId: order.id, planCode: plan.code, paymentMethod: method.code, amountCents: plan.price_cents });
         return json(res, 201, { ok: true, order: orderPublic(order), instructions: method.instructions }, cors), true;
@@ -948,8 +1015,8 @@ export function createAccountSystem({
       if (userMatch && req.method === 'GET') {
         const user = userById(Number(userMatch[1]));
         if (!user) fail(404, 'USER_NOT_FOUND', '用户不存在');
-        const memberships = db.prepare(`SELECT m.*,p.name,p.max_devices,p.max_windows,p.benefits_json FROM memberships m
-          JOIN membership_plans p ON p.code=m.plan_code WHERE m.user_id=? ORDER BY m.id DESC LIMIT 50`).all(user.id).map(membershipPublic);
+        const memberships = db.prepare(`${MEMBERSHIP_SELECT} WHERE m.user_id=? ORDER BY m.id DESC LIMIT 50`).all(user.id)
+          .map(hydrateMembership).map(membershipPublic);
         const devices = db.prepare('SELECT id,device_id,platform,first_seen_at,last_seen_at FROM user_devices WHERE user_id=? ORDER BY last_seen_at DESC').all(user.id);
         return json(res, 200, { ok: true, user: adminUserRow(user), memberships, devices }), true;
       }
@@ -1091,7 +1158,10 @@ export function createAccountSystem({
         const rows = db.prepare(`SELECT o.*,u.email,p.name AS plan_name,pm.name AS payment_name FROM membership_orders o
           JOIN users u ON u.id=o.user_id JOIN membership_plans p ON p.code=o.plan_code JOIN payment_methods pm ON pm.code=o.payment_method
           ORDER BY o.id DESC LIMIT 500`).all();
-        return json(res, 200, { ok: true, orders: rows.map((row) => ({ ...orderPublic(row), email: row.email, planName: row.plan_name, paymentName: row.payment_name })) }), true;
+        return json(res, 200, { ok: true, orders: rows.map((row) => {
+          const order = orderPublic(row);
+          return { ...order, email: row.email, planName: order.planSnapshot.name, paymentName: row.payment_name };
+        }) }), true;
       }
       const paidMatch = path.match(/^\/admin\/api\/account\/orders\/(\d+)\/mark-paid$/);
       if (paidMatch && req.method === 'POST') {

@@ -269,6 +269,17 @@ test('account system verifies email, enforces entitlements, manages membership, 
     assert.equal(createOrder.data.order.amountCents, 1999);
     assert.equal(createOrder.data.order.payUrl, 'https://pay.example.com/wechat');
     assert.equal(createOrder.data.order.status, 'pending');
+    assert.equal(createOrder.data.order.planSnapshot.name, '月卡 Pro');
+    assert.equal(createOrder.data.order.planSnapshot.maxDevices, 4);
+
+    // Existing orders must keep the purchased terms even if the administrator changes the plan before payment confirmation.
+    const futurePlanUpdate = await jsonRequest(`${base}/admin/api/account/plans/monthly`, {
+      method: 'PUT', headers: { cookie }, body: {
+        name: '月卡 Future', priceCents: 2999, durationDays: 45, maxDevices: 8, maxWindows: 8,
+        benefits: ['45 天会员', '8 台设备', '8 个同时窗口'], enabled: true,
+      },
+    });
+    assert.equal(futurePlanUpdate.response.status, 200);
 
     const markPaid = await jsonRequest(`${base}/admin/api/account/orders/${createOrder.data.order.id}/mark-paid`, {
       method: 'POST', headers: { cookie }, body: {},
@@ -282,7 +293,8 @@ test('account system verifies email, enforces entitlements, manages membership, 
     assert.equal(meAfterMembership.response.status, 200);
     assert.equal(meAfterMembership.data.account.membership.planCode, 'monthly');
     assert.equal(meAfterMembership.data.account.membership.name, '月卡 Pro');
-    // Per-user overrides intentionally remain stronger than plan defaults.
+    assert.deepEqual(meAfterMembership.data.account.membership.limits, { devices: 4, windows: 4 });
+    // Per-user overrides intentionally remain stronger than the frozen purchased plan defaults.
     assert.equal(meAfterMembership.data.account.entitlement.limits.devices, 2);
     assert.equal(meAfterMembership.data.account.entitlement.limits.windows, 2);
 
