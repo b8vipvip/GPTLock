@@ -130,3 +130,117 @@ test('full conversation metrics follow only the active current_node branch inste
   assert.ok(metrics.characters < 1_000);
   assert.ok(metrics.tokens > 10);
 });
+
+
+test('persistent context checkpoints survive shrink/reconcile and continue cumulative observation after restart', () => {
+  const first = budget.buildContextCheckpoint({
+    accountScope: 'acct-one',
+    accountScopeSource: 'user-id',
+    conversationId: 'conv-1',
+    conversationKey: 'conversation:conv-1',
+    model: 'gpt-5.6-sol',
+    snapshot: {
+      historyTokens: 100_000,
+      historyCharacters: 300_000,
+      messageCount: 100,
+      historyMeasurementSource: 'conversation-tree+dom-reconcile',
+    },
+    currentNode: 'node-a',
+    measuredAt: '2026-08-29T03:00:00.000Z',
+  });
+  assert.equal(first.activeContextTokens, 100_000);
+  assert.equal(first.cumulativeTokens, 100_000);
+
+  const compressed = budget.buildContextCheckpoint({
+    previous: first,
+    accountScope: 'acct-one',
+    accountScopeSource: 'user-id',
+    conversationId: 'conv-1',
+    conversationKey: 'conversation:conv-1',
+    model: 'gpt-5.6-sol',
+    snapshot: {
+      historyTokens: 70_000,
+      historyCharacters: 210_000,
+      messageCount: 70,
+      historyMeasurementSource: 'conversation-tree+dom-reconcile',
+    },
+    currentNode: 'node-b',
+    measuredAt: '2026-08-29T03:05:00.000Z',
+  });
+  assert.equal(compressed.activeContextTokens, 70_000);
+  assert.equal(compressed.cumulativeTokens, 100_000);
+
+  const continued = budget.buildContextCheckpoint({
+    previous: compressed,
+    accountScope: 'acct-one',
+    accountScopeSource: 'user-id',
+    conversationId: 'conv-1',
+    conversationKey: 'conversation:conv-1',
+    model: 'gpt-5.6-sol',
+    snapshot: {
+      historyTokens: 90_000,
+      historyCharacters: 270_000,
+      messageCount: 90,
+      historyMeasurementSource: 'conversation-tree+dom-reconcile',
+    },
+    currentNode: 'node-c',
+    measuredAt: '2026-08-29T03:10:00.000Z',
+  });
+  assert.equal(continued.activeContextTokens, 90_000);
+  assert.equal(continued.cumulativeTokens, 120_000);
+  assert.equal(continued.cumulativeMessages, 120);
+});
+
+test('context checkpoint keys isolate account, conversation and model', () => {
+  const base = budget.checkpointStorageKey('acct-one', 'conv-one', 'gpt-5.6-sol');
+  assert.ok(base?.startsWith('gptlock.context-state.v1:'));
+  assert.notEqual(base, budget.checkpointStorageKey('acct-two', 'conv-one', 'gpt-5.6-sol'));
+  assert.notEqual(base, budget.checkpointStorageKey('acct-one', 'conv-two', 'gpt-5.6-sol'));
+  assert.notEqual(base, budget.checkpointStorageKey('acct-one', 'conv-one', 'gpt-5.4-mini'));
+  assert.equal(budget.checkpointStorageKey(null, 'conv-one', 'gpt-5.6-sol'), null);
+});
+
+test('pending over-limit learning can resume after browser restart only with matching fresh evidence', () => {
+  const startedAt = 1_000_000;
+  const record = budget.serializePendingBypassRecord({
+    startedAt,
+    conversationKey: 'conversation:conv-one',
+    preSnapshot: {
+      usedTokens: 1_010_000,
+      fullConversationCharacters: 3_000_000,
+      conversationKey: 'conversation:conv-one',
+      model: 'gpt-5.6-sol',
+    },
+    baselineAssistantCount: 100,
+    model: 'gpt-5.6-sol',
+    accountScope: 'acct-one',
+    accountScopeSource: 'user-id',
+    requestId: 'req-1',
+    requestObserved: true,
+    responseSeen: true,
+    responseSuccessful: true,
+  });
+  assert.ok(record);
+  const resumed = budget.restorePendingBypassRecord(record, {
+    now: startedAt + 10_000,
+    accountScope: 'acct-one',
+    conversationKey: 'conversation:conv-one',
+    model: 'gpt-5.6-sol',
+  });
+  assert.equal(resumed.requestObserved, true);
+  assert.equal(resumed.preSnapshot.usedTokens, 1_010_000);
+  assert.equal(resumed.learningStarted, false);
+
+  assert.equal(budget.restorePendingBypassRecord(record, {
+    now: record.expiresAt + 1,
+    accountScope: 'acct-one',
+    conversationKey: 'conversation:conv-one',
+    model: 'gpt-5.6-sol',
+  }), null);
+  assert.equal(budget.restorePendingBypassRecord(record, {
+    now: startedAt + 10_000,
+    accountScope: 'acct-two',
+    conversationKey: 'conversation:conv-one',
+    model: 'gpt-5.6-sol',
+  }), null);
+});
