@@ -40,6 +40,12 @@ Public builds now use verified-email accounts instead of license codes. Password
 
 Admin cookies use HttpOnly, Secure and SameSite=Strict, state-changing admin requests are origin-checked, SQLite access uses prepared statements, SMTP secrets are AES-256-GCM encrypted at rest, and payment links must be HTTPS. Extension ID/CORS checks are hardening rather than cryptographic identity, and local client checks must not be presented as unbreakable DRM.
 
+## 账号认证与会员交易完整性补充
+
+- 登录对“账号存在”和“账号不存在”都会执行同级别的 scrypt 校验工作，减少通过响应耗时枚举邮箱的侧信道。
+- 服务只监听 loopback 时才信任反向代理客户端 IP；优先使用代理覆盖的 `X-Real-IP`，否则使用 `X-Forwarded-For` 的最后一跳，避免攻击者伪造最左侧 XFF 绕过进程内限流。生产反向代理仍应明确覆盖这些头。
+- 会员订单在创建时冻结套餐名称、价格、时长、设备/窗口上限与权益说明；到账发放的会员记录继续保存同一份快照。管理员后续修改套餐只影响新订单，不会偷偷改变已购买或已生效会员的权益。
+
 ## 请求锁定的最小修改范围
 
 0.3.6 会在正式 conversation POST 发出前短暂读取请求体，因为只有这样才能检查网页实际准备发送的顶层模型字段。修改范围刻意限制为：
