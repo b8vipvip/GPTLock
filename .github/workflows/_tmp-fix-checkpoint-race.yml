@@ -1,0 +1,39 @@
+name: Temporary Checkpoint Race Fix
+
+on:
+  push:
+    branches:
+      - feat/persistent-context-state
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-test:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/persistent-context-state
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply guard
+        run: python3 tools/_tmp_fix_checkpoint_race.py
+      - name: Test
+        working-directory: extension
+        run: npm test
+      - name: Clean temporary tooling
+        run: |
+          rm -f tools/_tmp_fix_checkpoint_race.py
+          rm -f .github/workflows/_tmp-fix-checkpoint-race.yml
+      - name: Commit final guard
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: avoid cross-conversation checkpoint writes"
+          git push origin HEAD:feat/persistent-context-state
