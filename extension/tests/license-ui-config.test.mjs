@@ -28,6 +28,8 @@ test('default popup uses a versioned cache-proof entrypoint with no legacy licen
   assert.doesNotMatch(html, /授权验证 \/ License/);
   assert.doesNotMatch(html, /licensePurchase|licenseActivate|licenseCode/);
   assert.doesNotMatch(html, /GPTL-/);
+  assert.doesNotMatch(html, /<button id="reconnect"/);
+  assert.doesNotMatch(html, /<button id="logs"/);
   assert.doesNotMatch(js, /GPTLOCK_LICENSE_ACTIVATE/);
 
   assert.match(shell, /SHELL_REVISION = 'v0513-license-ui-purge-1'/);
@@ -38,5 +40,5 @@ test('default popup uses a versioned cache-proof entrypoint with no legacy licen
 
   assert.match(css, /input\[placeholder\^="GPTL-" i\]/);
   assert.match(css, /section:has\(input\[placeholder\^="GPTL-" i\]\)/);
-  assert.match(css, /grid-template-columns:\s*repeat\(5,/);
+  assert.match(css, /grid-template-columns:\s*repeat\(3,/);
 });
