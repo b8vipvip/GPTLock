@@ -66,9 +66,12 @@ jobs:
 
       - name: Delete fully merged short-lived branches
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
+          owner="${GITHUB_REPOSITORY%%/*}"
 
           deleted=0
           kept=0
@@ -77,15 +80,35 @@ jobs:
             [[ "$branch" == "HEAD" || "$branch" == "main" ]] && continue
 
             case "$branch" in
-              feat/*|fix/*|codex/*|chore/*|refactor/*|test/*|ci-inspection-placeholder)
+              feat/*|fix/*|codex/*|chore/*|refactor/*|test/*|ui/*|hardening/*|ci-inspection-placeholder)
                 ;;
               *)
                 continue
                 ;;
             esac
 
+            delete_reason=""
             if git merge-base --is-ancestor "$ref" "$GITHUB_SHA"; then
-              echo "Deleting fully merged branch: $branch"
+              delete_reason="git-ancestor"
+            else
+              # Squash/rebase merges do not make the branch tip an ancestor of main.
+              # Delete only when a merged PR targets main AND its recorded head SHA is
+              # exactly the branch's current tip, so a branch reused after merge is safe.
+              branch_sha="$(git rev-parse "$ref")"
+              pr_json="$(gh api --method GET \
+                "/repos/$GITHUB_REPOSITORY/pulls" \
+                -f state=closed \
+                -f base=main \
+                -f "head=$owner:$branch" \
+                -f per_page=100)"
+              merged_tip_count="$(jq --arg sha "$branch_sha" '[.[] | select(.merged_at != null and .head.sha == $sha)] | length' <<<"$pr_json")"
+              if [[ "$merged_tip_count" -ge 1 ]]; then
+                delete_reason="merged-pr-head"
+              fi
+            fi
+
+            if [[ -n "$delete_reason" ]]; then
+              echo "Deleting merged branch: $branch ($delete_reason)"
               if git push origin --delete "$branch"; then
                 deleted=$((deleted + 1))
               else
@@ -93,10 +116,10 @@ jobs:
                 kept=$((kept + 1))
               fi
             else
-              echo "Keeping unmerged branch: $branch"
+              echo "Keeping branch without conclusive merge evidence: $branch"
               kept=$((kept + 1))
             fi
           done < <(git for-each-ref --format='%(refname)' refs/remotes/origin)
 
           echo "Deleted merged branches: $deleted"
-          echo "Kept unmerged/protected development branches: $kept"
+          echo "Kept development branches without conclusive merge evidence: $kept"
