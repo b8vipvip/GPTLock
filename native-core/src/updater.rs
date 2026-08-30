@@ -173,16 +173,20 @@ fn unblock_verified_download(path: &Path) -> Result<bool> {
 }
 
 #[cfg(windows)]
-fn windows_command_line(installer: &Path, install_root: &Path, installer_log: &Path) -> Result<String> {
+fn windows_command_line(
+    installer: &Path,
+    install_root: &Path,
+    installer_log: &Path,
+) -> Result<String> {
     let installer = installer
         .to_str()
         .context("Windows installer path is not valid UTF-8 / Windows 安装器路径不是有效 UTF-8")?;
     let install_root = install_root
         .to_str()
         .context("Windows install root is not valid UTF-8 / Windows 安装目录不是有效 UTF-8")?;
-    let installer_log = installer_log
-        .to_str()
-        .context("Windows installer log path is not valid UTF-8 / Windows 安装日志路径不是有效 UTF-8")?;
+    let installer_log = installer_log.to_str().context(
+        "Windows installer log path is not valid UTF-8 / Windows 安装日志路径不是有效 UTF-8",
+    )?;
     if [installer, install_root, installer_log]
         .iter()
         .any(|value| value.contains('"'))
@@ -293,11 +297,8 @@ pub fn prepare_update(request: PrepareUpdateRequest) -> Result<PrepareUpdateResu
         let pid = std::process::id();
         let helper_log_path = install_root.join(UPDATE_HELPER_LOG_NAME);
         let installer_log_path = install_root.join(UPDATE_INSTALLER_LOG_NAME);
-        let launcher_process_id = launch_installer_via_wmi(
-            &installer_path,
-            &install_root,
-            &installer_log_path,
-        )?;
+        let launcher_process_id =
+            launch_installer_via_wmi(&installer_path, &install_root, &installer_log_path)?;
         write_update_launch_log(
             &helper_log_path,
             &installer_log_path,
@@ -350,9 +351,9 @@ mod tests {
         let install_root = Path::new(r"C:\Users\test\AppData\Local\GPTLock");
         let installer_log = install_root.join(UPDATE_INSTALLER_LOG_NAME);
         let command = windows_command_line(installer, install_root, &installer_log).unwrap();
-        assert!(command.starts_with(r#"\"C:\Users\test\Downloads\GPTLockSetup-x64.exe\""#));
+        assert!(command.starts_with("\"C:\\Users\\test\\Downloads\\GPTLockSetup-x64.exe\""));
         assert!(command.contains("/VERYSILENT"));
-        assert!(command.contains(r#"/DIR=\"C:\Users\test\AppData\Local\GPTLock\""#));
+        assert!(command.contains("/DIR=\"C:\\Users\\test\\AppData\\Local\\GPTLock\""));
         assert!(command.contains("update-installer.log"));
     }
 
