@@ -5,6 +5,7 @@ import {
   appendDiagnosticSseCapture,
   boundRuntimeLogs,
   createDiagnosticSseCapture,
+  prepareRuntimeLogUploadEntry,
   sanitizeLogValue,
 } from '../runtime-log.js';
 
@@ -58,6 +59,20 @@ test('clips overly long strings without dropping diagnostic context', () => {
   assert.ok(value.error.length < 2100);
 });
 
+test('runtime log upload entries stay bounded and preserve the client log id', () => {
+  const entry = prepareRuntimeLogUploadEntry({
+    id: 'log:test-12345678',
+    timestamp: '2026-08-30T08:00:00.000Z',
+    level: 'error',
+    component: 'network',
+    event: 'response_failed',
+    details: { authorization: 'Bearer secret', payload: 'x'.repeat(30000) },
+  });
+  assert.equal(entry.id, 'log:test-12345678');
+  assert.equal(entry.details.authorization, '[redacted]');
+  assert.ok(JSON.stringify(entry.details).length < 14000);
+});
+
 test('keeps auto-verification SSE byte-for-byte when the aggregate stays under the cap', () => {
   const body = 'event: message\ndata: {"type":"debug","model_slug":"gpt-5.6-sol"}\n\n';
   const capture = appendDiagnosticSseCapture(
@@ -94,8 +109,6 @@ test('does not persist a partial raw SSE body when the aggregate size limit woul
   assert.equal(capture.omitted[0].reason, 'diagnostic_stream_size_limit');
   assert.equal(capture.captureScope, 'auto_verification_stream_only');
 });
-
-
 
 test('stores matched WebSocket frames under the same aggregate stream budget', () => {
   const capture = appendDiagnosticSseCapture(
