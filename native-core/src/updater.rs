@@ -192,10 +192,10 @@ fn launch_installer_helper(
     use std::process::Command;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let core_path = powershell_literal(&install_root.join("bin").join("gptlock-core.exe"))?;
     let installer = powershell_literal(installer)?;
     let install_root = powershell_literal(install_root)?;
     let helper_log = powershell_literal(helper_log_path)?;
-    let core_path = powershell_literal(&install_root_from_path(install_root.as_str()))?;
     let target_version = powershell_text_literal(target_version);
     let command = format!(
         "$ErrorActionPreference='Stop'; $log='{helper_log}'; $core='{core_path}'; $targetVersion='{target_version}'; function Write-UpdateLog([string]$message) {{ try {{ $stamp=(Get-Date).ToString('o'); Add-Content -LiteralPath $log -Value (\"$stamp $message\") -Encoding UTF8 }} catch {{ }} }}; function Stop-GptLockCore {{ Stop-Process -Id {current_pid} -Force -ErrorAction SilentlyContinue; Get-Process -Name 'gptlock-core' -ErrorAction SilentlyContinue | ForEach-Object {{ try {{ if ($_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq [IO.Path]::GetFullPath($core))) {{ Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }} }} catch {{ }} }} }}; try {{ try {{ Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue }} catch {{ }}; Write-UpdateLog 'helper_started'; Start-Sleep -Milliseconds 1500; Stop-GptLockCore; Write-UpdateLog 'installed_core_processes_stopped'; Start-Sleep -Milliseconds 500; $arguments=@('/SUPPRESSMSGBOXES','/NORESTART','/VERYSILENT','/DIR=\"{install_root}\"'); Write-UpdateLog 'installer_starting'; $process=Start-Process -FilePath '{installer}' -ArgumentList $arguments -Wait -PassThru; Write-UpdateLog (\"installer_exit=\" + $process.ExitCode); if ($process.ExitCode -ne 0) {{ exit $process.ExitCode }}; if (-not (Test-Path -LiteralPath $core -PathType Leaf)) {{ throw 'installed core binary is missing' }}; $versionOutput=(& $core --version 2>&1 | Out-String).Trim(); Write-UpdateLog (\"installed_core_version=\" + $versionOutput); if ($versionOutput -notmatch [regex]::Escape($targetVersion)) {{ throw (\"installed core version mismatch: \" + $versionOutput) }}; Write-UpdateLog 'update_verified'; exit 0 }} catch {{ Write-UpdateLog (\"helper_error=\" + $_.Exception.Message); exit 1 }}"
@@ -214,11 +214,6 @@ fn launch_installer_helper(
         .spawn()
         .context("failed to start update helper / 无法启动更新辅助进程")?;
     Ok(())
-}
-
-#[cfg(windows)]
-fn install_root_from_path(install_root: &str) -> PathBuf {
-    Path::new(install_root).join("bin").join("gptlock-core.exe")
 }
 
 pub fn prepare_update(request: PrepareUpdateRequest) -> Result<PrepareUpdateResult> {
