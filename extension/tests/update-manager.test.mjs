@@ -22,10 +22,10 @@ test('normalizes and compares release versions', () => {
 });
 
 test('requires the safe updater core baseline for Windows one-click installs', () => {
-  assert.equal(RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION, '0.5.6');
-  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.5'), false);
-  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.6'), true);
-  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.7'), true);
+  assert.equal(RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION, '0.5.18');
+  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.17'), false);
+  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.18'), true);
+  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.19'), true);
   assert.equal(supportsReliableWindowsOneClickUpdate('1.0.0'), true);
   assert.equal(supportsReliableWindowsOneClickUpdate('bad'), false);
   assert.equal(supportsReliableWindowsOneClickUpdate(null), false);
