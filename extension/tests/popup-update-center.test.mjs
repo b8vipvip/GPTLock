@@ -33,8 +33,19 @@ test('settings page owns the real-time updater and popup deep-links to it', asyn
   assert.match(js, /UPDATE_STATUS_KEY/);
 });
 
-test('Windows installer removes the previous extension snapshot before copying new UI files', async () => {
+test('updater polls the native core directly with bounded requests instead of full background reconnects', async () => {
+  const source = await readFile(optionsUpdate, 'utf8');
+  assert.match(source, /INSTALL_PROBE_TIMEOUT_MS/);
+  assert.match(source, /RUNTIME_MESSAGE_TIMEOUT_MS/);
+  assert.match(source, /nativeRequest\('get_status'/);
+  assert.doesNotMatch(source, /GPTLOCK_RECONNECT/);
+});
+
+test('Windows installer removes stale UI and stops the installed core before replacing binaries', async () => {
   const source = await readFile(installer, 'utf8');
   assert.match(source, /\[InstallDelete\]/);
   assert.match(source, /Type:\s*filesandordirs;\s*Name:\s*"\{app\}\\extension"/);
+  assert.match(source, /function StopInstalledCoreProcesses\(\): Boolean/);
+  assert.match(source, /function PrepareToInstall\(var NeedsRestart: Boolean\): String/);
+  assert.match(source, /Get-Process -Name ''gptlock-core''/);
 });
