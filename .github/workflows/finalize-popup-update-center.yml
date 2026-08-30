@@ -1,0 +1,40 @@
+name: Finalize popup update center
+
+on:
+  push:
+    branches:
+      - fix/popup-update-center-v0.5.12
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/popup-update-center-v0.5.12
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Refresh Cargo.lock for v0.5.12
+        run: cargo check --manifest-path native-core/Cargo.toml
+      - name: Extension and server regression suite
+        run: npm test --prefix extension
+      - name: Verify locked Rust build
+        run: cargo check --locked --manifest-path native-core/Cargo.toml
+      - name: Final diff check
+        run: git diff --check
+      - name: Remove one-shot workflow and commit lockfile
+        run: |
+          rm -f .github/workflows/finalize-popup-update-center.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix: finalize popup update center'
+          git push origin HEAD:fix/popup-update-center-v0.5.12
