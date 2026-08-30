@@ -7,7 +7,7 @@ export const LEGACY_SETTINGS_PAGES = new Set([
 function extensionPageName(url) {
   try {
     const parsed = new URL(url);
-    if (parsed.origin !== new URL(chrome.runtime.getURL('/')).origin) return null;
+    if (parsed.protocol !== 'chrome-extension:' || parsed.hostname !== chrome.runtime.id) return null;
     return parsed.pathname.split('/').filter(Boolean).pop() || null;
   } catch {
     return null;
