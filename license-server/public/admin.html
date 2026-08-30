@@ -34,7 +34,19 @@
       </section>
 
       <section id="users" class="card">
-        <div class="section-title"><div><h2>用户账户</h2><p class="muted">管理账号状态、免费期限、设备/窗口自定义上限、会员和设备绑定。</p></div><div class="section-actions"><input id="userSearch" placeholder="搜索邮箱"><button id="refreshUsers">刷新</button></div></div>
+        <div class="section-title"><div><h2>用户账户</h2><p class="muted">管理账号状态、免费期限、设备/窗口自定义上限、会员和设备绑定。</p></div><div class="section-actions"><button id="createUserToggle" class="primary">添加用户</button><input id="userSearch" placeholder="搜索邮箱"><button id="refreshUsers">刷新</button></div></div>
+        <div id="createUserPanel" class="create-user-panel" hidden>
+          <div class="section-title"><div><h3>手动添加用户</h3><p class="muted">初始密码只用于创建，不会在服务端明文保存或再次显示。</p></div><button id="cancelCreateUser">取消</button></div>
+          <div class="grid four">
+            <label>邮箱<input id="createUserEmail" type="email" autocomplete="off" placeholder="user@example.com"></label>
+            <label>初始密码<div class="field-with-button"><input id="createUserPassword" type="password" autocomplete="new-password" placeholder="至少 10 位"><button id="generateUserPassword" type="button">生成</button></div></label>
+            <label>邮箱状态<select id="createUserEmailAccess"><option value="verified">已验证，可直接登录</option><option value="exempt">免验证，可直接登录</option><option value="pending">待验证，需验证码</option></select></label>
+            <label>免费天数<input id="createUserFreeDays" type="number" min="0" max="3650"></label>
+            <label>自定义设备上限<input id="createUserDevices" type="number" min="1" max="1000" placeholder="留空=跟随默认/套餐"></label>
+            <label>自定义窗口上限<input id="createUserWindows" type="number" min="1" max="1000" placeholder="留空=跟随默认/套餐"></label>
+          </div>
+          <div class="create-user-footer"><p id="createUserMessage" class="message"></p><button id="createUserSubmit" class="primary">创建用户</button></div>
+        </div>
         <div class="table-wrap"><table><thead><tr><th>ID</th><th>邮箱</th><th>状态</th><th>权益</th><th>设备</th><th>窗口</th><th>有效期</th><th>操作</th></tr></thead><tbody id="usersBody"></tbody></table></div>
       </section>
 
