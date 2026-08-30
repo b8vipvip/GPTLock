@@ -34,6 +34,11 @@ VersionInfoDescription=GPTLock Installer
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[InstallDelete]
+; Extension UI files are code, not user data. Remove the old snapshot before copying the
+; new release so deleted/renamed legacy files can never survive an in-place update.
+Type: filesandordirs; Name: "{app}\extension"
+
 [Files]
 Source: "..\..\native-core\target\release\gptlock-core.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "..\..\extension\*"; DestDir: "{app}\extension"; Excludes: "tests\*,README.md,package.json"; Flags: ignoreversion recursesubdirs createallsubdirs
