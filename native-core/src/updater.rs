@@ -176,21 +176,29 @@ fn powershell_literal(value: &Path) -> Result<String> {
 }
 
 #[cfg(windows)]
+fn powershell_text_literal(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+#[cfg(windows)]
 fn launch_installer_helper(
     installer: &Path,
     install_root: &Path,
     current_pid: u32,
     helper_log_path: &Path,
+    target_version: &str,
 ) -> Result<()> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let core_path = powershell_literal(&install_root.join("bin").join("gptlock-core.exe"))?;
     let installer = powershell_literal(installer)?;
     let install_root = powershell_literal(install_root)?;
     let helper_log = powershell_literal(helper_log_path)?;
+    let target_version = powershell_text_literal(target_version);
     let command = format!(
-        "$ErrorActionPreference='Stop'; $log='{helper_log}'; function Write-UpdateLog([string]$message) {{ try {{ $stamp=(Get-Date).ToString('o'); Add-Content -LiteralPath $log -Value (\"$stamp $message\") -Encoding UTF8 }} catch {{ }} }}; try {{ Write-UpdateLog 'helper_started'; Start-Sleep -Milliseconds 1500; Stop-Process -Id {current_pid} -Force -ErrorAction SilentlyContinue; Write-UpdateLog 'current_core_stopped'; Start-Sleep -Milliseconds 400; $arguments=@('/SUPPRESSMSGBOXES','/NORESTART','/VERYSILENT','/DIR=\"{install_root}\"'); Write-UpdateLog 'installer_starting'; $process=Start-Process -FilePath '{installer}' -ArgumentList $arguments -Wait -PassThru; Write-UpdateLog (\"installer_exit=\" + $process.ExitCode); exit $process.ExitCode }} catch {{ Write-UpdateLog (\"helper_error=\" + $_.Exception.Message); exit 1 }}"
+        "$ErrorActionPreference='Stop'; $log='{helper_log}'; $core='{core_path}'; $targetVersion='{target_version}'; function Write-UpdateLog([string]$message) {{ try {{ $stamp=(Get-Date).ToString('o'); Add-Content -LiteralPath $log -Value (\"$stamp $message\") -Encoding UTF8 }} catch {{ }} }}; function Stop-GptLockCore {{ Stop-Process -Id {current_pid} -Force -ErrorAction SilentlyContinue; Get-Process -Name 'gptlock-core' -ErrorAction SilentlyContinue | ForEach-Object {{ try {{ if ($_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq [IO.Path]::GetFullPath($core))) {{ Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }} }} catch {{ }} }} }}; try {{ try {{ Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue }} catch {{ }}; Write-UpdateLog 'helper_started'; Start-Sleep -Milliseconds 1500; Stop-GptLockCore; Write-UpdateLog 'installed_core_processes_stopped'; Start-Sleep -Milliseconds 500; $arguments=@('/SUPPRESSMSGBOXES','/NORESTART','/VERYSILENT','/DIR=\"{install_root}\"'); Write-UpdateLog 'installer_starting'; $process=Start-Process -FilePath '{installer}' -ArgumentList $arguments -Wait -PassThru; Write-UpdateLog (\"installer_exit=\" + $process.ExitCode); if ($process.ExitCode -ne 0) {{ exit $process.ExitCode }}; if (-not (Test-Path -LiteralPath $core -PathType Leaf)) {{ throw 'installed core binary is missing' }}; $versionOutput=(& $core --version 2>&1 | Out-String).Trim(); Write-UpdateLog (\"installed_core_version=\" + $versionOutput); if ($versionOutput -notmatch [regex]::Escape($targetVersion)) {{ throw (\"installed core version mismatch: \" + $versionOutput) }}; Write-UpdateLog 'update_verified'; exit 0 }} catch {{ Write-UpdateLog (\"helper_error=\" + $_.Exception.Message); exit 1 }}"
     );
 
     Command::new("powershell.exe")
@@ -236,7 +244,13 @@ pub fn prepare_update(request: PrepareUpdateRequest) -> Result<PrepareUpdateResu
         let download_unblocked = unblock_verified_download(&installer_path)?;
         let pid = std::process::id();
         let helper_log_path = install_root.join(UPDATE_HELPER_LOG_NAME);
-        launch_installer_helper(&installer_path, &install_root, pid, &helper_log_path)?;
+        launch_installer_helper(
+            &installer_path,
+            &install_root,
+            pid,
+            &helper_log_path,
+            &target_version,
+        )?;
 
         Ok(PrepareUpdateResult {
             target_version,

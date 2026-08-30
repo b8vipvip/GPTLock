@@ -69,6 +69,49 @@ begin
   StringChangeEx(Result, '"', '\"', True);
 end;
 
+function PowerShellSingleQuote(Value: String): String;
+begin
+  Result := Value;
+  StringChangeEx(Result, '''', '''''', True);
+end;
+
+function StopInstalledCoreProcesses(): Boolean;
+var
+  CorePath: String;
+  Script: String;
+  Params: String;
+  ResultCode: Integer;
+begin
+  CorePath := PowerShellSingleQuote(ExpandConstant('{app}\bin\gptlock-core.exe'));
+  Script :=
+    '$ErrorActionPreference=''Stop''; ' +
+    '$target=[IO.Path]::GetFullPath(''' + CorePath + '''); ' +
+    '$matches=@(Get-Process -Name ''gptlock-core'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $target) } catch { $false } }); ' +
+    'foreach ($p in $matches) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }; ' +
+    'Start-Sleep -Milliseconds 500; ' +
+    '$remaining=@(Get-Process -Name ''gptlock-core'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $target) } catch { $false } }); ' +
+    'if ($remaining.Count -gt 0) { throw ''GPTLock core still running'' }';
+  Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + Script + '"';
+  Result := Exec(
+    ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    Params,
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  ) and (ResultCode = 0);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if FileExists(ExpandConstant('{app}\bin\gptlock-core.exe')) then
+  begin
+    if not StopInstalledCoreProcesses() then
+      Result := '无法停止正在运行的 GPTLock 本地核心，请完全退出浏览器后重试 / Could not stop the running GPTLock core; fully exit the browser and retry.';
+  end;
+end;
+
 procedure WriteNativeManifest(FileName: String);
 var
   Json: String;
