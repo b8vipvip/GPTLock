@@ -31,20 +31,20 @@ jobs:
           text = updater.read_text(encoding='utf-8')
           start = text.index('    #[cfg(windows)]\n    #[test]\n    fn formats_silent_installer_command_line()')
           end = text.index('    #[cfg(windows)]\n    #[test]\n    fn unblock_verified_download_is_idempotent_without_motw()', start)
-          replacement = r'''    #[cfg(windows)]
-    #[test]
-    fn formats_silent_installer_command_line() {
-        let installer = Path::new(r"C:\Users\test\Downloads\GPTLockSetup-x64.exe");
-        let install_root = Path::new(r"C:\Users\test\AppData\Local\GPTLock");
-        let installer_log = install_root.join(UPDATE_INSTALLER_LOG_NAME);
-        let command = windows_command_line(installer, install_root, &installer_log).unwrap();
-        assert!(command.starts_with("\"C:\\Users\\test\\Downloads\\GPTLockSetup-x64.exe\""));
-        assert!(command.contains("/VERYSILENT"));
-        assert!(command.contains("/DIR=\"C:\\Users\\test\\AppData\\Local\\GPTLock\""));
-        assert!(command.contains("update-installer.log"));
-    }
-
-'''
+          replacement = (
+              '    #[cfg(windows)]\n'
+              '    #[test]\n'
+              '    fn formats_silent_installer_command_line() {\n'
+              '        let installer = Path::new(r"C:\\Users\\test\\Downloads\\GPTLockSetup-x64.exe");\n'
+              '        let install_root = Path::new(r"C:\\Users\\test\\AppData\\Local\\GPTLock");\n'
+              '        let installer_log = install_root.join(UPDATE_INSTALLER_LOG_NAME);\n'
+              '        let command = windows_command_line(installer, install_root, &installer_log).unwrap();\n'
+              '        assert!(command.starts_with("\\\"C:\\\\Users\\\\test\\\\Downloads\\\\GPTLockSetup-x64.exe\\\""));\n'
+              '        assert!(command.contains("/VERYSILENT"));\n'
+              '        assert!(command.contains("/DIR=\\\"C:\\\\Users\\\\test\\\\AppData\\\\Local\\\\GPTLock\\\""));\n'
+              '        assert!(command.contains("update-installer.log"));\n'
+              '    }\n\n'
+          )
           updater.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
 
           options = Path('extension/options-update.js')
