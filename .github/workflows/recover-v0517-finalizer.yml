@@ -38,8 +38,9 @@ jobs:
                   line = line[10:]
               lines.append(line)
           payload = '\n'.join(lines)
-          # The original one-shot workflow accidentally double-escaped regex word boundaries.
-          payload = payload.replace('\\\\b', '\\b')
+          # The original one-shot workflow over-escaped regex word boundaries.
+          # Drop either one- or two-backslash source spellings; the id match is already exact.
+          payload = payload.replace(r'\\b', '').replace(r'\b', '')
           compile(payload, '<recovered-finalizer>', 'exec')
           exec(payload, {'__name__': '__main__'})
           PY
