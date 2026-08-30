@@ -358,12 +358,22 @@ async function installReleaseInternal(release, initialState = lastState) {
       targetVersion: release.latestVersion,
     },
   });
-  appendLog(`校验通过 · 签名状态 ${prepared?.signatureStatus || 'Unknown'}`);
+  appendLog(`校验通过 · 签名状态 ${prepared?.signatureStatus || 'Unknown'} · 启动方式 ${prepared?.launcherStrategy || 'legacy'}`);
+  logUpdate('info', 'installer_launch_prepared', {
+    targetVersion: release.latestVersion,
+    launcherStrategy: prepared?.launcherStrategy ?? null,
+    launcherProcessId: prepared?.launcherProcessId ?? null,
+    helperLogPath: prepared?.helperLogPath ?? null,
+    installerLogPath: prepared?.installerLogPath ?? null,
+  });
 
   await setStatus('installing', 68, `正在后台安装 ${release.latestVersion}；Core 会短暂断开`, {
     targetVersion: release.latestVersion,
     installRoot: prepared?.installRoot ?? null,
     helperLogPath: prepared?.helperLogPath ?? null,
+    installerLogPath: prepared?.installerLogPath ?? null,
+    launcherStrategy: prepared?.launcherStrategy ?? null,
+    launcherProcessId: prepared?.launcherProcessId ?? null,
   });
 
   const installedCore = await waitForInstalledCore(release.latestVersion);
