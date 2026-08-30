@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 const INSTALLER_FILE_NAME: &str = "GPTLockSetup-x64.exe";
 #[cfg(windows)]
 const UPDATE_HELPER_LOG_NAME: &str = "update-helper.log";
+#[cfg(windows)]
+const UPDATE_INSTALLER_LOG_NAME: &str = "update-installer.log";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,6 +27,9 @@ pub struct PrepareUpdateResult {
     pub signature_status: String,
     pub download_unblocked: bool,
     pub helper_log_path: String,
+    pub installer_log_path: String,
+    pub launcher_strategy: String,
+    pub launcher_process_id: u32,
 }
 
 fn normalized_sha256(value: &str) -> Result<String> {
@@ -142,7 +147,7 @@ fn unblock_verified_download(path: &Path) -> Result<bool> {
     use std::process::Command;
 
     // Chrome/Edge attach Mark-of-the-Web (Zone.Identifier) to downloaded EXEs. Launching
-    // an unsigned MOTW file from a hidden updater helper can strand the update behind an
+    // an unsigned MOTW file from a hidden updater can strand the update behind an
     // interactive Attachment Manager/SmartScreen prompt. We remove MOTW only *after* the
     // file has matched the exact SHA-256 published by the trusted GitHub Release metadata.
     // Manual downloads are never modified by GPTLock.
@@ -168,51 +173,95 @@ fn unblock_verified_download(path: &Path) -> Result<bool> {
 }
 
 #[cfg(windows)]
-fn powershell_literal(value: &Path) -> Result<String> {
-    let text = value
+fn windows_command_line(installer: &Path, install_root: &Path, installer_log: &Path) -> Result<String> {
+    let installer = installer
         .to_str()
-        .context("Windows update path is not valid UTF-8 / Windows 更新路径不是有效 UTF-8")?;
-    Ok(text.replace('\'', "''"))
+        .context("Windows installer path is not valid UTF-8 / Windows 安装器路径不是有效 UTF-8")?;
+    let install_root = install_root
+        .to_str()
+        .context("Windows install root is not valid UTF-8 / Windows 安装目录不是有效 UTF-8")?;
+    let installer_log = installer_log
+        .to_str()
+        .context("Windows installer log path is not valid UTF-8 / Windows 安装日志路径不是有效 UTF-8")?;
+    if [installer, install_root, installer_log]
+        .iter()
+        .any(|value| value.contains('"'))
+    {
+        bail!("Windows update path contains an invalid quote / Windows 更新路径包含非法引号");
+    }
+    Ok(format!(
+        "\"{installer}\" /SUPPRESSMSGBOXES /NORESTART /VERYSILENT /DIR=\"{install_root}\" /LOG=\"{installer_log}\""
+    ))
 }
 
 #[cfg(windows)]
-fn powershell_text_literal(value: &str) -> String {
-    value.replace('\'', "''")
-}
-
-#[cfg(windows)]
-fn launch_installer_helper(
+fn launch_installer_via_wmi(
     installer: &Path,
     install_root: &Path,
-    helper_log_path: &Path,
-    target_version: &str,
-) -> Result<()> {
-    use std::os::windows::process::CommandExt;
+    installer_log: &Path,
+) -> Result<u32> {
     use std::process::Command;
 
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let installer = powershell_literal(installer)?;
-    let install_root = powershell_literal(install_root)?;
-    let helper_log = powershell_literal(helper_log_path)?;
-    let target_version = powershell_text_literal(target_version);
-    let command = format!(
-        "$ErrorActionPreference='Stop'; $log='{helper_log}'; $installer='{installer}'; $installRoot='{install_root}'; $core=Join-Path $installRoot 'bin\\gptlock-core.exe'; $targetVersion='{target_version}'; function Write-UpdateLog([string]$message) {{ try {{ $stamp=(Get-Date).ToString('o'); Add-Content -LiteralPath $log -Value (\"$stamp $message\") -Encoding UTF8 }} catch {{ }} }}; try {{ try {{ Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue }} catch {{ }}; Write-UpdateLog 'helper_started'; Start-Sleep -Milliseconds 1500; $argumentLine='/SUPPRESSMSGBOXES /NORESTART /VERYSILENT /DIR=\"' + $installRoot + '\"'; Write-UpdateLog 'installer_starting'; $process=Start-Process -FilePath $installer -ArgumentList $argumentLine -PassThru; Write-UpdateLog (\"installer_pid=\" + $process.Id); $process.WaitForExit(); Write-UpdateLog (\"installer_exit=\" + $process.ExitCode); if ($process.ExitCode -ne 0) {{ exit $process.ExitCode }}; if (-not (Test-Path -LiteralPath $core -PathType Leaf)) {{ throw 'installed core binary is missing' }}; $versionOutput=(& $core --version 2>&1 | Out-String).Trim(); Write-UpdateLog (\"installed_core_version=\" + $versionOutput); if ($versionOutput -notmatch [regex]::Escape($targetVersion)) {{ throw (\"installed core version mismatch: \" + $versionOutput) }}; Write-UpdateLog 'update_verified'; exit 0 }} catch {{ Write-UpdateLog (\"helper_error=\" + $_.Exception.Message); exit 1 }}"
+    // Native Messaging hosts are owned by the browser. Any ordinary child process can
+    // inherit the browser's Windows Job Object and be killed when the native port closes
+    // or when Setup stops the old Core. Ask the local WMI provider to create the installer
+    // instead, and explicitly request CREATE_BREAKAWAY_FROM_JOB. The installer's lifetime
+    // is then independent from the short-lived Native Messaging host that prepared it.
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    let command_line = windows_command_line(installer, install_root, installer_log)?;
+    let install_root_text = install_root
+        .to_str()
+        .context("Windows install root is not valid UTF-8 / Windows 安装目录不是有效 UTF-8")?;
+    let script = format!(
+        "$ErrorActionPreference='Stop'; $startupClass=[WMIClass]'\\\\.\\root\\cimv2:Win32_ProcessStartup'; $startup=$startupClass.CreateInstance(); $startup.CreateFlags={CREATE_BREAKAWAY_FROM_JOB}; $startup.ShowWindow=0; $processClass=[WMIClass]'\\\\.\\root\\cimv2:Win32_Process'; $result=$processClass.Create($env:GPTLOCK_UPDATE_COMMAND_LINE,$env:GPTLOCK_INSTALL_ROOT,$startup); if ([int]$result.ReturnValue -ne 0) {{ throw ('Win32_Process.Create failed with code ' + $result.ReturnValue) }}; [Console]::Out.WriteLine([string]$result.ProcessId)"
     );
-
-    Command::new("powershell.exe")
+    let output = Command::new("powershell.exe")
         .args([
             "-NoProfile",
             "-NonInteractive",
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            &command,
+            &script,
         ])
-        .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP)
-        .spawn()
-        .context("failed to start update helper / 无法启动更新辅助进程")?;
-    Ok(())
+        .env("GPTLOCK_UPDATE_COMMAND_LINE", command_line)
+        .env("GPTLOCK_INSTALL_ROOT", install_root_text)
+        .output()
+        .context("failed to invoke WMI update launcher / 无法调用 WMI 更新启动器")?;
+    if !output.status.success() {
+        bail!(
+            "WMI update launcher failed / WMI 更新启动器失败: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let process_id = stdout
+        .lines()
+        .rev()
+        .find_map(|line| line.trim().parse::<u32>().ok())
+        .context("WMI launcher did not return installer PID / WMI 启动器未返回安装器 PID")?;
+    Ok(process_id)
+}
+
+#[cfg(windows)]
+fn write_update_launch_log(
+    helper_log_path: &Path,
+    installer_log_path: &Path,
+    target_version: &str,
+    launcher_process_id: u32,
+) -> Result<()> {
+    use std::fs;
+
+    let text = format!(
+        "launcher_strategy=wmi_breakaway\ntarget_version={target_version}\ninstaller_pid={launcher_process_id}\ninstaller_log={}\n",
+        installer_log_path.display()
+    );
+    fs::write(helper_log_path, text).with_context(|| {
+        format!(
+            "failed to write update launch log: {} / 无法写入更新启动日志",
+            helper_log_path.display()
+        )
+    })
 }
 
 pub fn prepare_update(request: PrepareUpdateRequest) -> Result<PrepareUpdateResult> {
@@ -243,11 +292,17 @@ pub fn prepare_update(request: PrepareUpdateRequest) -> Result<PrepareUpdateResu
         let download_unblocked = unblock_verified_download(&installer_path)?;
         let pid = std::process::id();
         let helper_log_path = install_root.join(UPDATE_HELPER_LOG_NAME);
-        launch_installer_helper(
+        let installer_log_path = install_root.join(UPDATE_INSTALLER_LOG_NAME);
+        let launcher_process_id = launch_installer_via_wmi(
             &installer_path,
             &install_root,
+            &installer_log_path,
+        )?;
+        write_update_launch_log(
             &helper_log_path,
+            &installer_log_path,
             &target_version,
+            launcher_process_id,
         )?;
 
         Ok(PrepareUpdateResult {
@@ -258,6 +313,9 @@ pub fn prepare_update(request: PrepareUpdateRequest) -> Result<PrepareUpdateResu
             signature_status,
             download_unblocked,
             helper_log_path: helper_log_path.to_string_lossy().into_owned(),
+            installer_log_path: installer_log_path.to_string_lossy().into_owned(),
+            launcher_strategy: "wmi_breakaway".to_owned(),
+            launcher_process_id,
         })
     }
 }
@@ -283,6 +341,19 @@ mod tests {
     fn rejects_wrong_installer_filename_before_touching_disk() {
         let error = validate_installer_path(Path::new("evil.exe")).unwrap_err();
         assert!(error.to_string().contains("filename"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn formats_silent_installer_command_line() {
+        let installer = Path::new(r"C:\Users\test\Downloads\GPTLockSetup-x64.exe");
+        let install_root = Path::new(r"C:\Users\test\AppData\Local\GPTLock");
+        let installer_log = install_root.join(UPDATE_INSTALLER_LOG_NAME);
+        let command = windows_command_line(installer, install_root, &installer_log).unwrap();
+        assert!(command.starts_with(r#"\"C:\Users\test\Downloads\GPTLockSetup-x64.exe\""#));
+        assert!(command.contains("/VERYSILENT"));
+        assert!(command.contains(r#"/DIR=\"C:\Users\test\AppData\Local\GPTLock\""#));
+        assert!(command.contains("update-installer.log"));
     }
 
     #[cfg(windows)]
