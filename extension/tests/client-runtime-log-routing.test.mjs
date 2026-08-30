@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+const runtimeLog = new URL('../runtime-log.js', import.meta.url);
+const server = new URL('../../license-server/server.mjs', import.meta.url);
+const adminHtml = new URL('../../license-server/public/admin.html', import.meta.url);
+const adminJs = new URL('../../license-server/public/client-runtime-admin.js', import.meta.url);
+
+test('client runtime logs are uploaded in authenticated batches', async () => {
+  const source = await readFile(runtimeLog, 'utf8');
+  assert.match(source, /RUNTIME_LOG_UPLOAD_BATCH_SIZE\s*=\s*50/);
+  assert.match(source, /\/api\/v1\/account\/runtime-logs/);
+  assert.match(source, /authorization:\s*`Bearer \$\{token\}`/);
+  assert.match(source, /periodInMinutes:\s*1/);
+  assert.match(source, /acknowledgedIds/);
+});
+
+test('server routes client runtime logs and exposes a dedicated admin navigation section', async () => {
+  const [serverSource, html, adminSource] = await Promise.all([
+    readFile(server, 'utf8'), readFile(adminHtml, 'utf8'), readFile(adminJs, 'utf8'),
+  ]);
+  assert.match(serverSource, /createClientRuntimeLogManager/);
+  assert.match(serverSource, /clientRuntimeLogs\.handleApi/);
+  assert.match(serverSource, /clientRuntimeLogs\.handleAdmin/);
+  assert.match(html, /href="#clientLogs">客户端运行日志/);
+  assert.match(html, /id="clientLogs"/);
+  assert.match(adminSource, /\/admin\/api\/client-runtime-logs/);
+  assert.match(adminSource, /清空当前筛选/);
+});
