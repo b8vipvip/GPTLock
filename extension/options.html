@@ -55,7 +55,7 @@
     <section class="card" aria-labelledby="modelHeading">
       <h2 id="modelHeading">锁定模型 <span>Locked models</span></h2>
       <p class="help">可多选。正式聊天 POST 发出前，GPTLock 会检查顶层 model；若当前模型不在允许列表，则改写为第一个锁定模型的已知传输标识。</p>
-      <p class="permission-note">只有正式聊天请求或响应元数据确认的新模型才会加入“自动识别 / Discovered”；页面 DOM 文本只作为辅助观察，不会单独永久入库。自动识别项不会自动勾选或放宽锁定策略，只有你勾选并保存后才会成为允许模型。</p>
+      <p class="permission-note">只有正式聊天请求或响应元数据确认的新模型才会加入“自动识别 / Discovered”；页面 DOM 文本只作为辅助观察，不会单独永久入库。新模型首次加入自动识别列表时会自动勾选并立即加入锁定策略；之后你仍可手动取消勾选并保存，GPTLock 不会因后续重复证据把它再次强制启用。</p>
       <div id="modelChoices" class="choices"></div>
       <label class="field" for="customModels">
         <span>自定义模型标识（逗号分隔）</span>
