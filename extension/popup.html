@@ -119,18 +119,20 @@
 
     <p class="boundary">GPTLock 会在正式聊天 POST 发出前尝试锁定顶层模型/已有推理字段；响应元数据只用于附加确认。缺字段或验证异常不会中断聊天，只有已确认的模型不匹配才会在强制模式下阻断后续发送。<br><span>Formal chat POSTs are locked before send; response metadata is supplementary confirmation.</span></p>
 
-    <div class="actions">
-      <button id="autoVerify" type="button" class="primary auto">自动验证<br><small>自动发送可见测试消息</small></button>
-      <button id="reconnect" type="button" class="reconnect">重新连接<br><small>Reconnect</small></button>
-      <button id="checkUpdate" type="button">检查更新<br><small>有新版则自动静默安装</small></button>
-      <button id="logs" type="button">运行日志<br><small>Runtime logs</small></button>
-      <button id="options" type="button">设置<br><small>Settings</small></button>
-      <button id="installUpdate" type="button" class="primary install-update" hidden>立即更新<br><small>Install now</small></button>
+    <div class="actions" aria-label="GPTLock 快捷操作">
+      <button id="autoVerify" type="button" class="primary auto" title="自动验证 / Auto verify">自动验证</button>
+      <button id="reconnect" type="button" class="reconnect" title="重新连接 / Reconnect">重新连接</button>
+      <button id="checkUpdate" type="button" title="打开设置中的版本更新中心">检查更新</button>
+      <button id="logs" type="button" title="运行日志 / Runtime logs">运行日志</button>
+      <button id="options" type="button" title="设置 / Settings">设置</button>
     </div>
+
+    <button id="installUpdate" type="button" hidden aria-hidden="true" tabindex="-1">立即更新</button>
     <span id="currentVersion" hidden>—</span>
     <span id="updateDetail" hidden></span>
     <p id="message" role="status"></p>
   </main>
+  <script type="module" src="popup-shell.js"></script>
   <script type="module" src="auth-gate.js"></script>
   <script type="module" src="popup.js"></script>
 </body>
