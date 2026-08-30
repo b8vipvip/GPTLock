@@ -8,23 +8,27 @@ const optionsHtml = new URL('../options.html', import.meta.url);
 const optionsUpdate = new URL('../options-update.js', import.meta.url);
 const installer = new URL('../../packaging/windows/GPTLock.iss', import.meta.url);
 
-test('popup keeps the five primary actions on one compact row', async () => {
+test('popup exposes only the three user-facing actions and keeps reconnect/log controls hidden', async () => {
   const manifest = JSON.parse(await readFile(manifestUrl, 'utf8'));
   const popupHtml = new URL(`../${manifest.action.default_popup}`, import.meta.url);
   const [html, css] = await Promise.all([readFile(popupHtml, 'utf8'), readFile(popupCss, 'utf8')]);
-  for (const id of ['autoVerify', 'reconnect', 'checkUpdate', 'logs', 'options']) {
-    assert.match(html, new RegExp(`id="${id}"`));
-  }
-  assert.match(css, /grid-template-columns:\s*repeat\(5,/);
-  assert.doesNotMatch(css, /\.actions \.auto,\s*\n\.actions \.reconnect,[\s\S]*grid-column:\s*1\s*\/\s*-1/);
+  for (const id of ['autoVerify', 'checkUpdate', 'options']) assert.match(html, new RegExp(`<button id="${id}"`));
+  assert.doesNotMatch(html, /<button id="reconnect"/);
+  assert.doesNotMatch(html, /<button id="logs"/);
+  assert.match(html, /id="reconnect" hidden/);
+  assert.match(html, /id="logs" hidden/);
+  assert.match(css, /grid-template-columns:\s*repeat\(3,/);
 });
 
-test('settings page owns the real-time updater and popup deep-links to it', async () => {
+test('settings page owns the real-time updater and no longer exposes reconnect or runtime-log controls', async () => {
   const [html, js] = await Promise.all([readFile(optionsHtml, 'utf8'), readFile(optionsUpdate, 'utf8')]);
   assert.match(html, /id="updates"/);
   assert.match(html, /id="updateProgress"/);
   assert.match(html, /id="updatePercent"/);
   assert.match(html, /id="updateLog"/);
+  assert.doesNotMatch(html, /<button id="reconnect"/);
+  assert.doesNotMatch(html, /<button id="logs"/);
+  assert.match(html, /断线后自动重试/);
   assert.match(html, /options-update\.js/);
   assert.match(js, /#updates-auto/);
   assert.match(js, /fetchLatestRelease/);
