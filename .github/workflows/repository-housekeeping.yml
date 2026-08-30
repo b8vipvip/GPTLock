@@ -23,15 +23,38 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          count="$(gh api \
-            -H 'Accept: application/vnd.github+json' \
-            "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
-            --jq '[.[] | select(.merged_at != null and .base.ref == "main")] | length')"
-          if [[ "$count" -lt 1 ]]; then
-            echo "::error::Direct push to main detected at $GITHUB_SHA. Repository policy requires changes to enter main through a merged pull request."
-            exit 1
+
+          # GitHub's commit -> PR association can lag a few seconds after a merge.
+          # Prefer that API because it also works for squash/rebase merges.
+          for attempt in $(seq 1 6); do
+            count="$(gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+              --jq '[.[] | select(.merged_at != null and .base.ref == "main")] | length')"
+            if [[ "$count" -ge 1 ]]; then
+              echo "Main commit $GITHUB_SHA is associated with a merged pull request."
+              exit 0
+            fi
+            sleep 5
+          done
+
+          # Merge commits are independently verifiable from the canonical merge message.
+          # This avoids a false alarm when GitHub's association index is still stale.
+          message="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.commit.message // ""')"
+          if [[ "$message" =~ ^Merge\ pull\ request\ \#([0-9]+)\ from\  ]]; then
+            pr_number="${BASH_REMATCH[1]}"
+            pr_json="$(gh api "/repos/$GITHUB_REPOSITORY/pulls/$pr_number")"
+            merged_at="$(jq -r '.merged_at // ""' <<<"$pr_json")"
+            base_ref="$(jq -r '.base.ref // ""' <<<"$pr_json")"
+            merge_sha="$(jq -r '.merge_commit_sha // ""' <<<"$pr_json")"
+            if [[ -n "$merged_at" && "$base_ref" == "main" && "$merge_sha" == "$GITHUB_SHA" ]]; then
+              echo "Main commit $GITHUB_SHA is verified as merge commit for PR #$pr_number."
+              exit 0
+            fi
           fi
-          echo "Main commit $GITHUB_SHA is associated with a merged pull request."
+
+          echo "::error::Direct push to main detected at $GITHUB_SHA. Repository policy requires changes to enter main through a merged pull request."
+          exit 1
 
   prune-merged-branches:
     name: Prune merged development branches
@@ -43,9 +66,12 @@ jobs:
 
       - name: Delete fully merged short-lived branches
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
+          owner="${GITHUB_REPOSITORY%%/*}"
 
           deleted=0
           kept=0
@@ -54,15 +80,35 @@ jobs:
             [[ "$branch" == "HEAD" || "$branch" == "main" ]] && continue
 
             case "$branch" in
-              feat/*|fix/*|codex/*|chore/*|refactor/*|test/*|ci-inspection-placeholder)
+              feat/*|fix/*|codex/*|chore/*|refactor/*|test/*|ui/*|hardening/*|ci-inspection-placeholder)
                 ;;
               *)
                 continue
                 ;;
             esac
 
+            delete_reason=""
             if git merge-base --is-ancestor "$ref" "$GITHUB_SHA"; then
-              echo "Deleting fully merged branch: $branch"
+              delete_reason="git-ancestor"
+            else
+              # Squash/rebase merges do not make the branch tip an ancestor of main.
+              # Delete only when a merged PR targets main AND its recorded head SHA is
+              # exactly the branch's current tip, so a branch reused after merge is safe.
+              branch_sha="$(git rev-parse "$ref")"
+              pr_json="$(gh api --method GET \
+                "/repos/$GITHUB_REPOSITORY/pulls" \
+                -f state=closed \
+                -f base=main \
+                -f "head=$owner:$branch" \
+                -f per_page=100)"
+              merged_tip_count="$(jq --arg sha "$branch_sha" '[.[] | select(.merged_at != null and .head.sha == $sha)] | length' <<<"$pr_json")"
+              if [[ "$merged_tip_count" -ge 1 ]]; then
+                delete_reason="merged-pr-head"
+              fi
+            fi
+
+            if [[ -n "$delete_reason" ]]; then
+              echo "Deleting merged branch: $branch ($delete_reason)"
               if git push origin --delete "$branch"; then
                 deleted=$((deleted + 1))
               else
@@ -70,10 +116,10 @@ jobs:
                 kept=$((kept + 1))
               fi
             else
-              echo "Keeping unmerged branch: $branch"
+              echo "Keeping branch without conclusive merge evidence: $branch"
               kept=$((kept + 1))
             fi
           done < <(git for-each-ref --format='%(refname)' refs/remotes/origin)
 
           echo "Deleted merged branches: $deleted"
-          echo "Kept unmerged/protected development branches: $kept"
+          echo "Kept development branches without conclusive merge evidence: $kept"
