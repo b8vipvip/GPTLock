@@ -433,7 +433,7 @@ async function installLatest() {
     await checkForUpdates({ autoInstall: true });
     return;
   }
-  setBusy(true;
+  setBusy(true);
   try {
     platform ??= await getPlatformInfo();
     await loadRuntimeState();
