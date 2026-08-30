@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GPTLock 管理 · 更新</title>
+  <link rel="stylesheet" href="/admin.css">
+</head>
+<body data-admin-page="update">
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span>G</span><div><strong>GPTLock</strong><small>Control Center</small></div></div>
+    <nav><a href="/admin/overview" data-page="overview">总览</a><a href="/admin/users" data-page="users">用户</a><a href="/admin/plans" data-page="plans">会员</a><a href="/admin/orders" data-page="orders">订单</a><a href="/admin/settings" data-page="settings">系统配置</a><a href="/admin/client-logs" data-page="client-logs">客户端运行日志</a><a href="/admin/server-logs" data-page="server-logs">服务端日志</a><a href="/admin/update" data-page="update" class="active" aria-current="page">更新</a></nav>
+    <button id="logout" class="ghost" hidden>退出管理员</button>
+  </aside>
+  <main class="workspace">
+    <header class="topbar"><div><p>GPTLOCK ADMIN · UPDATE</p><h1>更新</h1></div><span class="security-pill">Account Control</span></header>
+    <section id="login" class="card login-card">
+      <h2>管理员登录</h2><p class="muted">后台仅使用独立管理员密码。建议通过 HTTPS + WAF / IP 白名单访问。</p>
+      <div class="inline"><input id="password" type="password" autocomplete="current-password" placeholder="管理员密码"><button id="loginButton" class="primary">登录</button></div>
+      <p id="loginMessage" class="message"></p>
+    </section>
+    <div id="app" hidden>
+      <section id="update" class="card update-card">
+        <div class="section-title"><div><h2>服务端版本更新</h2><p class="muted">自动拉取、测试、SQLite 在线备份、部署、重启和健康检查。</p></div><button id="updateButton" class="primary">版本更新</button></div>
+        <div class="update-meta"><span>版本 <strong id="serverVersion">—</strong></span><span>提交 <code id="currentCommit">—</code></span><span>分支 <code id="targetRef">—</code></span></div>
+        <div class="progress-track"><div id="updateProgress" class="progress-bar"></div></div>
+        <div class="update-status-row"><strong id="updatePercent">0%</strong><span id="updateMessage">尚未执行版本更新</span></div>
+        <p id="updateWarning" class="warning" hidden></p><pre id="updateLog" class="logbox">暂无更新日志</pre>
+      </section>
+    </div>
+  </main>
+</div>
+<script type="module" src="/admin.js"></script>
+</body>
+</html>

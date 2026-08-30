@@ -200,10 +200,10 @@ function ensureTabState(tabId, url = '') {
   return state;
 }
 
-function accountAllowsState(state) {
-  if (!accountState?.authenticated || !accountState?.entitlement?.active) return false;
-  if (!Number.isInteger(state?.windowId)) return false;
-  return Array.isArray(accountState.allowedWindowKeys) && accountState.allowedWindowKeys.includes(`chrome:${state.windowId}`);
+function accountAllowsState(_state) {
+  // Account entitlement controls access, but the number of Chrome windows never does.
+  // Window keys remain heartbeat telemetry only and must not disable GPTLock.
+  return Boolean(accountState?.authenticated && accountState?.entitlement?.active);
 }
 function effectiveSettingsForState(state) {
   return { ...currentSettings, enabled: Boolean(currentSettings.enabled && accountAllowsState(state)) };
@@ -1287,26 +1287,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         };
       }
       case 'GPTLOCK-LICENSE-GET':
-      case 'GPTLOCK_LICENSE_GET': {
-        const entitlement = accountState?.entitlement || null;
-        const authorized = Boolean(accountState?.authenticated && entitlement?.active);
+      case 'GPTLOCK_LICENSE_GET':
+        // Never synthesize an active legacy License from account entitlement. A stale
+        // cached UI must see the License system as removed, not as a quota-bearing grant.
         return {
-          authorized,
-          status: authorized ? 'active' : 'migrated_to_account',
+          authorized: false,
+          status: 'removed',
           legacyUi: true,
           accountRequired: true,
           licenseRequired: false,
-          license: authorized ? {
-            expiresAt: entitlement?.expiresAt ?? null,
-            limits: entitlement?.limits ?? null,
-            usage: entitlement?.usage ?? null,
-            label: 'GPTLock account entitlement',
-          } : null,
-          lastError: authorized
-            ? '旧授权码界面已停用；当前授权来自 GPTLock 账号权益。关闭并重新打开扩展弹窗即可加载新版界面。'
-            : '授权码已停用；GPTLock 当前使用账号登录与会员权益。关闭并重新打开扩展弹窗，必要时完全重启浏览器。',
+          license: null,
+          lastError: '授权码系统已移除；请使用 GPTLock 账号权益。若仍看到授权码界面，请关闭旧页面并从扩展重新打开设置。',
         };
-      }
       case 'GPTLOCK-LICENSE-ACTIVATE':
       case 'GPTLOCK_LICENSE_ACTIVATE':
         throw Object.assign(new Error('授权码验证已停用；GPTLock 当前使用账号登录。检测到旧版弹窗资源，请关闭弹窗并重新打开，必要时完全重启浏览器。'), { code: 'LICENSE_UI_STALE' });
@@ -1377,7 +1369,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (message.enabled) {
           const tabId = sender.tab?.id ?? await activeTabId();
           const state = tabId === null ? null : tabStates.get(tabId);
-          if (!state || !accountAllowsState(state)) throw new Error('当前账号没有有效权益，或当前窗口已超过同时窗口上限');
+          if (!state || !accountAllowsState(state)) throw new Error('当前账号没有有效权益');
         }
         currentSettings = normalizeSettings({
           ...currentSettings,
@@ -1479,7 +1471,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const tabId = await chatGptTabId(Number.isInteger(message.tabId) ? message.tabId : null);
         if (tabId === null) throw new Error('No ChatGPT tab / 没有打开的 ChatGPT 标签页');
         const state = tabStates.get(tabId);
-        if (!state || !accountAllowsState(state)) throw new Error('当前账号没有有效权益，或当前窗口已超过同时窗口上限');
+        if (!state || !accountAllowsState(state)) throw new Error('当前账号没有有效权益');
         return autoVerify(tabId);
       }
       case 'GPTLOCK_SEND_BLOCKED': {

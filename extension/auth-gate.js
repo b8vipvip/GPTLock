@@ -92,7 +92,7 @@ async function finishLogin(replaceDeviceRecordIds = []) {
   return account;
 }
 
-function renderAccount(account, windowAccess = true) {
+function renderAccount(account) {
   const authenticated = Boolean(account?.authenticated);
   el.authShell.hidden = authenticated;
   el.appShell.hidden = !authenticated;
@@ -107,12 +107,11 @@ function renderAccount(account, windowAccess = true) {
   el.accountExpiry.textContent = `有效期 ${localDate(entitlement.expiresAt)}`;
   const usage = entitlement.usage || {};
   const limits = entitlement.limits || {};
-  el.accountUsage.textContent = `设备 ${usage.devices ?? 0}/${limits.devices ?? 0} · 窗口 ${usage.windows ?? 0}/${limits.windows ?? 0}`;
+  el.accountUsage.textContent = `设备 ${usage.devices ?? 0}/${limits.devices ?? 0} · 窗口不限`;
   if (el.enabled) {
-    el.enabled.disabled = !entitlement.active || !windowAccess;
+    el.enabled.disabled = !entitlement.active;
     if (!entitlement.active) el.enabled.title = '免费期或会员已到期，请在账户中心开通会员';
-    else if (!windowAccess) el.enabled.title = '当前窗口超过账户同时窗口上限';
-    else el.enabled.title = '启用或关闭 GPTLock';
+    else el.enabled.title = '启用或关闭 GPTLock；窗口数量不受限制';
   }
 }
 
@@ -120,7 +119,7 @@ async function refreshGate() {
   try {
     const state = await sendMessage({ type: 'GPTLOCK_GET_STATE' });
     const account = state?.account || { authenticated: false };
-    renderAccount(account, state?.accountWindowAllowed !== false);
+    renderAccount(account);
     if (!account.authenticated) showPanel('login');
     return state;
   } catch (error) {

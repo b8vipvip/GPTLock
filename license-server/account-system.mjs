@@ -1038,13 +1038,9 @@ export function createAccountSystem({
         const requested = [...new Set(Array.isArray(input.windowKeys)
           ? input.windowKeys.filter((key) => validId(key, 220)).slice(0, 128) : [])];
         purgeWindowLeases();
-        const existingRows = db.prepare('SELECT window_key FROM user_window_leases WHERE session_id=? ORDER BY first_seen_at').all(session.id);
-        const existing = existingRows.map((row) => row.window_key).filter((key) => requested.includes(key));
-        const otherCount = db.prepare(`SELECT COUNT(*) AS count FROM user_window_leases wl JOIN user_sessions s ON s.id=wl.session_id
-          WHERE s.user_id=? AND s.id<>? AND s.revoked_at IS NULL AND s.expires_at>?`).get(session.user_id, session.id, nowIso()).count;
-        const capacity = entitlement.active ? Math.max(0, entitlement.limits.windows - otherCount) : 0;
-        const allowed = [...existing].slice(0, capacity);
-        for (const key of requested) if (!allowed.includes(key) && allowed.length < capacity) allowed.push(key);
+        // Window leases are telemetry/liveness records only. Account entitlement may
+        // enable GPTLock, but concurrent Chrome window count is intentionally unlimited.
+        const allowed = entitlement.active ? requested : [];
         const now = nowIso();
         db.prepare('DELETE FROM user_window_leases WHERE session_id=?').run(session.id);
         const insert = db.prepare('INSERT INTO user_window_leases(session_id,window_key,first_seen_at,last_seen_at) VALUES(?,?,?,?)');

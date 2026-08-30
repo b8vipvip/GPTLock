@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GPTLock 管理 · 系统配置</title>
+  <link rel="stylesheet" href="/admin.css">
+</head>
+<body data-admin-page="settings">
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span>G</span><div><strong>GPTLock</strong><small>Control Center</small></div></div>
+    <nav><a href="/admin/overview" data-page="overview">总览</a><a href="/admin/users" data-page="users">用户</a><a href="/admin/plans" data-page="plans">会员</a><a href="/admin/orders" data-page="orders">订单</a><a href="/admin/settings" data-page="settings" class="active" aria-current="page">系统配置</a><a href="/admin/client-logs" data-page="client-logs">客户端运行日志</a><a href="/admin/server-logs" data-page="server-logs">服务端日志</a><a href="/admin/update" data-page="update">更新</a></nav>
+    <button id="logout" class="ghost" hidden>退出管理员</button>
+  </aside>
+  <main class="workspace">
+    <header class="topbar"><div><p>GPTLOCK ADMIN · SETTINGS</p><h1>系统配置</h1></div><span class="security-pill">Account Control</span></header>
+    <section id="login" class="card login-card">
+      <h2>管理员登录</h2><p class="muted">后台仅使用独立管理员密码。建议通过 HTTPS + WAF / IP 白名单访问。</p>
+      <div class="inline"><input id="password" type="password" autocomplete="current-password" placeholder="管理员密码"><button id="loginButton" class="primary">登录</button></div>
+      <p id="loginMessage" class="message"></p>
+    </section>
+    <div id="app" hidden>
+      <section id="settings" class="card">
+        <div class="section-title"><div><h2>账号系统配置</h2><p class="muted">免费权益、会话时长、SMTP 邮箱、微信/支付宝支付入口。</p></div><button id="saveSettings" class="primary">保存配置</button></div>
+        <h3>免费用户</h3>
+        <div class="grid four">
+          <label>免费天数<input id="freeDays" type="number" min="0"></label>
+          <label>设备上限<input id="freeDevices" type="number" min="1"></label>
+          <label>登录会话天数<input id="sessionDays" type="number" min="1"></label>
+        </div>
+        <h3>邮箱 / SMTP</h3>
+        <label class="check"><input id="emailVerificationRequired" type="checkbox"> 新用户注册必须验证邮箱</label>
+        <p class="muted">关闭后，新注册账号无需邮箱验证码即可激活并登录；之后重新开启时，已按免验证模式注册的账号不会被反向锁定。找回密码仍需要邮箱验证码。</p>
+        <div class="grid three">
+          <label>SMTP 主机<input id="smtpHost" placeholder="smtp.example.com"></label>
+          <label>端口<input id="smtpPort" type="number" min="1" max="65535"></label>
+          <label class="check"><input id="smtpSecure" type="checkbox"> SSL/TLS 直连（常用 465）</label>
+          <label>用户名<input id="smtpUsername" autocomplete="off"></label>
+          <label>SMTP 密码/授权码<input id="smtpPassword" type="password" autocomplete="new-password" placeholder="留空表示不修改"></label>
+          <label>发件邮箱<input id="smtpFromEmail" type="email"></label>
+          <label>发件名称<input id="smtpFromName" value="GPTLock"></label>
+          <label>测试收件邮箱<input id="testEmail" type="email"></label>
+          <button id="sendTestEmail" type="button">发送测试邮件</button>
+        </div>
+        <p id="smtpState" class="muted"></p>
+        <h3>支付方式</h3>
+        <div class="payment-grid">
+          <article><label class="check"><input id="wechatEnabled" type="checkbox"> 启用微信支付</label><label>HTTPS 支付页<input id="wechatUrl" type="url"></label><label>付款说明<textarea id="wechatInstructions" rows="2"></textarea></label></article>
+          <article><label class="check"><input id="alipayEnabled" type="checkbox"> 启用支付宝</label><label>HTTPS 支付页<input id="alipayUrl" type="url"></label><label>付款说明<textarea id="alipayInstructions" rows="2"></textarea></label></article>
+        </div>
+        <p id="settingsMessage" class="message"></p>
+      </section>
+    </div>
+  </main>
+</div>
+<script type="module" src="/admin.js"></script>
+</body>
+</html>

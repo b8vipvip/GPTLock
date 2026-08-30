@@ -4,7 +4,6 @@ import test from 'node:test';
 
 const manifestUrl = new URL('../manifest.json', import.meta.url);
 const popupCss = new URL('../popup-v0513.css', import.meta.url);
-const optionsHtml = new URL('../options.html', import.meta.url);
 const optionsUpdate = new URL('../options-update.js', import.meta.url);
 const installer = new URL('../../packaging/windows/GPTLock.iss', import.meta.url);
 
@@ -21,7 +20,9 @@ test('popup exposes only the three user-facing actions and keeps reconnect/log c
 });
 
 test('settings page owns the real-time updater and no longer exposes reconnect or runtime-log controls', async () => {
-  const [html, js] = await Promise.all([readFile(optionsHtml, 'utf8'), readFile(optionsUpdate, 'utf8')]);
+  const manifest = JSON.parse(await readFile(manifestUrl, 'utf8'));
+  const settingsHtml = new URL(`../${manifest.options_ui.page}`, import.meta.url);
+  const [html, js] = await Promise.all([readFile(settingsHtml, 'utf8'), readFile(optionsUpdate, 'utf8')]);
   assert.match(html, /id="updates"/);
   assert.match(html, /id="updateProgress"/);
   assert.match(html, /id="updatePercent"/);

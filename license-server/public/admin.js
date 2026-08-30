@@ -5,13 +5,13 @@ const el = {
   userSearch: $('userSearch'), refreshUsers: $('refreshUsers'), usersBody: $('usersBody'),
   createUserToggle: $('createUserToggle'), createUserPanel: $('createUserPanel'), cancelCreateUser: $('cancelCreateUser'),
   createUserEmail: $('createUserEmail'), createUserPassword: $('createUserPassword'), createUserEmailAccess: $('createUserEmailAccess'),
-  createUserFreeDays: $('createUserFreeDays'), createUserDevices: $('createUserDevices'), createUserWindows: $('createUserWindows'),
+  createUserFreeDays: $('createUserFreeDays'), createUserDevices: $('createUserDevices'),
   generateUserPassword: $('generateUserPassword'), createUserSubmit: $('createUserSubmit'), createUserMessage: $('createUserMessage'),
   userPasswordDialog: $('userPasswordDialog'), userPasswordTarget: $('userPasswordTarget'), userPasswordNew: $('userPasswordNew'),
   userPasswordConfirm: $('userPasswordConfirm'), userPasswordMessage: $('userPasswordMessage'), userPasswordClose: $('userPasswordClose'),
   userPasswordCancel: $('userPasswordCancel'), userPasswordSubmit: $('userPasswordSubmit'),
   planCards: $('planCards'), refreshOrders: $('refreshOrders'), ordersBody: $('ordersBody'),
-  freeDays: $('freeDays'), freeDevices: $('freeDevices'), freeWindows: $('freeWindows'), sessionDays: $('sessionDays'),
+  freeDays: $('freeDays'), freeDevices: $('freeDevices'), sessionDays: $('sessionDays'),
   emailVerificationRequired: $('emailVerificationRequired'),
   smtpHost: $('smtpHost'),
   smtpPort: $('smtpPort'), smtpSecure: $('smtpSecure'), smtpUsername: $('smtpUsername'), smtpPassword: $('smtpPassword'), smtpFromEmail: $('smtpFromEmail'), smtpFromName: $('smtpFromName'), testEmail: $('testEmail'), sendTestEmail: $('sendTestEmail'), smtpState: $('smtpState'),
@@ -154,14 +154,12 @@ async function createUser() {
   const body = {
     email, password, emailAccess: el.createUserEmailAccess.value, freeDays,
     maxDevicesOverride: optionalPositiveInt(el.createUserDevices, '设备上限'),
-    maxWindowsOverride: optionalPositiveInt(el.createUserWindows, '窗口上限'),
   };
   const result = await api('/admin/api/account/users', { method: 'POST', body: JSON.stringify(body) });
   setMessage(el.createUserMessage, `用户 ${result.user?.email || email} 创建成功。请妥善保存初始密码。`, 'good');
   el.createUserEmail.value = '';
   el.createUserDevices.value = '';
-  el.createUserWindows.value = '';
-  await Promise.all([loadUsers(), loadDashboard()]);
+  await loadUsers();
 }
 
 async function saveUserRow(row, controls, messageNode) {
@@ -180,12 +178,12 @@ async function saveUserRow(row, controls, messageNode) {
     status: controls.status.value,
     entitlementExpiresAt,
     maxDevicesOverride: optionalPositiveInt(controls.devices, '设备上限'),
-    maxWindowsOverride: optionalPositiveInt(controls.windows, '窗口上限'),
+    maxWindowsOverride: row.overrides?.windows ?? null,
   };
   setMessage(messageNode, '正在保存…');
   await api(`/admin/api/account/users/${row.id}`, { method: 'PATCH', body: JSON.stringify(body) });
   setMessage(messageNode, '用户信息与权益已保存。', 'good');
-  await Promise.all([loadUsers(), loadDashboard()]);
+  await loadUsers();
 }
 
 async function grantMembership(row, planCode, messageNode) {
@@ -194,7 +192,7 @@ async function grantMembership(row, planCode, messageNode) {
   setMessage(messageNode, `正在为 ${row.email} 开通 ${plan.name}…`);
   await api(`/admin/api/account/users/${row.id}/grant-membership`, { method: 'POST', body: JSON.stringify({ planCode: plan.code }) });
   setMessage(messageNode, `${plan.name} 已开通/续期。`, 'good');
-  await Promise.all([loadUsers(), loadDashboard()]);
+  await loadUsers();
 }
 
 async function resetDevices(row, messageNode) {
@@ -280,11 +278,6 @@ function renderUsers(rows) {
     const devicesUsage = document.createElement('small'); devicesUsage.textContent = `已用 ${row.entitlement?.usage?.devices ?? 0} / 生效 ${row.entitlement?.limits?.devices ?? 0}`;
     devicesWrap.append(devices, devicesUsage); devicesCell.append(devicesWrap); tr.append(devicesCell);
 
-    const windowsCell = document.createElement('td'); const windowsWrap = document.createElement('div'); windowsWrap.className = 'limit-editor';
-    const windows = inputControl('number', row.overrides?.windows ?? '', { min: 1, max: 1000, placeholder: '默认' });
-    const windowsUsage = document.createElement('small'); windowsUsage.textContent = `已用 ${row.entitlement?.usage?.windows ?? 0} / 生效 ${row.entitlement?.limits?.windows ?? 0}`;
-    windowsWrap.append(windows, windowsUsage); windowsCell.append(windowsWrap); tr.append(windowsCell);
-
     const expiryCell = document.createElement('td'); const expiryWrap = document.createElement('div'); expiryWrap.className = 'expiry-editor';
     const expiry = inputControl('datetime-local', localDateInput(row.entitlement?.expiresAt));
     const expiryNote = document.createElement('small'); expiryNote.textContent = row.membership ? '修改当前会员到期时间' : '修改免费权益到期时间';
@@ -293,7 +286,7 @@ function renderUsers(rows) {
     const actions = document.createElement('td'); actions.className = 'row-actions user-actions';
     const save = button('保存信息/权益', () => {
       save.disabled = true;
-      void saveUserRow(row, { email, status, devices, windows, expiry }, rowMessage)
+      void saveUserRow(row, { email, status, devices, expiry }, rowMessage)
         .catch((error) => setMessage(rowMessage, error.message, 'bad')).finally(() => { save.disabled = false; });
     }, 'primary');
     const password = button('修改密码', () => openUserPasswordDialog(row));
@@ -308,7 +301,7 @@ function renderUsers(rows) {
   }
   if (!rows.length) {
     const tr = document.createElement('tr');
-    const cell = td('没有匹配用户'); cell.colSpan = 8; cell.className = 'empty'; tr.append(cell); el.usersBody.append(tr);
+    const cell = td('没有匹配用户'); cell.colSpan = 7; cell.className = 'empty'; tr.append(cell); el.usersBody.append(tr);
   }
 }
 
@@ -339,7 +332,6 @@ function planCard(plan) {
   const price = makeField('价格（元）', (plan.priceCents / 100).toFixed(2), 0); price.step = '0.01';
   const days = makeField('有效天数', plan.durationDays, 1);
   const devices = makeField('设备上限', plan.limits.devices, 1);
-  const windows = makeField('窗口上限', plan.limits.windows, 1);
   const benefitsLabel = document.createElement('label'); benefitsLabel.className = 'benefit-field'; benefitsLabel.textContent = '权益说明（每行一条）';
   const benefits = document.createElement('textarea'); benefits.rows = 5; benefits.value = (plan.benefits || []).join('\n'); benefitsLabel.append(benefits);
   const save = button('保存套餐', async () => {
@@ -349,7 +341,7 @@ function planCard(plan) {
       await api(`/admin/api/account/plans/${encodeURIComponent(plan.code)}`, {
         method: 'PUT',
         body: JSON.stringify({
-          name: name.value.trim(), priceCents, durationDays: Number(days.value), maxDevices: Number(devices.value), maxWindows: Number(windows.value),
+          name: name.value.trim(), priceCents, durationDays: Number(days.value), maxDevices: Number(devices.value), maxWindows: plan.limits.windows,
           benefits: benefits.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean), enabled: enabled.checked,
         }),
       });
@@ -365,6 +357,7 @@ function planCard(plan) {
 
 function renderPlans(plans) {
   plansCache = plans;
+  if (!el.planCards) return;
   el.planCards.textContent = '';
   for (const plan of plans) el.planCards.append(planCard(plan));
 }
@@ -381,12 +374,12 @@ function orderStatus(row) {
 async function markOrderPaid(row) {
   if (!confirm(`确认订单 #${row.id} 已到账，并为 ${row.email} 开通 ${row.planName}？`)) return;
   await api(`/admin/api/account/orders/${row.id}/mark-paid`, { method: 'POST', body: '{}' });
-  await Promise.all([loadOrders(), loadUsers(), loadDashboard()]);
+  await loadOrders();
 }
 async function cancelOrder(row) {
   if (!confirm(`确认取消订单 #${row.id}？`)) return;
   await api(`/admin/api/account/orders/${row.id}/cancel`, { method: 'POST', body: '{}' });
-  await Promise.all([loadOrders(), loadDashboard()]);
+  await loadOrders();
 }
 
 function renderOrders(rows) {
@@ -417,10 +410,9 @@ function renderSettings(data) {
   const settings = data.settings || {};
   el.freeDays.value = settings.free?.days ?? 7;
   el.freeDevices.value = settings.free?.maxDevices ?? 1;
-  el.freeWindows.value = settings.free?.maxWindows ?? 1;
   el.sessionDays.value = settings.sessionDays ?? 30;
   el.emailVerificationRequired.checked = settings.emailVerificationRequired !== false;
-  if (!el.createUserFreeDays.value) el.createUserFreeDays.value = settings.free?.days ?? 7;
+  if (el.createUserFreeDays && !el.createUserFreeDays.value) el.createUserFreeDays.value = settings.free?.days ?? 7;
   const smtp = settings.smtp || {};
   el.smtpHost.value = smtp.host || '';
   el.smtpPort.value = smtp.port || 465;
@@ -443,7 +435,7 @@ async function loadSettings() {
 async function saveSettings() {
   setMessage(el.settingsMessage, '正在保存…');
   const body = {
-    free: { days: Number(el.freeDays.value), maxDevices: Number(el.freeDevices.value), maxWindows: Number(el.freeWindows.value) },
+    free: { days: Number(el.freeDays.value), maxDevices: Number(el.freeDevices.value) },
     sessionDays: Number(el.sessionDays.value),
     emailVerificationRequired: el.emailVerificationRequired.checked,
     smtp: {
@@ -539,11 +531,17 @@ async function loadDashboard() { renderDashboard(await api('/admin/api/account/d
 
 async function loadAll() {
   try {
-    await loadDashboard();
+    const page = document.body.dataset.adminPage || 'overview';
+    const dashboard = await api('/admin/api/account/dashboard');
     el.login.hidden = true; el.app.hidden = false; el.logout.hidden = false;
-    await loadPlans();
-    await Promise.all([loadUsers(), loadOrders(), loadSettings(), loadRuntimeLogs(), loadAudit(), loadUpdate()]);
-    startUpdatePolling();
+    if (page === 'overview') renderDashboard(dashboard);
+    else if (page === 'users') { await loadPlans(); await loadUsers(); }
+    else if (page === 'plans') await loadPlans();
+    else if (page === 'orders') await loadOrders();
+    else if (page === 'settings') await loadSettings();
+    else if (page === 'server-logs') await Promise.all([loadRuntimeLogs(), loadAudit()]);
+    else if (page === 'update') { await loadUpdate(); startUpdatePolling(); }
+    // client-logs is loaded by client-runtime-admin.js after #app becomes visible.
   } catch (error) {
     if (error.status === 401) {
       stopUpdatePolling(); el.app.hidden = true; el.login.hidden = false; el.logout.hidden = true;
@@ -561,31 +559,31 @@ el.loginButton.addEventListener('click', async () => {
 });
 el.password.addEventListener('keydown', (event) => { if (event.key === 'Enter') el.loginButton.click(); });
 el.logout.addEventListener('click', async () => { stopUpdatePolling(); await api('/admin/api/logout', { method: 'POST', body: '{}' }).catch(() => {}); location.reload(); });
-el.refreshUsers.addEventListener('click', () => void loadUsers());
-el.userSearch.addEventListener('keydown', (event) => { if (event.key === 'Enter') void loadUsers(); });
-el.createUserToggle.addEventListener('click', () => setCreateUserPanel(el.createUserPanel.hidden));
-el.cancelCreateUser.addEventListener('click', () => setCreateUserPanel(false));
-el.generateUserPassword.addEventListener('click', () => { el.createUserPassword.value = generateStrongPassword(); el.createUserPassword.type = 'text'; setTimeout(() => { el.createUserPassword.type = 'password'; }, 5000); });
-el.createUserSubmit.addEventListener('click', () => {
+el.refreshUsers?.addEventListener('click', () => void loadUsers());
+el.userSearch?.addEventListener('keydown', (event) => { if (event.key === 'Enter') void loadUsers(); });
+el.createUserToggle?.addEventListener('click', () => setCreateUserPanel(el.createUserPanel.hidden));
+el.cancelCreateUser?.addEventListener('click', () => setCreateUserPanel(false));
+el.generateUserPassword?.addEventListener('click', () => { el.createUserPassword.value = generateStrongPassword(); el.createUserPassword.type = 'text'; setTimeout(() => { el.createUserPassword.type = 'password'; }, 5000); });
+el.createUserSubmit?.addEventListener('click', () => {
   el.createUserSubmit.disabled = true;
   void createUser().catch((error) => setMessage(el.createUserMessage, error.message, 'bad')).finally(() => { el.createUserSubmit.disabled = false; });
 });
-el.userPasswordClose.addEventListener('click', closeUserPasswordDialog);
-el.userPasswordCancel.addEventListener('click', closeUserPasswordDialog);
-el.userPasswordDialog.addEventListener('cancel', (event) => { event.preventDefault(); closeUserPasswordDialog(); });
-el.userPasswordSubmit.addEventListener('click', () => {
+el.userPasswordClose?.addEventListener('click', closeUserPasswordDialog);
+el.userPasswordCancel?.addEventListener('click', closeUserPasswordDialog);
+el.userPasswordDialog?.addEventListener('cancel', (event) => { event.preventDefault(); closeUserPasswordDialog(); });
+el.userPasswordSubmit?.addEventListener('click', () => {
   void submitUserPassword().catch((error) => setMessage(el.userPasswordMessage, error.message, 'bad'));
 });
-el.userPasswordConfirm.addEventListener('keydown', (event) => { if (event.key === 'Enter') el.userPasswordSubmit.click(); });
-el.refreshOrders.addEventListener('click', () => void loadOrders());
-el.saveSettings.addEventListener('click', () => {
+el.userPasswordConfirm?.addEventListener('keydown', (event) => { if (event.key === 'Enter') el.userPasswordSubmit.click(); });
+el.refreshOrders?.addEventListener('click', () => void loadOrders());
+el.saveSettings?.addEventListener('click', () => {
   el.saveSettings.disabled = true;
   void saveSettings().catch((error) => setMessage(el.settingsMessage, error.message, 'bad')).finally(() => { el.saveSettings.disabled = false; });
 });
-el.sendTestEmail.addEventListener('click', () => void sendTestEmail());
-el.refreshRuntime.addEventListener('click', () => void Promise.all([loadRuntimeLogs(), loadAudit()]));
-el.exportRuntime.addEventListener('click', () => void exportRuntimeLogs());
-el.updateButton.addEventListener('click', async () => {
+el.sendTestEmail?.addEventListener('click', () => void sendTestEmail());
+el.refreshRuntime?.addEventListener('click', () => void Promise.all([loadRuntimeLogs(), loadAudit()]));
+el.exportRuntime?.addEventListener('click', () => void exportRuntimeLogs());
+el.updateButton?.addEventListener('click', async () => {
   try {
     el.updateButton.disabled = true; el.updateButton.textContent = '正在提交…';
     await api('/admin/api/update', { method: 'POST', body: '{}' }); updateWasActive = true; await loadUpdate(); startUpdatePolling();

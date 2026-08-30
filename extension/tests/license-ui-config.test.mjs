@@ -10,6 +10,7 @@ const popupCss = new URL('../popup-v0513.css', import.meta.url);
 test('default popup uses a versioned cache-proof entrypoint with no legacy license controls', async () => {
   const manifest = JSON.parse(await readFile(manifestUrl, 'utf8'));
   assert.equal(manifest.action.default_popup, 'popup-v0513.html');
+  assert.equal(manifest.options_ui.page, 'settings-v0517.html');
 
   const defaultPopup = new URL(`../${manifest.action.default_popup}`, import.meta.url);
   const [html, js, shell, css] = await Promise.all([
@@ -36,7 +37,7 @@ test('default popup uses a versioned cache-proof entrypoint with no legacy licen
   assert.match(shell, /input\[placeholder\^="GPTL-" i\]/);
   assert.match(shell, /授权验证/);
   assert.match(shell, /gptlockPopupRuntimeInfo/);
-  assert.match(shell, /options\.html#updates-auto/);
+  assert.match(shell, /settings-v0517\.html#updates-auto/);
 
   assert.match(css, /input\[placeholder\^="GPTL-" i\]/);
   assert.match(css, /section:has\(input\[placeholder\^="GPTL-" i\]\)/);
