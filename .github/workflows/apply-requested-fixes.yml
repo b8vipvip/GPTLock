@@ -1,9 +1,6 @@
 name: Apply requested GPTLock fixes
 
 on:
-  push:
-    branches:
-      - fix/context-hard-limit-admin-ui-license-compat
   pull_request:
     branches:
       - main
@@ -24,13 +21,13 @@ jobs:
         with:
           node-version: '22.16.0'
       - name: Apply deterministic patch
-        run: node scripts/apply-requested-fixes.mjs
+        run: python3 scripts/apply-requested-fixes.py
       - name: Extension and server regression suite
         run: npm test --prefix extension
       - name: Rust lock/version sanity
         run: cargo check --locked --manifest-path native-core/Cargo.toml
       - name: Remove one-shot patch machinery
-        run: rm -f scripts/apply-requested-fixes.mjs .github/workflows/apply-requested-fixes.yml
+        run: rm -f scripts/apply-requested-fixes.py scripts/apply-requested-fixes.mjs .github/workflows/apply-requested-fixes.yml
       - name: Commit tested fixes
         run: |
           git config user.name 'github-actions[bot]'
