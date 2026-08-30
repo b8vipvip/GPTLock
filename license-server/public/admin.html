@@ -47,7 +47,7 @@
           </div>
           <div class="create-user-footer"><p id="createUserMessage" class="message"></p><button id="createUserSubmit" class="primary">创建用户</button></div>
         </div>
-        <div class="table-wrap"><table><thead><tr><th>ID</th><th>邮箱</th><th>状态</th><th>权益</th><th>设备</th><th>窗口</th><th>有效期</th><th>操作</th></tr></thead><tbody id="usersBody"></tbody></table></div>
+        <div class="table-wrap"><table class="users-table"><thead><tr><th>ID</th><th>邮箱</th><th>状态</th><th>权益 / 套餐</th><th>设备上限</th><th>窗口上限</th><th>有效期</th><th>操作</th></tr></thead><tbody id="usersBody"></tbody></table></div>
       </section>
 
       <section id="plans" class="card">
@@ -108,6 +108,18 @@
     </div>
   </main>
 </div>
+
+<dialog id="userPasswordDialog" class="admin-dialog">
+  <div class="dialog-head"><div><h2>修改用户密码</h2><p class="muted" id="userPasswordTarget">—</p></div><button id="userPasswordClose" type="button" aria-label="关闭">×</button></div>
+  <div class="dialog-body">
+    <label>新密码<input id="userPasswordNew" type="password" autocomplete="new-password" placeholder="至少 10 位，最多 128 位"></label>
+    <label>确认新密码<input id="userPasswordConfirm" type="password" autocomplete="new-password" placeholder="再次输入新密码"></label>
+    <p class="dialog-note">保存后该用户现有登录会话会全部失效，需要使用新密码重新登录。密码只会以 scrypt 哈希保存。</p>
+    <p id="userPasswordMessage" class="message"></p>
+  </div>
+  <div class="dialog-actions"><button id="userPasswordCancel" type="button">取消</button><button id="userPasswordSubmit" class="primary" type="button">保存新密码</button></div>
+</dialog>
+
 <script type="module" src="/admin.js"></script>
 </body>
 </html>

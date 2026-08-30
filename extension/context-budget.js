@@ -67,6 +67,12 @@
     /生成回复时出错/,
     /网络错误/,
   ];
+  const CONVERSATION_LENGTH_LIMIT_PATTERNS = [
+    { locale: 'zh-CN', pattern: /你已(?:到达|达到)(?:此)?对话的长度上限[，,。.!！\s]*(?:你可以)?(?:开始|开启|新建)(?:一个)?新(?:聊天|对话).*继续(?:此)?对话/ },
+    { locale: 'en', pattern: /(?:you(?:'|’)ve|you have) reached (?:the )?(?:maximum|max) (?:length|limit) (?:for|of) (?:this )?conversation[,.!\s]*(?:you can )?.*(?:start|begin) (?:a )?new chat/i },
+    { locale: 'en', pattern: /this conversation (?:has )?reached (?:its )?(?:maximum|max) (?:length|limit).*(?:start|begin) (?:a )?new chat/i },
+  ];
+  const NEW_CHAT_ACTION_PATTERN = /开始新(?:对话|聊天)|新建(?:对话|聊天)|start (?:a )?new chat|new chat/i;
 
   let lastSnapshot = null;
   let lastKnownModel = null;
@@ -93,6 +99,9 @@
   let checkpointLoadSequence = 0;
   let checkpointPersistTimer = null;
   let restoredPendingKey = null;
+  let lastHardLimitNotice = null;
+  let hardLimitLearningInFlight = false;
+  let lastHardLimitFingerprint = null;
 
   function normalizeModelId(value) {
     const model = String(value ?? '').trim().toLowerCase();
@@ -177,11 +186,19 @@
     draftTokens = 0,
     contextLimitTokens = DEFAULT_CONTEXT_WINDOW_TOKENS,
     adaptiveSafeLimitTokens = 0,
+    hardLimitUpperBoundTokens = 0,
+    confirmedLowerBoundTokens = 0,
   } = {}) {
     const nominalLimit = Math.max(16_000, Number(contextLimitTokens) || DEFAULT_CONTEXT_WINDOW_TOKENS);
     const baseSafeLimitTokens = Math.floor(nominalLimit * SAFETY_BUDGET_RATIO);
     const learnedSafeLimitTokens = clampAdaptiveLimit(adaptiveSafeLimitTokens);
-    const safeLimitTokens = Math.max(baseSafeLimitTokens, learnedSafeLimitTokens);
+    const confirmedLower = clampAdaptiveLimit(confirmedLowerBoundTokens);
+    const learnedHardUpper = clampAdaptiveLimit(hardLimitUpperBoundTokens);
+    const hardLimitUsable = learnedHardUpper > confirmedLower;
+    const unconstrainedSafeLimitTokens = Math.max(baseSafeLimitTokens, learnedSafeLimitTokens);
+    const safeLimitTokens = hardLimitUsable
+      ? Math.max(16_000, confirmedLower, Math.min(unconstrainedSafeLimitTokens, learnedHardUpper))
+      : unconstrainedSafeLimitTokens;
     const reserveBasis = Math.max(nominalLimit, safeLimitTokens);
     const reserveTokens = reserveTokensForWindow(reserveBasis);
     const usedTokens = Math.max(0, Math.ceil(historyTokens + draftTokens));
@@ -193,6 +210,8 @@
       nominalLimitTokens: nominalLimit,
       baseSafeLimitTokens,
       adaptiveSafeLimitTokens: learnedSafeLimitTokens,
+      hardLimitUpperBoundTokens: learnedHardUpper,
+      confirmedLowerBoundTokens: confirmedLower,
       safeLimitTokens,
       reserveTokens,
       historyTokens: Math.max(0, Math.ceil(historyTokens)),
@@ -205,6 +224,7 @@
       warning: percent >= WARNING_PERCENT,
       wouldExceed: projectedTokens >= safeLimitTokens,
       adaptiveActive: learnedSafeLimitTokens > baseSafeLimitTokens,
+      hardLimitActive: hardLimitUsable && safeLimitTokens <= learnedHardUpper,
     };
   }
 
@@ -432,16 +452,13 @@
     if (!accountScope || !normalizedModel || confirmed <= 0) return null;
     const previousConfirmed = clampAdaptiveLimit(previous?.confirmedConversationTokens);
     const nextConfirmed = Math.max(previousConfirmed, confirmed);
-    const candidateAdaptive = clampAdaptiveLimit(
-      nextConfirmed + learningHeadroomTokens(nextConfirmed),
-    );
+    const candidateAdaptive = clampAdaptiveLimit(nextConfirmed + learningHeadroomTokens(nextConfirmed));
     const previousAdaptive = clampAdaptiveLimit(previous?.adaptiveSafeLimitTokens);
     const adaptiveSafeLimitTokens = Math.max(
-      Math.ceil(Number(baseSafeLimitTokens) || 0),
-      previousAdaptive,
-      candidateAdaptive,
+      Math.ceil(Number(baseSafeLimitTokens) || 0), previousAdaptive, candidateAdaptive,
     );
     return {
+      ...(previous && typeof previous === 'object' ? previous : {}),
       schemaVersion: 1,
       accountScope,
       accountScopeSource,
@@ -460,6 +477,63 @@
     };
   }
 
+  function classifyConversationLengthLimitText(value) {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 1_000);
+    if (!text) return null;
+    for (const entry of CONVERSATION_LENGTH_LIMIT_PATTERNS) {
+      if (entry.pattern.test(text)) return { matched: true, locale: entry.locale, text };
+    }
+    return null;
+  }
+
+  function nextHardLimitProfile({
+    previous = null,
+    accountScope,
+    accountScopeSource = 'unknown',
+    model,
+    observedConversationTokens = 0,
+    observedCharacters = 0,
+    observedMessages = 0,
+    conversationKey = 'unknown',
+    measuredAt = new Date().toISOString(),
+    measurementSource = 'unknown',
+    measurementReliable = false,
+    noticeText = '',
+    actionText = '',
+  } = {}) {
+    const normalizedModel = normalizeModelId(model);
+    const account = String(accountScope ?? '').trim();
+    if (!account || !normalizedModel) return null;
+    const observed = clampAdaptiveLimit(observedConversationTokens);
+    const confirmedLower = clampAdaptiveLimit(previous?.confirmedConversationTokens);
+    const previousUpper = clampAdaptiveLimit(previous?.hardLimitUpperBoundTokens);
+    const usableObservation = Boolean(measurementReliable && observed > confirmedLower);
+    const hardLimitUpperBoundTokens = usableObservation
+      ? (previousUpper > confirmedLower ? Math.min(previousUpper, observed) : observed)
+      : previousUpper;
+    return {
+      ...(previous && typeof previous === 'object' ? previous : {}),
+      schemaVersion: 1,
+      accountScope: account,
+      accountScopeSource,
+      model: normalizedModel,
+      hardLimitObserved: true,
+      hardLimitObservedCount: Math.max(0, Math.floor(Number(previous?.hardLimitObservedCount) || 0)) + 1,
+      hardLimitObservedTokens: observed,
+      hardLimitObservedCharacters: Math.max(0, Math.ceil(Number(observedCharacters) || 0)),
+      hardLimitObservedMessages: Math.max(0, Math.ceil(Number(observedMessages) || 0)),
+      hardLimitUpperBoundTokens,
+      hardLimitTokenCapUsable: hardLimitUpperBoundTokens > confirmedLower,
+      hardLimitConfidence: usableObservation ? 'measured-upper-bound' : 'ui-boundary-only',
+      hardLimitMeasurementSource: String(measurementSource || 'unknown').slice(0, 80),
+      hardLimitLastObservedAt: measuredAt,
+      hardLimitLastConversationKey: String(conversationKey || 'unknown').slice(0, 256),
+      hardLimitLastText: String(noticeText || '').replace(/\s+/g, ' ').trim().slice(0, 500),
+      hardLimitActionText: String(actionText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+      hardLimitEvidence: 'chatgpt-visible-conversation-length-limit',
+    };
+  }
+
   const api = {
     contextWindowForModel,
     estimateTextTokens,
@@ -467,6 +541,8 @@
     learningHeadroomTokens,
     profileStorageKey,
     nextLearnedProfile,
+    classifyConversationLengthLimitText,
+    nextHardLimitProfile,
     extractConversationMetrics,
     checkpointStorageKey,
     pendingBypassStorageKey,
@@ -484,6 +560,27 @@
   function visible(element) {
     const rect = element?.getBoundingClientRect?.();
     return Boolean(rect && rect.width > 0 && rect.height > 0 && getComputedStyle(element).visibility !== 'hidden');
+  }
+
+  function findVisibleConversationLengthLimit() {
+    const candidates = [...document.querySelectorAll('p,[role="alert"],[role="status"]')].filter(visible);
+    for (const element of candidates) {
+      if (element.closest('#gptlock-context-warning-host,#gptlock-context-learning-toast,#gptlock-context-hard-limit-toast')) continue;
+      const match = classifyConversationLengthLimitText(elementText(element));
+      if (!match) continue;
+      let actionText = '';
+      let container = element;
+      for (let depth = 0; depth < 7 && container; depth += 1, container = container.parentElement) {
+        const action = [...(container.querySelectorAll?.('button,a') || [])]
+          .find((candidate) => visible(candidate) && NEW_CHAT_ACTION_PATTERN.test(elementText(candidate).trim()));
+        if (action) { actionText = elementText(action).trim(); break; }
+      }
+      const insideConversationTurn = Boolean(element.closest('[data-message-author-role],article[data-testid^="conversation-turn-"]'));
+      const semanticNotice = ['alert', 'status'].includes(String(element.getAttribute('role') || '').toLowerCase());
+      if (!actionText && insideConversationTurn && !semanticNotice) continue;
+      return { ...match, actionText: actionText.slice(0, 120) };
+    }
+    return null;
   }
 
   function findComposer() {
@@ -793,6 +890,16 @@
     return clampAdaptiveLimit(activeProfile.adaptiveSafeLimitTokens);
   }
 
+  function activeHardLimit(model) {
+    const normalizedModel = normalizeModelId(model);
+    if (!activeProfile || !currentAccountScope || !normalizedModel) return { upper: 0, confirmed: 0 };
+    if (activeProfile.accountScope !== currentAccountScope || normalizeModelId(activeProfile.model) !== normalizedModel) return { upper: 0, confirmed: 0 };
+    return {
+      upper: clampAdaptiveLimit(activeProfile.hardLimitUpperBoundTokens),
+      confirmed: clampAdaptiveLimit(activeProfile.confirmedConversationTokens),
+    };
+  }
+
   function snapshotNow() {
     const messages = conversationElements();
     const domHistory = messages.reduce((total, element) => {
@@ -834,11 +941,14 @@
     const model = detectModel();
     const windowProfile = contextWindowForModel(model);
     const adaptiveSafeLimitTokens = activeAdaptiveLimit(windowProfile.model);
+    const learnedHardLimit = activeHardLimit(windowProfile.model);
     const budget = computeBudget({
       historyTokens: history.tokens,
       draftTokens,
       contextLimitTokens: windowProfile.tokens,
       adaptiveSafeLimitTokens,
+      hardLimitUpperBoundTokens: learnedHardLimit.upper,
+      confirmedLowerBoundTokens: learnedHardLimit.confirmed,
     });
     return {
       ...budget,
@@ -873,6 +983,12 @@
         ? Math.max(0, Number(activeProfile?.successfulBypassCount) || 0)
         : 0,
       learnedAt: budget.adaptiveActive ? activeProfile?.lastConfirmedAt ?? null : null,
+      hardLimitVisible: Boolean(lastHardLimitNotice && lastHardLimitNotice.conversationKey === currentConversationKey()),
+      hardLimitObservedTokens: clampAdaptiveLimit(activeProfile?.hardLimitObservedTokens),
+      hardLimitObservedCount: Math.max(0, Number(activeProfile?.hardLimitObservedCount) || 0),
+      hardLimitConfidence: activeProfile?.hardLimitConfidence ?? (lastHardLimitNotice ? 'ui-boundary-only' : null),
+      hardLimitMeasurementSource: activeProfile?.hardLimitMeasurementSource ?? null,
+      hardLimitLastObservedAt: activeProfile?.hardLimitLastObservedAt ?? null,
       accountScopeAvailable: Boolean(currentAccountScope),
       accountScopeSource: currentAccountScopeSource,
       measuredAt: new Date().toISOString(),
@@ -895,6 +1011,14 @@
     if (snapshot.cumulativeConversationTokens > snapshot.fullConversationTokens || snapshot.cumulativeMessageCount > snapshot.messageCount) {
       rows.push(`会话累计观测：约 ${formatCompactTokens(snapshot.cumulativeConversationTokens)} tokens · ${formatCompactNumber(snapshot.cumulativeConversationCharacters)} 字符 · ${snapshot.cumulativeMessageCount} 条消息`);
     }
+    if (snapshot.hardLimitVisible || snapshot.hardLimitObservedCount > 0) {
+      if (snapshot.hardLimitUpperBoundTokens > snapshot.confirmedLowerBoundTokens) {
+        const lower = snapshot.confirmedLowerBoundTokens > 0 ? `；已确认成功下限 ≥ ${formatCompactTokens(snapshot.confirmedLowerBoundTokens)}` : '';
+        rows.push(`ChatGPT 实测会话硬上限：≤ ${formatCompactTokens(snapshot.hardLimitUpperBoundTokens)} tokens${lower}（真实“对话长度上限”界面提示）`);
+      } else {
+        rows.push('ChatGPT 实测会话硬上限：已检测到真实“对话长度上限”提示；当前只有 DOM/不完整历史估算，因此暂不把该 token 数写成可信上限。');
+      }
+    }
     if (snapshot.adaptiveActive) {
       rows.push(
         `账户实测成功下限：至少 ${formatCompactTokens(snapshot.learnedConfirmedTokens)} tokens（${snapshot.learnedSuccessCount} 次超限成功）`,
@@ -910,7 +1034,7 @@
       snapshot.accountScopeAvailable
         ? '账户学习：已建立本地匿名账户范围；成功超限发送会自动抬高该账户/模型的发送预算。'
         : '账户学习：尚未识别当前 ChatGPT 账户；识别成功前不会跨账户学习。',
-      '说明：插件优先读取当前会话 conversation tree 并沿 current_node 活动分支统计，再与 DOM 新内容取较大值；读取失败时退回 DOM。ChatGPT 隐藏系统提示、服务端压缩/裁剪和精确 tokenizer 仍不对扩展完整开放，因此“实测成功下限”代表该活动会话长度下服务仍成功生成，不等同于官方物理上下文窗口。',
+      '说明：插件优先读取当前会话 conversation tree 并沿 current_node 活动分支统计，再与 DOM 新内容取较大值；读取失败时退回 DOM。真实“对话长度上限”提示可以证明 ChatGPT 产品层已经封顶，但提示本身不包含官方 token 数；只有历史测量完整时才会形成可用于发送预算的 token 上界。ChatGPT 隐藏系统提示、服务端压缩/裁剪和精确 tokenizer 仍不对扩展完整开放，因此实测上下界都不等同于官方物理模型窗口。',
     );
     return rows.join('\n');
   }
@@ -967,7 +1091,11 @@
   function recompute() {
     refreshTimer = null;
     try {
-      publishSnapshot(snapshotNow());
+      const notice = findVisibleConversationLengthLimit();
+      if (notice) lastHardLimitNotice = { ...notice, conversationKey: currentConversationKey(), detectedAt: new Date().toISOString() };
+      const next = snapshotNow();
+      publishSnapshot(next);
+      if (notice) void persistHardLimitObservation(next, lastHardLimitNotice);
       void refreshConversationMetrics();
       void maybeFinalizeBypassLearning();
     } catch {
@@ -1024,6 +1152,7 @@
   }
 
   function hasVisibleGenerationError() {
+    if (findVisibleConversationLengthLimit()) return true;
     const candidates = [
       ...document.querySelectorAll('[role="alert"],[data-testid*="error" i],[class*="error" i]'),
     ].filter(visible);
@@ -1244,6 +1373,65 @@
     return activeProfile;
   }
 
+  async function persistHardLimitObservation(snapshot, notice) {
+    if (!snapshot || !notice || hardLimitLearningInFlight) return null;
+    const model = normalizeModelId(snapshot.model) || detectModel();
+    const observedTokens = Math.max(
+      Math.ceil(Number(snapshot.fullConversationTokens) || 0),
+      Math.ceil(Number(snapshot.cumulativeConversationTokens) || 0),
+    );
+    const fingerprint = `${snapshot.conversationKey}:${model}:${snapshot.historyMeasurementSource}:${observedTokens}`;
+    if (lastHardLimitFingerprint === fingerprint) return activeProfile;
+    hardLimitLearningInFlight = true;
+    try {
+      if (!currentAccountScope) await refreshAccountScope(true);
+      const key = profileStorageKey(currentAccountScope, model);
+      if (!key) return null;
+      const stored = await chrome.storage.local.get(key);
+      const previous = stored[key] ?? null;
+      const measurementReliable = ['conversation-tree+dom-reconcile', 'checkpoint+dom-restore'].includes(snapshot.historyMeasurementSource);
+      const next = nextHardLimitProfile({
+        previous,
+        accountScope: currentAccountScope,
+        accountScopeSource: currentAccountScopeSource || 'unknown',
+        model,
+        observedConversationTokens: observedTokens,
+        observedCharacters: Math.max(snapshot.fullConversationCharacters || 0, snapshot.cumulativeConversationCharacters || 0),
+        observedMessages: Math.max(snapshot.messageCount || 0, snapshot.cumulativeMessageCount || 0),
+        conversationKey: snapshot.conversationKey,
+        measuredAt: new Date().toISOString(),
+        measurementSource: snapshot.historyMeasurementSource,
+        measurementReliable,
+        noticeText: notice.text,
+        actionText: notice.actionText,
+      });
+      if (!next) return null;
+      await chrome.storage.local.set({ [key]: next });
+      activeProfile = next;
+      activeProfileKey = key;
+      lastLoadedProfileModel = model;
+      lastHardLimitFingerprint = fingerprint;
+      await discardPendingBypass();
+      window.dispatchEvent(new CustomEvent('gptlock:context-hard-limit-learned', {
+        detail: {
+          model,
+          conversationKey: snapshot.conversationKey,
+          hardLimitUpperBoundTokens: next.hardLimitUpperBoundTokens || 0,
+          observedConversationTokens: observedTokens,
+          confidence: next.hardLimitConfidence,
+          measurementSource: snapshot.historyMeasurementSource,
+        },
+      }));
+      showHardLimitToast(next);
+      scheduleRefresh();
+      return next;
+    } catch {
+      return null;
+    } finally {
+      hardLimitLearningInFlight = false;
+    }
+  }
+
   async function refreshAccountScope(force = false) {
     const now = Date.now();
     if (!force && now - accountScopeCheckedAt < ACCOUNT_SCOPE_REFRESH_MS) return currentAccountScope;
@@ -1447,6 +1635,24 @@
     window.setTimeout(() => host.remove(), 6_000);
   }
 
+  function showHardLimitToast(profile) {
+    const existing = document.getElementById('gptlock-context-hard-limit-toast');
+    existing?.remove();
+    const host = document.createElement('div');
+    host.id = 'gptlock-context-hard-limit-toast';
+    host.style.cssText = 'all:initial;position:fixed;right:18px;bottom:86px;z-index:2147483647;pointer-events:none';
+    const root = host.attachShadow({ mode: 'open' });
+    root.innerHTML = `
+      <style>.toast{max-width:460px;padding:11px 13px;border-radius:12px;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;box-shadow:0 12px 30px rgba(154,52,18,.14);font:650 12px/1.45 system-ui,sans-serif}</style>
+      <div class="toast"></div>`;
+    const upper = clampAdaptiveLimit(profile?.hardLimitUpperBoundTokens);
+    root.querySelector('.toast').textContent = upper
+      ? `GPTLock 已捕获 ChatGPT 真实“对话长度上限”提示，并记录该账户/模型的实测上界 ≤ ${formatCompactTokens(upper)} tokens。后续发送预算会同时受成功下限与该上界约束。`
+      : 'GPTLock 已捕获 ChatGPT 真实“对话长度上限”提示。当前会话历史只能从 DOM 回退估算，数据不完整，因此不会把这个不完整 token 数误写成最大上限；事件已记录，后续会继续对账。';
+    document.documentElement.append(host);
+    window.setTimeout(() => host.remove(), 7_000);
+  }
+
   document.addEventListener('click', handlePotentialSend, true);
   document.addEventListener('keydown', handlePotentialSend, true);
   document.addEventListener('submit', handlePotentialSend, true);
@@ -1504,6 +1710,8 @@
     restoredCheckpointKey = null;
     conversationMetricsCache = null;
     conversationMetricsCheckedAt = 0;
+    lastHardLimitNotice = null;
+    lastHardLimitFingerprint = null;
     scheduleRefresh();
     void refreshAccountScope(true).then(() => {
       void loadConversationCheckpoint();

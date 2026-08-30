@@ -1216,17 +1216,63 @@ export function createAccountSystem({
         const user = userById(Number(userMatch[1]));
         if (!user) fail(404, 'USER_NOT_FOUND', '用户不存在');
         const input = await bodyJson(req);
+        let email = user.email;
+        if (input.email !== undefined) {
+          email = normalizeEmail(input.email);
+          if (!isEmail(email)) fail(400, 'INVALID_EMAIL', '请输入有效邮箱');
+          const duplicate = userByEmail(email);
+          if (duplicate && duplicate.id !== user.id) fail(409, 'ACCOUNT_EXISTS', '该邮箱已被其他用户使用');
+        }
         const status = ['active', 'disabled', 'pending'].includes(input.status) ? input.status : user.status;
-        const freeExpiresAt = input.freeExpiresAt === null ? null : (parseIso(input.freeExpiresAt) || user.free_expires_at);
+        let freeExpiresAt = input.freeExpiresAt === null ? null : (parseIso(input.freeExpiresAt) || user.free_expires_at);
+        const membership = currentMembership(user.id);
+        let membershipExpiresAt = membership?.expires_at || null;
+        if (Object.prototype.hasOwnProperty.call(input, 'entitlementExpiresAt')) {
+          if (membership) {
+            const parsed = parseIso(input.entitlementExpiresAt);
+            if (!parsed) fail(400, 'INVALID_ENTITLEMENT_EXPIRY', '会员有效期不能为空且必须是有效日期');
+            if (Date.parse(parsed) <= Date.parse(membership.starts_at)) fail(400, 'INVALID_ENTITLEMENT_EXPIRY', '会员有效期必须晚于会员开始时间');
+            db.prepare('UPDATE memberships SET expires_at=? WHERE id=?').run(parsed, membership.id);
+            membershipExpiresAt = parsed;
+          } else {
+            freeExpiresAt = input.entitlementExpiresAt === null ? null : parseIso(input.entitlementExpiresAt);
+            if (input.entitlementExpiresAt !== null && !freeExpiresAt) fail(400, 'INVALID_ENTITLEMENT_EXPIRY', '免费权益有效期格式无效');
+          }
+        }
         const maxDevicesOverride = input.maxDevicesOverride === null ? null : clampInt(input.maxDevicesOverride, 1, 1000, user.max_devices_override ?? 1);
         const maxWindowsOverride = input.maxWindowsOverride === null ? null : clampInt(input.maxWindowsOverride, 1, 1000, user.max_windows_override ?? 1);
-        db.prepare(`UPDATE users SET status=?,free_expires_at=?,max_devices_override=?,max_windows_override=?,updated_at=? WHERE id=?`)
-          .run(status, freeExpiresAt, maxDevicesOverride, maxWindowsOverride, nowIso(), user.id);
+        db.prepare(`UPDATE users SET email=?,status=?,free_expires_at=?,max_devices_override=?,max_windows_override=?,updated_at=? WHERE id=?`)
+          .run(email, status, freeExpiresAt, maxDevicesOverride, maxWindowsOverride, nowIso(), user.id);
         if (status === 'disabled') {
           db.prepare('UPDATE user_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL').run(nowIso(), user.id);
         }
-        audit('admin_user_updated', user.id, { status, freeExpiresAt, maxDevicesOverride, maxWindowsOverride });
+        audit('admin_user_updated', user.id, {
+          emailChanged: email !== user.email, status, freeExpiresAt, membershipId: membership?.id || null,
+          membershipExpiresAt, maxDevicesOverride, maxWindowsOverride,
+        });
         return json(res, 200, { ok: true, user: adminUserRow(userById(user.id)) }), true;
+      }
+
+      const adminPasswordMatch = path.match(/^\/admin\/api\/account\/users\/(\d+)\/password$/);
+      if (adminPasswordMatch && req.method === 'POST') {
+        const user = userById(Number(adminPasswordMatch[1]));
+        if (!user) fail(404, 'USER_NOT_FOUND', '用户不存在');
+        const input = await bodyJson(req);
+        if (!passwordValid(input.password)) fail(400, 'WEAK_PASSWORD', '新密码至少 10 位，最多 128 位');
+        const passwordHash = await encodePassword(input.password);
+        const changedAt = nowIso();
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          db.prepare('UPDATE users SET password_hash=?,updated_at=? WHERE id=?').run(passwordHash, changedAt, user.id);
+          db.prepare('DELETE FROM user_window_leases WHERE session_id IN (SELECT id FROM user_sessions WHERE user_id=?)').run(user.id);
+          db.prepare('UPDATE user_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL').run(changedAt, user.id);
+          db.exec('COMMIT');
+        } catch (error) {
+          try { db.exec('ROLLBACK'); } catch {}
+          throw error;
+        }
+        audit('admin_user_password_changed', user.id, { allSessionsRevoked: true });
+        return json(res, 200, { ok: true, user: adminUserRow(userById(user.id)), sessionsRevoked: true }), true;
       }
 
       const resetDevicesMatch = path.match(/^\/admin\/api\/account\/users\/(\d+)\/reset-devices$/);
