@@ -453,7 +453,20 @@ const server = createServer(async (req, res) => {
   try {
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (url.pathname.startsWith('/admin/api/')) return await handleAdmin(req, res, url);
-    if (url.pathname === '/' || url.pathname === '/admin' || url.pathname === '/admin/') return staticFile(res, join(PUBLIC, 'admin.html'));
+    const adminPage = ({
+      '/': 'admin.html',
+      '/admin': 'admin.html',
+      '/admin/': 'admin.html',
+      '/admin/overview': 'admin.html',
+      '/admin/users': 'admin-users.html',
+      '/admin/plans': 'admin-plans.html',
+      '/admin/orders': 'admin-orders.html',
+      '/admin/settings': 'admin-settings.html',
+      '/admin/client-logs': 'admin-client-logs.html',
+      '/admin/server-logs': 'admin-server-logs.html',
+      '/admin/update': 'admin-update.html',
+    })[url.pathname];
+    if (adminPage) return staticFile(res, join(PUBLIC, adminPage));
     if (url.pathname === '/admin.js') return staticFile(res, join(PUBLIC, 'admin.js'));
     if (url.pathname === '/client-runtime-admin.js') return staticFile(res, join(PUBLIC, 'client-runtime-admin.js'));
     if (url.pathname === '/admin.css') return staticFile(res, join(PUBLIC, 'admin.css'));

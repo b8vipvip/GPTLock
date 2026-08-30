@@ -114,11 +114,17 @@ test('account system verifies email, enforces entitlements, manages membership, 
 
     // Public config advertises account auth and old license APIs are retired.
     const adminHtml = await readFile(new URL('../public/admin.html', import.meta.url), 'utf8');
+    const adminUsersHtml = await readFile(new URL('../public/admin-users.html', import.meta.url), 'utf8');
+    const adminSettingsHtml = await readFile(new URL('../public/admin-settings.html', import.meta.url), 'utf8');
     const adminJs = await readFile(new URL('../public/admin.js', import.meta.url), 'utf8');
-    assert.match(adminHtml, /id="emailVerificationRequired"/);
-    assert.match(adminHtml, /id="createUserToggle"/);
-    assert.match(adminHtml, /id="createUserPanel"/);
-    assert.match(adminHtml, /id="userPasswordDialog"/);
+    assert.match(adminHtml, /data-admin-page="overview"/);
+    assert.doesNotMatch(adminHtml, /id="users"/);
+    assert.match(adminUsersHtml, /id="createUserToggle"/);
+    assert.match(adminUsersHtml, /id="createUserPanel"/);
+    assert.match(adminUsersHtml, /id="userPasswordDialog"/);
+    assert.doesNotMatch(adminUsersHtml, /窗口上限/);
+    assert.match(adminSettingsHtml, /id="emailVerificationRequired"/);
+    assert.doesNotMatch(adminSettingsHtml, /同时窗口上限/);
     assert.match(adminJs, /emailVerificationRequired/);
     assert.match(adminJs, /\/admin\/api\/account\/users/);
     assert.match(adminJs, /saveUserRow/);
@@ -317,7 +323,7 @@ test('account system verifies email, enforces entitlements, manages membership, 
     assert.equal(wrongLogin.response.status, 401);
     assert.equal(wrongLogin.data.error.code, 'LOGIN_FAILED');
 
-    // First device logs in and free tier allows only one simultaneous Chrome window.
+    // First device logs in; account entitlement is required but concurrent Chrome windows are unlimited.
     const userLogin = await jsonRequest(`${base}/api/v1/auth/login`, {
       method: 'POST', headers: { origin: ORIGIN, 'x-forwarded-for': '203.0.113.21' }, body: extensionBody({ email, password: initialPassword }),
     });
@@ -332,9 +338,9 @@ test('account system verifies email, enforces entitlements, manages membership, 
       body: extensionBody({ windowKeys: ['chrome:10000001', 'chrome:10000002'] }),
     });
     assert.equal(heartbeat.response.status, 200);
-    assert.deepEqual(heartbeat.data.allowedWindowKeys, ['chrome:10000001']);
-    assert.deepEqual(heartbeat.data.deniedWindowKeys, ['chrome:10000002']);
-    assert.equal(heartbeat.data.account.entitlement.usage.windows, 1);
+    assert.deepEqual(heartbeat.data.allowedWindowKeys, ['chrome:10000001', 'chrome:10000002']);
+    assert.deepEqual(heartbeat.data.deniedWindowKeys, []);
+    assert.equal(heartbeat.data.account.entitlement.usage.windows, 2);
 
     const secondDevice = await jsonRequest(`${base}/api/v1/auth/login`, {
       method: 'POST', headers: { origin: ORIGIN, 'x-forwarded-for': '203.0.113.22' },

@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const el = {
   notLogged: $('notLogged'), app: $('app'), refresh: $('refresh'), email: $('email'), statusBadge: $('statusBadge'), tier: $('tier'), expiry: $('expiry'),
-  deviceUsage: $('deviceUsage'), windowUsage: $('windowUsage'), freeExpiry: $('freeExpiry'), memberExpiry: $('memberExpiry'), plans: $('plans'), orderMessage: $('orderMessage'),
+  deviceUsage: $('deviceUsage'), freeExpiry: $('freeExpiry'), memberExpiry: $('memberExpiry'), plans: $('plans'), orderMessage: $('orderMessage'),
   devices: $('devices'), sessions: $('sessions'), revokeOtherSessions: $('revokeOtherSessions'), securityMessage: $('securityMessage'),
   passwordForm: $('passwordForm'), currentPassword: $('currentPassword'), newPassword: $('newPassword'), newPassword2: $('newPassword2'), passwordMessage: $('passwordMessage'),
 };
@@ -38,8 +38,8 @@ function renderPlans() {
     const price = document.createElement('div'); price.className = 'price'; price.textContent = money(plan.priceCents);
     const small = document.createElement('small'); small.textContent = ` / ${plan.durationDays} 天`; price.append(small);
     const benefits = document.createElement('ul'); benefits.className = 'benefits';
-    for (const item of plan.benefits || []) { const li = document.createElement('li'); li.textContent = item; benefits.append(li); }
-    const limit = document.createElement('p'); limit.className = 'muted'; limit.textContent = `设备 ${plan.limits.devices} · 同时窗口 ${plan.limits.windows}`;
+    for (const item of plan.benefits || []) { if (/窗口|window/i.test(String(item))) continue; const li = document.createElement('li'); li.textContent = item; benefits.append(li); }
+    const limit = document.createElement('p'); limit.className = 'muted'; limit.textContent = `设备 ${plan.limits.devices} · 同时窗口不限`;
     const payRow = document.createElement('div'); payRow.className = 'pay-row';
     if (!methods.length) {
       const disabled = document.createElement('button'); disabled.disabled = true; disabled.textContent = '支付方式暂未配置'; payRow.append(disabled);
@@ -101,7 +101,6 @@ function renderAccount() {
   el.tier.textContent = account.membership?.name || (entitlement.source === 'free' ? '免费期 / Free' : '未开通会员');
   el.expiry.textContent = `权益有效期至 ${localDate(entitlement.expiresAt)}`;
   el.deviceUsage.textContent = `${entitlement.usage?.devices ?? 0} / ${entitlement.limits?.devices ?? 0}`;
-  el.windowUsage.textContent = `${entitlement.usage?.windows ?? 0} / ${entitlement.limits?.windows ?? 0}`;
   el.freeExpiry.textContent = localDate(user.freeExpiresAt);
   el.memberExpiry.textContent = localDate(account.membership?.expiresAt);
   renderPlans();
