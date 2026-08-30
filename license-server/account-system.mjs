@@ -1154,6 +1154,46 @@ export function createAccountSystem({
         return json(res, 200, { ok: true, stats: { totalUsers: total, verifiedUsers: verified, disabledUsers: disabled, activeMemberships, pendingOrders } }), true;
       }
 
+      if (path === '/admin/api/account/users' && req.method === 'POST') {
+        const input = await bodyJson(req);
+        const email = normalizeEmail(input.email);
+        if (!isEmail(email)) fail(400, 'INVALID_EMAIL', '请输入有效邮箱');
+        if (!passwordValid(input.password)) fail(400, 'WEAK_PASSWORD', '初始密码至少 10 位');
+        if (userByEmail(email)) fail(409, 'ACCOUNT_EXISTS', '该邮箱已存在');
+
+        const emailAccess = ['verified', 'exempt', 'pending'].includes(input.emailAccess) ? input.emailAccess : 'verified';
+        const freeDays = clampInt(input.freeDays, 0, 3650, freeConfig().days);
+        const optionalLimit = (value, code, label) => {
+          if (value === undefined || value === null || value === '') return null;
+          const parsed = Number(value);
+          if (!Number.isInteger(parsed) || parsed < 1 || parsed > 1000) fail(400, code, `${label}必须是 1–1000 的整数`);
+          return parsed;
+        };
+        const maxDevicesOverride = optionalLimit(input.maxDevicesOverride, 'INVALID_DEVICE_LIMIT', '设备上限');
+        const maxWindowsOverride = optionalLimit(input.maxWindowsOverride, 'INVALID_WINDOW_LIMIT', '窗口上限');
+        const passwordHash = await encodePassword(input.password);
+        const createdAt = nowIso();
+        const active = emailAccess !== 'pending';
+        const freeExpiresAt = active ? new Date(Date.now() + freeDays * DAY_MS).toISOString() : null;
+        const emailVerifiedAt = emailAccess === 'verified' ? createdAt : null;
+        const emailVerificationExempt = emailAccess === 'exempt' ? 1 : 0;
+        const status = active ? 'active' : 'pending';
+
+        const result = db.prepare(`INSERT INTO users(
+          email,password_hash,status,email_verified_at,email_verification_exempt,free_expires_at,
+          max_devices_override,max_windows_override,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
+          email, passwordHash, status, emailVerifiedAt, emailVerificationExempt, freeExpiresAt,
+          maxDevicesOverride, maxWindowsOverride, createdAt, createdAt,
+        );
+        const user = userById(Number(result.lastInsertRowid));
+        audit('admin_user_created', user.id, {
+          emailDomain: email.split('@')[1], emailAccess, freeDays, freeExpiresAt,
+          maxDevicesOverride, maxWindowsOverride,
+        });
+        return json(res, 201, { ok: true, user: adminUserRow(user) }), true;
+      }
+
       if (path === '/admin/api/account/users' && req.method === 'GET') {
         const query = String(url.searchParams.get('q') || '').trim().toLowerCase().slice(0, 120);
         const limit = clampInt(url.searchParams.get('limit'), 1, 1000, 300);

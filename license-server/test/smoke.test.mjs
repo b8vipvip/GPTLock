@@ -116,7 +116,10 @@ test('account system verifies email, enforces entitlements, manages membership, 
     const adminHtml = await readFile(new URL('../public/admin.html', import.meta.url), 'utf8');
     const adminJs = await readFile(new URL('../public/admin.js', import.meta.url), 'utf8');
     assert.match(adminHtml, /id="emailVerificationRequired"/);
+    assert.match(adminHtml, /id="createUserToggle"/);
+    assert.match(adminHtml, /id="createUserPanel"/);
     assert.match(adminJs, /emailVerificationRequired/);
+    assert.match(adminJs, /\/admin\/api\/account\/users/);
 
     const config = await jsonRequest(`${base}/api/v1/config`, { headers: { origin: ORIGIN } });
     assert.equal(config.response.status, 200);
@@ -177,6 +180,58 @@ test('account system verifies email, enforces entitlements, manages membership, 
     });
     assert.equal(instantLoginAfterEnable.response.status, 200);
     assert.equal(instantLoginAfterEnable.data.account.user.emailVerificationExempt, true);
+
+    // Administrator can create accounts without exposing plaintext passwords.
+    const manualEmail = 'manual@example.com';
+    const manualPassword = 'ManualAccount-12345';
+    const manualCreate = await jsonRequest(`${base}/admin/api/account/users`, {
+      method: 'POST', headers: { cookie }, body: {
+        email: manualEmail, password: manualPassword, emailAccess: 'verified', freeDays: 14,
+        maxDevicesOverride: 3, maxWindowsOverride: 4,
+      },
+    });
+    assert.equal(manualCreate.response.status, 201);
+    assert.equal(manualCreate.data.user.email, manualEmail);
+    assert.equal(manualCreate.data.user.emailVerified, true);
+    assert.equal(manualCreate.data.user.emailVerificationExempt, false);
+    assert.equal(manualCreate.data.user.entitlement.limits.devices, 3);
+    assert.equal(manualCreate.data.user.entitlement.limits.windows, 4);
+    assert.equal(JSON.stringify(manualCreate.data).includes(manualPassword), false);
+
+    const manualLogin = await jsonRequest(`${base}/api/v1/auth/login`, {
+      method: 'POST', headers: { origin: ORIGIN, 'x-forwarded-for': '203.0.113.14' },
+      body: extensionBody({ email: manualEmail, password: manualPassword, deviceId: 'manual-device-12345678', browserInstanceId: 'manual-browser-12345678' }),
+    });
+    assert.equal(manualLogin.response.status, 200);
+    assert.equal(manualLogin.data.account.user.email, manualEmail);
+    assert.equal(manualLogin.data.account.entitlement.source, 'free');
+
+    const duplicateManual = await jsonRequest(`${base}/admin/api/account/users`, {
+      method: 'POST', headers: { cookie }, body: { email: manualEmail, password: manualPassword },
+    });
+    assert.equal(duplicateManual.response.status, 409);
+    assert.equal(duplicateManual.data.error.code, 'ACCOUNT_EXISTS');
+
+    const weakManual = await jsonRequest(`${base}/admin/api/account/users`, {
+      method: 'POST', headers: { cookie }, body: { email: 'weak@example.com', password: 'short' },
+    });
+    assert.equal(weakManual.response.status, 400);
+    assert.equal(weakManual.data.error.code, 'WEAK_PASSWORD');
+
+    // Admin can also explicitly create a verification-exempt account even while global verification is enabled.
+    const exemptManualEmail = 'manual-exempt@example.com';
+    const exemptManualPassword = 'ManualExempt-12345';
+    const exemptManual = await jsonRequest(`${base}/admin/api/account/users`, {
+      method: 'POST', headers: { cookie }, body: { email: exemptManualEmail, password: exemptManualPassword, emailAccess: 'exempt', freeDays: 3 },
+    });
+    assert.equal(exemptManual.response.status, 201);
+    assert.equal(exemptManual.data.user.emailVerified, false);
+    assert.equal(exemptManual.data.user.emailVerificationExempt, true);
+    const exemptManualLogin = await jsonRequest(`${base}/api/v1/auth/login`, {
+      method: 'POST', headers: { origin: ORIGIN, 'x-forwarded-for': '203.0.113.15' },
+      body: extensionBody({ email: exemptManualEmail, password: exemptManualPassword, deviceId: 'exempt-device-12345678', browserInstanceId: 'exempt-browser-12345678' }),
+    });
+    assert.equal(exemptManualLogin.response.status, 200);
 
     const legacy = await jsonRequest(`${base}/api/v1/licenses/activate`, {
       method: 'POST', headers: { origin: ORIGIN }, body: extensionBody({ code: 'GPTL-AAAA-BBBB-CCCC-DDDD-EEEE' }),

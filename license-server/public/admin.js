@@ -3,6 +3,10 @@ const el = {
   login: $('login'), app: $('app'), password: $('password'), loginButton: $('loginButton'), loginMessage: $('loginMessage'), logout: $('logout'),
   totalUsers: $('totalUsers'), verifiedUsers: $('verifiedUsers'), activeMemberships: $('activeMemberships'), pendingOrders: $('pendingOrders'),
   userSearch: $('userSearch'), refreshUsers: $('refreshUsers'), usersBody: $('usersBody'),
+  createUserToggle: $('createUserToggle'), createUserPanel: $('createUserPanel'), cancelCreateUser: $('cancelCreateUser'),
+  createUserEmail: $('createUserEmail'), createUserPassword: $('createUserPassword'), createUserEmailAccess: $('createUserEmailAccess'),
+  createUserFreeDays: $('createUserFreeDays'), createUserDevices: $('createUserDevices'), createUserWindows: $('createUserWindows'),
+  generateUserPassword: $('generateUserPassword'), createUserSubmit: $('createUserSubmit'), createUserMessage: $('createUserMessage'),
   planCards: $('planCards'), refreshOrders: $('refreshOrders'), ordersBody: $('ordersBody'),
   freeDays: $('freeDays'), freeDevices: $('freeDevices'), freeWindows: $('freeWindows'), sessionDays: $('sessionDays'),
   emailVerificationRequired: $('emailVerificationRequired'),
@@ -97,6 +101,49 @@ function accountTier(row) {
   return '无有效权益';
 }
 
+function generateStrongPassword() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%_-';
+  const random = new Uint32Array(20);
+  crypto.getRandomValues(random);
+  return Array.from(random, (value) => alphabet[value % alphabet.length]).join('');
+}
+
+function optionalPositiveInt(input, label) {
+  const raw = input.value.trim();
+  if (!raw) return null;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 1000) throw new Error(`${label}必须是 1–1000 的整数`);
+  return value;
+}
+
+function setCreateUserPanel(open) {
+  el.createUserPanel.hidden = !open;
+  if (open) {
+    setMessage(el.createUserMessage, '');
+    el.createUserEmail.focus();
+  }
+}
+
+async function createUser() {
+  const email = el.createUserEmail.value.trim();
+  const password = el.createUserPassword.value;
+  if (!email) throw new Error('请输入用户邮箱');
+  if (password.length < 10) throw new Error('初始密码至少 10 位');
+  const freeDays = Number(el.createUserFreeDays.value);
+  if (!Number.isInteger(freeDays) || freeDays < 0 || freeDays > 3650) throw new Error('免费天数必须是 0–3650 的整数');
+  const body = {
+    email, password, emailAccess: el.createUserEmailAccess.value, freeDays,
+    maxDevicesOverride: optionalPositiveInt(el.createUserDevices, '设备上限'),
+    maxWindowsOverride: optionalPositiveInt(el.createUserWindows, '窗口上限'),
+  };
+  const result = await api('/admin/api/account/users', { method: 'POST', body: JSON.stringify(body) });
+  setMessage(el.createUserMessage, `用户 ${result.user?.email || email} 创建成功。请妥善保存初始密码。`, 'good');
+  el.createUserEmail.value = '';
+  el.createUserDevices.value = '';
+  el.createUserWindows.value = '';
+  await Promise.all([loadUsers(), loadDashboard()]);
+}
+
 async function editUser(row) {
   const currentFree = localDateInput(row.freeExpiresAt);
   const freeRaw = prompt('免费有效期（本地时间；留空表示清空免费期限）', currentFree);
@@ -150,8 +197,9 @@ function renderUsers(rows) {
   for (const row of rows) {
     const tr = document.createElement('tr');
     tr.append(td(row.id), td(row.email));
-    const statusCell = td(row.status === 'disabled' ? '已停用' : (row.emailVerified ? '正常' : '待验证'));
-    statusCell.className = row.status === 'disabled' ? 'tone-bad' : (row.emailVerified ? 'tone-good' : 'tone-wait');
+    const statusText = row.status === 'disabled' ? '已停用' : (row.emailVerified ? '正常' : (row.emailVerificationExempt ? '免验证' : '待验证'));
+    const statusCell = td(statusText);
+    statusCell.className = row.status === 'disabled' ? 'tone-bad' : ((row.emailVerified || row.emailVerificationExempt) ? 'tone-good' : 'tone-wait');
     tr.append(statusCell);
     tr.append(td(accountTier(row)));
     tr.append(td(`${row.entitlement?.usage?.devices ?? 0}/${row.entitlement?.limits?.devices ?? 0}${row.overrides?.devices ? ' *' : ''}`));
@@ -281,6 +329,7 @@ function renderSettings(data) {
   el.freeWindows.value = settings.free?.maxWindows ?? 1;
   el.sessionDays.value = settings.sessionDays ?? 30;
   el.emailVerificationRequired.checked = settings.emailVerificationRequired !== false;
+  if (!el.createUserFreeDays.value) el.createUserFreeDays.value = settings.free?.days ?? 7;
   const smtp = settings.smtp || {};
   el.smtpHost.value = smtp.host || '';
   el.smtpPort.value = smtp.port || 465;
@@ -420,8 +469,15 @@ el.loginButton.addEventListener('click', async () => {
 });
 el.password.addEventListener('keydown', (event) => { if (event.key === 'Enter') el.loginButton.click(); });
 el.logout.addEventListener('click', async () => { stopUpdatePolling(); await api('/admin/api/logout', { method: 'POST', body: '{}' }).catch(() => {}); location.reload(); });
-el.refreshUsers.addEventListener('click', () => void Promise.all([loadUsers(), loadDashboard()]));
+el.refreshUsers.addEventListener('click', () => void loadUsers());
 el.userSearch.addEventListener('keydown', (event) => { if (event.key === 'Enter') void loadUsers(); });
+el.createUserToggle.addEventListener('click', () => setCreateUserPanel(el.createUserPanel.hidden));
+el.cancelCreateUser.addEventListener('click', () => setCreateUserPanel(false));
+el.generateUserPassword.addEventListener('click', () => { el.createUserPassword.value = generateStrongPassword(); el.createUserPassword.type = 'text'; setTimeout(() => { el.createUserPassword.type = 'password'; }, 5000); });
+el.createUserSubmit.addEventListener('click', () => {
+  el.createUserSubmit.disabled = true;
+  void createUser().catch((error) => setMessage(el.createUserMessage, error.message, 'bad')).finally(() => { el.createUserSubmit.disabled = false; });
+});
 el.refreshOrders.addEventListener('click', () => void loadOrders());
 el.saveSettings.addEventListener('click', () => {
   el.saveSettings.disabled = true;
