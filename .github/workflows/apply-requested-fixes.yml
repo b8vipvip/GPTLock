@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/context-hard-limit-admin-ui-license-compat
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
