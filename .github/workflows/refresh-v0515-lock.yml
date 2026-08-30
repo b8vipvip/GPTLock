@@ -1,0 +1,33 @@
+name: Refresh v0.5.15 lockfile
+
+on:
+  push:
+    branches:
+      - feat/auto-enable-discovered-models-v0.5.15
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/auto-enable-discovered-models-v0.5.15
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Refresh Cargo.lock and remove helper workflow
+        shell: bash
+        run: |
+          cargo check --manifest-path native-core/Cargo.toml
+          rm -f .github/workflows/refresh-v0515-lock.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add native-core/Cargo.lock .github/workflows/refresh-v0515-lock.yml
+          if git diff --cached --quiet; then
+            echo 'Nothing to commit.'
+            exit 0
+          fi
+          git commit -m 'chore: refresh Cargo.lock for v0.5.15'
+          git pull --rebase origin feat/auto-enable-discovered-models-v0.5.15
+          git push origin HEAD:feat/auto-enable-discovered-models-v0.5.15
