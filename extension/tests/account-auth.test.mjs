@@ -18,6 +18,8 @@ test('popup is account-first and contains no license-code input', async () => {
   assert.match(html, /id="accountCenter"/);
   assert.match(html, /id="deviceReplaceForm"/);
   assert.match(html, /id="deviceReplaceList"/);
+  assert.match(html, /是否需要邮箱验证码由服务端系统配置决定/);
+  assert.doesNotMatch(html, /注册必须通过邮箱验证码/);
   assert.doesNotMatch(html, /GPTL-/);
   assert.doesNotMatch(html, /授权码/);
   assert.doesNotMatch(html, /licenseCode/);
@@ -38,6 +40,9 @@ test('account token is local-only and background enforces entitlement and window
   assert.match(background, /GPTLOCK_ACCOUNT_RELEASE_DEVICE/);
   assert.match(client, /replaceDeviceRecordIds/);
   assert.match(client, /account\/devices\/release/);
+  const authGate = await source('auth-gate.js');
+  assert.match(authGate, /registration\?\.verificationRequired === false/);
+  assert.match(authGate, /当前服务端未启用邮箱验证/);
 });
 
 test('account center renders service-defined membership and password management', async () => {

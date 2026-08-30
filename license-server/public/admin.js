@@ -5,7 +5,9 @@ const el = {
   userSearch: $('userSearch'), refreshUsers: $('refreshUsers'), usersBody: $('usersBody'),
   planCards: $('planCards'), refreshOrders: $('refreshOrders'), ordersBody: $('ordersBody'),
   freeDays: $('freeDays'), freeDevices: $('freeDevices'), freeWindows: $('freeWindows'), sessionDays: $('sessionDays'),
-  smtpHost: $('smtpHost'), smtpPort: $('smtpPort'), smtpSecure: $('smtpSecure'), smtpUsername: $('smtpUsername'), smtpPassword: $('smtpPassword'), smtpFromEmail: $('smtpFromEmail'), smtpFromName: $('smtpFromName'), testEmail: $('testEmail'), sendTestEmail: $('sendTestEmail'), smtpState: $('smtpState'),
+  emailVerificationRequired: $('emailVerificationRequired'),
+  smtpHost: $('smtpHost'),
+  smtpPort: $('smtpPort'), smtpSecure: $('smtpSecure'), smtpUsername: $('smtpUsername'), smtpPassword: $('smtpPassword'), smtpFromEmail: $('smtpFromEmail'), smtpFromName: $('smtpFromName'), testEmail: $('testEmail'), sendTestEmail: $('sendTestEmail'), smtpState: $('smtpState'),
   wechatEnabled: $('wechatEnabled'), wechatUrl: $('wechatUrl'), wechatInstructions: $('wechatInstructions'),
   alipayEnabled: $('alipayEnabled'), alipayUrl: $('alipayUrl'), alipayInstructions: $('alipayInstructions'), saveSettings: $('saveSettings'), settingsMessage: $('settingsMessage'),
   runtimeLog: $('runtimeLog'), refreshRuntime: $('refreshRuntime'), exportRuntime: $('exportRuntime'), audit: $('audit'),
@@ -278,6 +280,7 @@ function renderSettings(data) {
   el.freeDevices.value = settings.free?.maxDevices ?? 1;
   el.freeWindows.value = settings.free?.maxWindows ?? 1;
   el.sessionDays.value = settings.sessionDays ?? 30;
+  el.emailVerificationRequired.checked = settings.emailVerificationRequired !== false;
   const smtp = settings.smtp || {};
   el.smtpHost.value = smtp.host || '';
   el.smtpPort.value = smtp.port || 465;
@@ -302,6 +305,7 @@ async function saveSettings() {
   const body = {
     free: { days: Number(el.freeDays.value), maxDevices: Number(el.freeDevices.value), maxWindows: Number(el.freeWindows.value) },
     sessionDays: Number(el.sessionDays.value),
+    emailVerificationRequired: el.emailVerificationRequired.checked,
     smtp: {
       host: el.smtpHost.value.trim(), port: Number(el.smtpPort.value), secure: el.smtpSecure.checked, username: el.smtpUsername.value.trim(),
       fromEmail: el.smtpFromEmail.value.trim(), fromName: el.smtpFromName.value.trim(),
