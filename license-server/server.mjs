@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createRuntimeLogger } from './runtime-log.mjs';
 import { createUpdateManager } from './update-manager.mjs';
 import { createAccountSystem } from './account-system.mjs';
+import { createClientRuntimeLogManager } from './client-runtime-logs.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(ROOT, 'public');
@@ -366,6 +367,7 @@ const accountSystem = createAccountSystem({
   db, env, secret: SECRET, publicOrigin: PUBLIC_ORIGIN, allowedExtensionIds: ALLOWED_EXTENSION_IDS,
   windowTtlSeconds: WINDOW_TTL_SECONDS, json, bodyJson, clientIp,
 });
+const clientRuntimeLogs = createClientRuntimeLogManager({ db, env, json });
 
 async function handleApi(req, res, url) {
   const cors = corsHeaders(req);
@@ -379,6 +381,8 @@ async function handleApi(req, res, url) {
   }
   const accountHandled = await accountSystem.handleApi(req, res, url, cors);
   if (accountHandled) return;
+  const clientLogHandled = await clientRuntimeLogs.handleApi(req, res, url, cors);
+  if (clientLogHandled) return;
   if (url.pathname.startsWith('/api/v1/licenses/')) {
     return apiError(res, 410, 'LICENSE_API_REMOVED', '授权码验证已停用，请使用 GPTLock 账号登录');
   }
@@ -408,6 +412,8 @@ async function handleAdmin(req, res, url) {
   }
   const accountAdminHandled = await accountSystem.handleAdmin(req, res, url);
   if (accountAdminHandled) return;
+  const clientLogAdminHandled = await clientRuntimeLogs.handleAdmin(req, res, url);
+  if (clientLogAdminHandled) return;
   if (url.pathname.startsWith('/admin/api/licenses')) {
     return apiError(res, 410, 'LICENSE_ADMIN_REMOVED', '授权码管理已停用，请使用用户账户管理');
   }
@@ -449,6 +455,7 @@ const server = createServer(async (req, res) => {
     if (url.pathname.startsWith('/admin/api/')) return await handleAdmin(req, res, url);
     if (url.pathname === '/' || url.pathname === '/admin' || url.pathname === '/admin/') return staticFile(res, join(PUBLIC, 'admin.html'));
     if (url.pathname === '/admin.js') return staticFile(res, join(PUBLIC, 'admin.js'));
+    if (url.pathname === '/client-runtime-admin.js') return staticFile(res, join(PUBLIC, 'client-runtime-admin.js'));
     if (url.pathname === '/admin.css') return staticFile(res, join(PUBLIC, 'admin.css'));
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('Not found');
   } catch (error) {

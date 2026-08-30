@@ -29,7 +29,7 @@ article:has(input[placeholder^="GPTL-" i]) {
 /* Re-declare the compact toolbar in the cache-proof resource as well. */
 .actions {
   display: grid !important;
-  grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
   align-items: stretch !important;
   gap: 6px !important;
 }

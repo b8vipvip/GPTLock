@@ -108,10 +108,10 @@
         <h2 id="statusHeading">运行状态 <span>Runtime status</span></h2>
         <div class="status-actions">
           <button id="autoVerify" class="primary" type="button">自动验证 / Auto verify</button>
-          <button id="reconnect" class="secondary" type="button">重新连接 / Reconnect</button>
-          <button id="logs" class="secondary" type="button">运行日志 / Runtime logs</button>
         </div>
       </div>
+      <span id="reconnect" hidden aria-hidden="true"></span>
+      <span id="logs" hidden aria-hidden="true"></span>
       <dl>
         <div><dt>Native Core</dt><dd id="nativeStatus">检查中 / Checking…</dd></div>
         <div><dt>最近确认 / Last verification</dt><dd id="verificationStatus">暂无 / None</dd></div>
@@ -122,8 +122,8 @@
         <p id="installDetail"></p>
         <button id="installCore" class="secondary" type="button">下载安装器 / Download installer</button>
       </div>
-      <p class="boundary">“自动验证”会自动尝试页面对齐，然后在当前 ChatGPT 对话中写入并发送一条可见测试消息；无需人工再点击发送。正式聊天只拦截两个 conversation POST 端点，prepare/init 不再被当作正式聊天请求。</p>
-      <p class="boundary en">Auto verify sends one visible test message itself. Only the two formal conversation POST endpoints are request-locked; prepare/init remain auxiliary traffic.</p>
+      <p class="boundary">“自动验证”会自动尝试页面对齐，然后在当前 ChatGPT 对话中写入并发送一条可见测试消息；无需人工再点击发送。正式聊天只拦截两个 conversation POST 端点，prepare/init 不再被当作正式聊天请求。本地核心在扩展启动时自动连接，断线后自动重试，无需手动重连。</p>
+      <p class="boundary en">Auto verify sends one visible test message itself. Only the two formal conversation POST endpoints are request-locked; prepare/init remain auxiliary traffic. Native Core connection and retry are automatic.</p>
     </section>
 
     <footer>
