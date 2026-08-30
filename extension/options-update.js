@@ -7,12 +7,16 @@ import {
   UPDATE_STATUS_KEY,
   WINDOWS_DOWNLOAD_FILENAME,
 } from './update-manager.js';
+import { appendRuntimeLog } from './runtime-log.js';
 
 const NATIVE_HOST = 'com.gptlock.core';
 const DOWNLOAD_TIMEOUT_MS = 3 * 60 * 1000;
 const INSTALL_TIMEOUT_MS = 3 * 60 * 1000;
 const INSTALL_INITIAL_WAIT_MS = 10 * 1000;
 const INSTALL_POLL_MS = 3 * 1000;
+const RUNTIME_MESSAGE_TIMEOUT_MS = 12 * 1000;
+const NATIVE_REQUEST_TIMEOUT_MS = 12 * 1000;
+const INSTALL_PROBE_TIMEOUT_MS = 7 * 1000;
 
 const el = {
   card: document.getElementById('updates'),
@@ -40,14 +44,36 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function sendMessage(message) {
+function errorText(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function logUpdate(level, event, details = {}) {
+  void appendRuntimeLog(level, 'update', event, details).catch(() => {});
+}
+
+function sendMessage(message, timeoutMs = RUNTIME_MESSAGE_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(message, (response) => {
-      const error = chrome.runtime.lastError;
-      if (error) reject(new Error(error.message));
-      else if (!response?.ok) reject(new Error(response?.error || 'Extension request failed'));
-      else resolve(response.data);
-    });
+    let settled = false;
+    const timer = setTimeout(() => finish(reject, new Error(`Extension request timed out: ${message?.type || 'unknown'}`)), timeoutMs);
+
+    function finish(callback, value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback(value);
+    }
+
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        const error = chrome.runtime.lastError;
+        if (error) finish(reject, new Error(error.message));
+        else if (!response?.ok) finish(reject, new Error(response?.error || 'Extension request failed'));
+        else finish(resolve, response.data);
+      });
+    } catch (error) {
+      finish(reject, error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
@@ -76,12 +102,12 @@ function findDownload(downloadId) {
   });
 }
 
-function nativeRequest(type, payload = {}) {
+function nativeRequest(type, payload = {}, timeoutMs = NATIVE_REQUEST_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const id = `options-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     let port;
     let settled = false;
-    const timer = setTimeout(() => finish(reject, new Error(`Native request timed out: ${type}`)), 12000);
+    const timer = setTimeout(() => finish(reject, new Error(`Native request timed out: ${type}`)), timeoutMs);
 
     function finish(callback, value) {
       if (settled) return;
@@ -152,6 +178,7 @@ function renderStatus(status = currentStatus) {
 }
 
 async function setStatus(phase, percent, message, extra = {}) {
+  const previousPhase = currentStatus?.phase ?? null;
   currentStatus = {
     schemaVersion: 2,
     phase,
@@ -164,6 +191,16 @@ async function setStatus(phase, percent, message, extra = {}) {
   };
   renderStatus(currentStatus);
   await chrome.storage.local.set({ [UPDATE_STATUS_KEY]: currentStatus }).catch(() => {});
+  if (phase !== previousPhase) {
+    logUpdate(phase === 'error' ? 'error' : 'info', 'ui_phase_changed', {
+      previousPhase,
+      phase,
+      percent: currentStatus.percent,
+      targetVersion: currentStatus.targetVersion ?? null,
+      nativeVersion: currentStatus.nativeVersion ?? null,
+      error: currentStatus.error ?? null,
+    });
+  }
   return currentStatus;
 }
 
@@ -236,26 +273,51 @@ async function waitForInstalledCore(targetVersion) {
   const startedAt = Date.now();
   const deadline = startedAt + INSTALL_TIMEOUT_MS;
   let attempt = 0;
+  let lastSeenVersion = null;
+  let lastProbeError = null;
 
   while (Date.now() < deadline) {
     attempt += 1;
     const elapsed = Date.now() - startedAt;
     const percent = 72 + Math.min(22, Math.floor((elapsed / INSTALL_TIMEOUT_MS) * 22));
-    await setStatus('reconnecting', percent, `正在等待新版本 Core 启动 · 第 ${attempt} 次重连`, { targetVersion });
+    await setStatus('reconnecting', percent, `正在直接探测新版本 Core · 第 ${attempt} 次`, {
+      targetVersion,
+      nativeVersion: lastSeenVersion ?? currentStatus?.nativeVersion ?? null,
+    });
     try {
-      await sendMessage({ type: 'GPTLOCK_RECONNECT' });
-      const state = await loadRuntimeState();
-      const nativeVersion = state?.nativeStatus?.version;
-      if (state?.nativeStatus?.connected && compareVersions(nativeVersion, targetVersion) >= 0) {
-        appendLog(`本地核心已切换到 ${nativeVersion}`);
-        return state;
+      const status = await nativeRequest('get_status', {}, INSTALL_PROBE_TIMEOUT_MS);
+      const nativeVersion = status?.version ?? null;
+      lastProbeError = null;
+      if (nativeVersion) {
+        lastSeenVersion = nativeVersion;
+        el.core.textContent = nativeVersion;
       }
-    } catch {
-      // The installer temporarily stops the native host; retry until the deadline.
+      if (compareVersions(nativeVersion, targetVersion) >= 0) {
+        await setStatus('reconnecting', Math.max(percent, 96), `已检测到新版本 Core ${nativeVersion}`, {
+          targetVersion,
+          nativeVersion,
+        });
+        appendLog(`本地核心已切换到 ${nativeVersion}`);
+        logUpdate('info', 'target_core_observed', { targetVersion, nativeVersion, attempt });
+        return status;
+      }
+      if (attempt === 1 || attempt % 5 === 0) {
+        appendLog(`Core 尚未切换 · 当前 ${nativeVersion || '未知'}`);
+      }
+    } catch (error) {
+      lastProbeError = errorText(error);
+      if (attempt === 1 || attempt % 5 === 0) {
+        appendLog(`Core 暂时不可用 · ${lastProbeError}`);
+      }
     }
     await sleep(INSTALL_POLL_MS);
   }
-  throw new Error('等待新版本本地核心启动超时；请完全重启浏览器 / Timed out waiting for updated core');
+  const detail = lastSeenVersion
+    ? `最后检测到 Core ${lastSeenVersion}`
+    : lastProbeError
+      ? `最后错误：${lastProbeError}`
+      : '未检测到可用 Core';
+  throw new Error(`等待新版本本地核心启动超时（${detail}）；请重新运行安装器 / Timed out waiting for updated core`);
 }
 
 async function installReleaseInternal(release, initialState = lastState) {
@@ -304,8 +366,8 @@ async function installReleaseInternal(release, initialState = lastState) {
     helperLogPath: prepared?.helperLogPath ?? null,
   });
 
-  const updatedState = await waitForInstalledCore(release.latestVersion);
-  const nativeVersion = updatedState?.nativeStatus?.version ?? null;
+  const installedCore = await waitForInstalledCore(release.latestVersion);
+  const nativeVersion = installedCore?.version ?? null;
   await setStatus('complete', 100, `更新完成：${release.latestVersion}。正在重新加载扩展…`, {
     targetVersion: release.latestVersion,
     nativeVersion,
@@ -371,7 +433,7 @@ async function installLatest() {
     await checkForUpdates({ autoInstall: true });
     return;
   }
-  setBusy(true);
+  setBusy(true;
   try {
     platform ??= await getPlatformInfo();
     await loadRuntimeState();
