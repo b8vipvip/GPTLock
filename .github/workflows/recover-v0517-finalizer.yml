@@ -1,0 +1,61 @@
+name: Recover v0.5.17 finalizer
+
+on:
+  push:
+    branches:
+      - fix/remove-window-quota-admin-pages-v0517
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Execute corrected finalizer payload
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/finalize-v0517-window-quota-admin-pages.yml').read_text(encoding='utf-8')
+          marker = "          python <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY\n", start)
+          payload = workflow[start:end]
+          lines = []
+          for line in payload.splitlines():
+              if line.startswith('          '):
+                  line = line[10:]
+              lines.append(line)
+          payload = '\n'.join(lines)
+          # The original one-shot workflow accidentally double-escaped regex word boundaries.
+          payload = payload.replace('\\\\b', '\\b')
+          compile(payload, '<recovered-finalizer>', 'exec')
+          exec(payload, {'__name__': '__main__'})
+          PY
+
+          cargo check --manifest-path native-core/Cargo.toml
+          npm test --prefix extension
+          cargo check --locked --manifest-path native-core/Cargo.toml
+          git diff --check
+
+      - name: Commit finalized implementation and remove one-shot workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/finalize-v0517-window-quota-admin-pages.yml .github/workflows/recover-v0517-finalizer.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'fix: remove window quota and split admin pages'
+          git push origin HEAD
