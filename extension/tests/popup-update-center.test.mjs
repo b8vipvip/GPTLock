@@ -39,6 +39,7 @@ test('updater polls the native core directly with bounded requests instead of fu
   assert.match(source, /RUNTIME_MESSAGE_TIMEOUT_MS/);
   assert.match(source, /nativeRequest\('get_status'/);
   assert.doesNotMatch(source, /GPTLOCK_RECONNECT/);
+  assert.doesNotMatch(source, /setBusy\(true;/);
 });
 
 test('Windows installer removes stale UI and stops the installed core before replacing binaries', async () => {
