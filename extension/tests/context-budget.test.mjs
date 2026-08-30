@@ -278,5 +278,6 @@ test('hard-limit learning records a reliable upper bound but refuses to convert 
     hardLimitUpperBoundTokens: measured.hardLimitUpperBoundTokens, confirmedLowerBoundTokens: measured.confirmedConversationTokens,
   });
   assert.equal(constrained.safeLimitTokens, 128_000);
+  assert.equal(constrained.reserveTokens, 8_192);
   assert.equal(constrained.hardLimitActive, true);
 });

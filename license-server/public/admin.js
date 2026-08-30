@@ -541,7 +541,8 @@ async function loadAll() {
   try {
     await loadDashboard();
     el.login.hidden = true; el.app.hidden = false; el.logout.hidden = false;
-    await Promise.all([loadUsers(), loadPlans(), loadOrders(), loadSettings(), loadRuntimeLogs(), loadAudit(), loadUpdate()]);
+    await loadPlans();
+    await Promise.all([loadUsers(), loadOrders(), loadSettings(), loadRuntimeLogs(), loadAudit(), loadUpdate()]);
     startUpdatePolling();
   } catch (error) {
     if (error.status === 401) {

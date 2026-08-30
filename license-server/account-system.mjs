@@ -1227,13 +1227,14 @@ export function createAccountSystem({
         let freeExpiresAt = input.freeExpiresAt === null ? null : (parseIso(input.freeExpiresAt) || user.free_expires_at);
         const membership = currentMembership(user.id);
         let membershipExpiresAt = membership?.expires_at || null;
+        let updateMembershipExpiry = false;
         if (Object.prototype.hasOwnProperty.call(input, 'entitlementExpiresAt')) {
           if (membership) {
             const parsed = parseIso(input.entitlementExpiresAt);
             if (!parsed) fail(400, 'INVALID_ENTITLEMENT_EXPIRY', '会员有效期不能为空且必须是有效日期');
             if (Date.parse(parsed) <= Date.parse(membership.starts_at)) fail(400, 'INVALID_ENTITLEMENT_EXPIRY', '会员有效期必须晚于会员开始时间');
-            db.prepare('UPDATE memberships SET expires_at=? WHERE id=?').run(parsed, membership.id);
             membershipExpiresAt = parsed;
+            updateMembershipExpiry = true;
           } else {
             freeExpiresAt = input.entitlementExpiresAt === null ? null : parseIso(input.entitlementExpiresAt);
             if (input.entitlementExpiresAt !== null && !freeExpiresAt) fail(400, 'INVALID_ENTITLEMENT_EXPIRY', '免费权益有效期格式无效');
@@ -1241,10 +1242,22 @@ export function createAccountSystem({
         }
         const maxDevicesOverride = input.maxDevicesOverride === null ? null : clampInt(input.maxDevicesOverride, 1, 1000, user.max_devices_override ?? 1);
         const maxWindowsOverride = input.maxWindowsOverride === null ? null : clampInt(input.maxWindowsOverride, 1, 1000, user.max_windows_override ?? 1);
-        db.prepare(`UPDATE users SET email=?,status=?,free_expires_at=?,max_devices_override=?,max_windows_override=?,updated_at=? WHERE id=?`)
-          .run(email, status, freeExpiresAt, maxDevicesOverride, maxWindowsOverride, nowIso(), user.id);
-        if (status === 'disabled') {
-          db.prepare('UPDATE user_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL').run(nowIso(), user.id);
+        const changedAt = nowIso();
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          if (updateMembershipExpiry) {
+            db.prepare('UPDATE memberships SET expires_at=? WHERE id=?').run(membershipExpiresAt, membership.id);
+          }
+          db.prepare(`UPDATE users SET email=?,status=?,free_expires_at=?,max_devices_override=?,max_windows_override=?,updated_at=? WHERE id=?`)
+            .run(email, status, freeExpiresAt, maxDevicesOverride, maxWindowsOverride, changedAt, user.id);
+          if (status === 'disabled') {
+            db.prepare('DELETE FROM user_window_leases WHERE session_id IN (SELECT id FROM user_sessions WHERE user_id=?)').run(user.id);
+            db.prepare('UPDATE user_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL').run(changedAt, user.id);
+          }
+          db.exec('COMMIT');
+        } catch (error) {
+          try { db.exec('ROLLBACK'); } catch {}
+          throw error;
         }
         audit('admin_user_updated', user.id, {
           emailChanged: email !== user.email, status, freeExpiresAt, membershipId: membership?.id || null,

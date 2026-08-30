@@ -199,7 +199,7 @@
     const safeLimitTokens = hardLimitUsable
       ? Math.max(16_000, confirmedLower, Math.min(unconstrainedSafeLimitTokens, learnedHardUpper))
       : unconstrainedSafeLimitTokens;
-    const reserveBasis = Math.max(nominalLimit, safeLimitTokens);
+    const reserveBasis = hardLimitUsable ? safeLimitTokens : Math.max(nominalLimit, safeLimitTokens);
     const reserveTokens = reserveTokensForWindow(reserveBasis);
     const usedTokens = Math.max(0, Math.ceil(historyTokens + draftTokens));
     const projectedTokens = usedTokens + reserveTokens;
