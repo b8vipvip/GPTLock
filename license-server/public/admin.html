@@ -11,7 +11,7 @@
   <aside class="sidebar">
     <div class="brand"><span>G</span><div><strong>GPTLock</strong><small>Control Center</small></div></div>
     <nav>
-      <a href="#overview">总览</a><a href="#users">用户</a><a href="#plans">会员</a><a href="#orders">订单</a><a href="#settings">系统配置</a><a href="#logs">日志</a><a href="#update">更新</a>
+      <a href="#overview">总览</a><a href="#users">用户</a><a href="#plans">会员</a><a href="#orders">订单</a><a href="#settings">系统配置</a><a href="#clientLogs">客户端运行日志</a><a href="#logs">服务端日志</a><a href="#update">更新</a>
     </nav>
     <button id="logout" class="ghost" hidden>退出管理员</button>
   </aside>
@@ -92,6 +92,20 @@
         <p id="settingsMessage" class="message"></p>
       </section>
 
+      <section id="clientLogs" class="card">
+        <div class="section-title">
+          <div><h2>客户端运行日志</h2><p class="muted">客户端继续在本机采集脱敏运行日志，并按批次自动上传。服务端默认保留 30 天，可按用户、设备、组件、事件或级别筛选。</p></div>
+          <div class="section-actions">
+            <input id="clientLogSearch" placeholder="邮箱 / 设备 / 组件 / 事件">
+            <select id="clientLogLevel"><option value="">全部级别</option><option value="error">ERROR</option><option value="warn">WARN</option><option value="info">INFO</option><option value="debug">DEBUG</option></select>
+            <select id="clientLogLimit"><option value="200">200 条</option><option value="500" selected>500 条</option><option value="1000">1000 条</option><option value="2000">2000 条</option></select>
+            <button id="refreshClientLogs">刷新</button><button id="exportClientLogs">导出当前结果</button><button id="clearClientLogs" class="danger">清空当前筛选</button>
+          </div>
+        </div>
+        <p id="clientLogSummary" class="muted">等待读取客户端日志…</p>
+        <div class="table-wrap"><table><thead><tr><th>客户端时间</th><th>用户</th><th>设备 / 版本</th><th>级别</th><th>组件</th><th>事件</th><th>详情</th></tr></thead><tbody id="clientLogsBody"></tbody></table></div>
+      </section>
+
       <section id="logs" class="card">
         <div class="section-title"><div><h2>服务端运行日志</h2><p class="muted">敏感密码、验证码、会话令牌不会写入运行日志。</p></div><div class="section-actions"><button id="refreshRuntime">刷新</button><button id="exportRuntime">导出</button></div></div>
         <pre id="runtimeLog" class="logbox">暂无日志</pre>
@@ -121,5 +135,6 @@
 </dialog>
 
 <script type="module" src="/admin.js"></script>
+<script type="module" src="/client-runtime-admin.js"></script>
 </body>
 </html>
