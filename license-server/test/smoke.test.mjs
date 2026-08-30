@@ -113,6 +113,11 @@ test('account system verifies email, enforces entitlements, manages membership, 
     const cookie = loginAdmin.response.headers.get('set-cookie').split(';')[0];
 
     // Public config advertises account auth and old license APIs are retired.
+    const adminHtml = await readFile(new URL('../public/admin.html', import.meta.url), 'utf8');
+    const adminJs = await readFile(new URL('../public/admin.js', import.meta.url), 'utf8');
+    assert.match(adminHtml, /id="emailVerificationRequired"/);
+    assert.match(adminJs, /emailVerificationRequired/);
+
     const config = await jsonRequest(`${base}/api/v1/config`, { headers: { origin: ORIGIN } });
     assert.equal(config.response.status, 200);
     assert.equal(config.data.accountRequired, true);
@@ -126,6 +131,52 @@ test('account system verifies email, enforces entitlements, manages membership, 
     assert.equal(accountConfig.data.free.maxDevices, 1);
     assert.equal(accountConfig.data.free.maxWindows, 1);
     assert.deepEqual(accountConfig.data.plans.map((plan) => plan.code), ['monthly', 'quarterly', 'yearly']);
+
+    // Admin can disable registration email verification. New accounts activate immediately,
+    // while the default remains enabled for backward-compatible production behavior.
+    const disableVerification = await jsonRequest(`${base}/admin/api/account/settings`, {
+      method: 'PUT', headers: { cookie }, body: { emailVerificationRequired: false },
+    });
+    assert.equal(disableVerification.response.status, 200);
+    assert.equal(disableVerification.data.settings.emailVerificationRequired, false);
+
+    const disabledVerificationConfig = await jsonRequest(`${base}/api/v1/account/config`, { headers: { origin: ORIGIN } });
+    assert.equal(disabledVerificationConfig.response.status, 200);
+    assert.equal(disabledVerificationConfig.data.emailVerificationRequired, false);
+
+    const instantEmail = 'instant@example.com';
+    const verifyMailCountBefore = (await testOutbox(base, cookie)).filter((row) => row.to === instantEmail && row.purpose === 'verify_email').length;
+    const instantRegister = await jsonRequest(`${base}/api/v1/auth/register`, {
+      method: 'POST', headers: { origin: ORIGIN }, body: extensionBody({ email: instantEmail, password: initialPassword }),
+    });
+    assert.equal(instantRegister.response.status, 201);
+    assert.equal(instantRegister.data.verificationRequired, false);
+    assert.ok(Date.parse(instantRegister.data.freeExpiresAt) > Date.now());
+    const verifyMailCountAfter = (await testOutbox(base, cookie)).filter((row) => row.to === instantEmail && row.purpose === 'verify_email').length;
+    assert.equal(verifyMailCountAfter, verifyMailCountBefore);
+
+    const instantLogin = await jsonRequest(`${base}/api/v1/auth/login`, {
+      method: 'POST', headers: { origin: ORIGIN, 'x-forwarded-for': '203.0.113.12' },
+      body: extensionBody({ email: instantEmail, password: initialPassword }),
+    });
+    assert.equal(instantLogin.response.status, 200);
+    assert.equal(instantLogin.data.account.user.emailVerified, false);
+    assert.equal(instantLogin.data.account.user.emailVerificationExempt, true);
+    assert.equal(instantLogin.data.account.entitlement.source, 'free');
+
+    const enableVerification = await jsonRequest(`${base}/admin/api/account/settings`, {
+      method: 'PUT', headers: { cookie }, body: { emailVerificationRequired: true },
+    });
+    assert.equal(enableVerification.response.status, 200);
+    assert.equal(enableVerification.data.settings.emailVerificationRequired, true);
+
+    // Re-enabling verification must not retroactively lock accounts created while exemption was enabled.
+    const instantLoginAfterEnable = await jsonRequest(`${base}/api/v1/auth/login`, {
+      method: 'POST', headers: { origin: ORIGIN, 'x-forwarded-for': '203.0.113.13' },
+      body: extensionBody({ email: instantEmail, password: initialPassword }),
+    });
+    assert.equal(instantLoginAfterEnable.response.status, 200);
+    assert.equal(instantLoginAfterEnable.data.account.user.emailVerificationExempt, true);
 
     const legacy = await jsonRequest(`${base}/api/v1/licenses/activate`, {
       method: 'POST', headers: { origin: ORIGIN }, body: extensionBody({ code: 'GPTL-AAAA-BBBB-CCCC-DDDD-EEEE' }),

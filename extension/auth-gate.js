@@ -182,11 +182,17 @@ el.registerForm.addEventListener('submit', (event) => {
     return;
   }
   verificationEmail = el.registerEmail.value.trim();
-  setMessage('正在创建账号并发送验证码…');
+  setMessage('正在创建账号…');
   void sendMessage({ type: 'GPTLOCK_ACCOUNT_REGISTER', email: verificationEmail, password: el.registerPassword.value })
-    .then(() => {
+    .then((registration) => {
       el.registerPassword.value = '';
       el.registerPassword2.value = '';
+      if (registration?.verificationRequired === false) {
+        el.loginEmail.value = verificationEmail;
+        showPanel('login');
+        setMessage('注册成功，当前服务端未启用邮箱验证，请直接登录。', 'good');
+        return;
+      }
       el.verifyEmailText.textContent = `验证码已发送至 ${verificationEmail}`;
       showPanel('verify');
       setMessage('验证码已发送，请检查邮箱。', 'good');

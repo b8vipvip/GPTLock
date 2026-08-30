@@ -58,6 +58,8 @@
           <label>登录会话天数<input id="sessionDays" type="number" min="1"></label>
         </div>
         <h3>邮箱 / SMTP</h3>
+        <label class="check"><input id="emailVerificationRequired" type="checkbox"> 新用户注册必须验证邮箱</label>
+        <p class="muted">关闭后，新注册账号无需邮箱验证码即可激活并登录；之后重新开启时，已按免验证模式注册的账号不会被反向锁定。找回密码仍需要邮箱验证码。</p>
         <div class="grid three">
           <label>SMTP 主机<input id="smtpHost" placeholder="smtp.example.com"></label>
           <label>端口<input id="smtpPort" type="number" min="1" max="65535"></label>

@@ -122,6 +122,7 @@ export function createAccountSystem({
     password_hash TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','active','disabled')),
     email_verified_at TEXT,
+    email_verification_exempt INTEGER NOT NULL DEFAULT 0 CHECK(email_verification_exempt IN (0,1)),
     free_expires_at TEXT,
     max_devices_override INTEGER CHECK(max_devices_override IS NULL OR max_devices_override >= 1),
     max_windows_override INTEGER CHECK(max_windows_override IS NULL OR max_windows_override >= 1),
@@ -241,6 +242,7 @@ export function createAccountSystem({
     const columns = db.prepare(`PRAGMA table_info(${table})`).all();
     if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
   }
+  ensureColumn('users', 'email_verification_exempt', 'email_verification_exempt INTEGER NOT NULL DEFAULT 0 CHECK(email_verification_exempt IN (0,1))');
   ensureColumn('memberships', 'plan_snapshot_json', "plan_snapshot_json TEXT NOT NULL DEFAULT '{}'");
   ensureColumn('membership_orders', 'plan_snapshot_json', "plan_snapshot_json TEXT NOT NULL DEFAULT '{}'");
 
@@ -413,6 +415,8 @@ export function createAccountSystem({
     };
   }
   function sessionDays() { return getIntSetting('account_session_days', 30, 1, 365); }
+  function emailVerificationRequired() { return getSetting('account_email_verification_required', '1') !== '0'; }
+  function emailAccessSatisfied(user) { return Boolean(user?.email_verified_at || user?.email_verification_exempt); }
 
   function purgeWindowLeases() {
     const cutoff = new Date(Date.now() - Math.max(60, windowTtlSeconds) * 1000).toISOString();
@@ -453,7 +457,7 @@ export function createAccountSystem({
     let expiresAt = user?.free_expires_at || null;
     let maxDevices = free.maxDevices;
     let maxWindows = free.maxWindows;
-    if (user && user.status === 'active' && user.email_verified_at) {
+    if (user && user.status === 'active' && emailAccessSatisfied(user)) {
       if (membership) {
         active = true;
         source = 'membership';
@@ -506,6 +510,7 @@ export function createAccountSystem({
         status: user.status,
         emailVerified: Boolean(user.email_verified_at),
         emailVerifiedAt: user.email_verified_at,
+        emailVerificationExempt: Boolean(user.email_verification_exempt),
         freeExpiresAt: user.free_expires_at,
         createdAt: user.created_at,
       },
@@ -518,7 +523,7 @@ export function createAccountSystem({
 
   function sessionFromToken(token) {
     if (!token) return null;
-    const row = db.prepare(`SELECT s.*,u.email,u.password_hash,u.status AS user_status,u.email_verified_at,u.free_expires_at,
+    const row = db.prepare(`SELECT s.*,u.email,u.password_hash,u.status AS user_status,u.email_verified_at,u.email_verification_exempt,u.free_expires_at,
       u.max_devices_override,u.max_windows_override,u.created_at AS user_created_at,u.updated_at AS user_updated_at
       FROM user_sessions s JOIN users u ON u.id=s.user_id
       WHERE s.token_hash=? AND s.revoked_at IS NULL`).get(sha256(token));
@@ -533,6 +538,7 @@ export function createAccountSystem({
       password_hash: row.password_hash,
       status: row.user_status,
       email_verified_at: row.email_verified_at,
+      email_verification_exempt: row.email_verification_exempt,
       free_expires_at: row.free_expires_at,
       max_devices_override: row.max_devices_override,
       max_windows_override: row.max_windows_override,
@@ -818,7 +824,7 @@ export function createAccountSystem({
         return json(res, 200, {
           ok: true,
           accountRequired: true,
-          emailVerificationRequired: true,
+          emailVerificationRequired: emailVerificationRequired(),
           free: freeConfig(),
           plans: publicPlans(),
           paymentMethods: publicPaymentMethods(),
@@ -832,21 +838,42 @@ export function createAccountSystem({
         if (!isEmail(email) || !passwordValid(input.password)) fail(400, 'INVALID_REGISTRATION', '请输入有效邮箱，密码至少 10 位');
         rateCheck('register-ip', req, EMAIL_IP_MAX, EMAIL_WINDOW_MS);
         rateCheck('register', req, EMAIL_MAX, EMAIL_WINDOW_MS, email);
+        const verificationRequired = emailVerificationRequired();
         let user = userByEmail(email);
-        if (user?.email_verified_at) fail(409, 'ACCOUNT_EXISTS', '该邮箱已注册，请直接登录或找回密码');
+        if (user && (emailAccessSatisfied(user) || user.status === 'disabled')) {
+          fail(409, 'ACCOUNT_EXISTS', '该邮箱已注册，请直接登录或找回密码');
+        }
         const passwordHash = await encodePassword(input.password);
+        if (verificationRequired) {
+          if (user) {
+            db.prepare(`UPDATE users SET password_hash=?,status='pending',email_verification_exempt=0,updated_at=? WHERE id=?`)
+              .run(passwordHash, nowIso(), user.id);
+          } else {
+            const result = db.prepare(`INSERT INTO users(email,password_hash,status,email_verification_exempt,created_at,updated_at) VALUES(?,?,'pending',0,?,?)`)
+              .run(email, passwordHash, nowIso(), nowIso());
+            user = userById(Number(result.lastInsertRowid));
+          }
+          rateFailure('register-ip', req, EMAIL_IP_MAX, EMAIL_WINDOW_MS);
+          rateFailure('register', req, EMAIL_MAX, EMAIL_WINDOW_MS, email);
+          const expiresAt = await issueCode(user, 'verify_email');
+          audit('account_registered', user.id, { emailDomain: email.split('@')[1], verificationRequired: true, expiresAt });
+          return json(res, 201, { ok: true, verificationRequired: true, email, codeExpiresAt: expiresAt }, cors), true;
+        }
+
+        const free = freeConfig();
+        const freeExpiresAt = new Date(Date.now() + free.days * DAY_MS).toISOString();
         if (user) {
-          db.prepare(`UPDATE users SET password_hash=?,status='pending',updated_at=? WHERE id=?`).run(passwordHash, nowIso(), user.id);
+          db.prepare(`UPDATE users SET password_hash=?,status='active',email_verification_exempt=1,free_expires_at=COALESCE(free_expires_at,?),updated_at=? WHERE id=?`)
+            .run(passwordHash, freeExpiresAt, nowIso(), user.id);
         } else {
-          const result = db.prepare(`INSERT INTO users(email,password_hash,status,created_at,updated_at) VALUES(?,?,'pending',?,?)`)
-            .run(email, passwordHash, nowIso(), nowIso());
+          const result = db.prepare(`INSERT INTO users(email,password_hash,status,email_verification_exempt,free_expires_at,created_at,updated_at) VALUES(?,?,'active',1,?,?,?)`)
+            .run(email, passwordHash, freeExpiresAt, nowIso(), nowIso());
           user = userById(Number(result.lastInsertRowid));
         }
         rateFailure('register-ip', req, EMAIL_IP_MAX, EMAIL_WINDOW_MS);
         rateFailure('register', req, EMAIL_MAX, EMAIL_WINDOW_MS, email);
-        const expiresAt = await issueCode(user, 'verify_email');
-        audit('account_registered', user.id, { emailDomain: email.split('@')[1], expiresAt });
-        return json(res, 201, { ok: true, verificationRequired: true, email, codeExpiresAt: expiresAt }, cors), true;
+        audit('account_registered', user.id, { emailDomain: email.split('@')[1], verificationRequired: false, freeExpiresAt });
+        return json(res, 201, { ok: true, verificationRequired: false, email, freeExpiresAt }, cors), true;
       }
 
       if (path === '/api/v1/auth/resend-verification' && req.method === 'POST') {
@@ -892,7 +919,7 @@ export function createAccountSystem({
           audit('login_failed', user?.id || null, { emailHash: sha256(email).slice(0, 16), ip: clientIp(req) });
           fail(401, 'LOGIN_FAILED', '邮箱或密码错误');
         }
-        if (!user.email_verified_at) fail(403, 'EMAIL_NOT_VERIFIED', '邮箱尚未验证');
+        if (!emailAccessSatisfied(user)) fail(403, 'EMAIL_NOT_VERIFIED', '邮箱尚未验证');
         if (user.status === 'disabled') fail(403, 'ACCOUNT_DISABLED', '账号已被停用');
         rateClear('login', req, email);
         const issued = issueSession(user, input);
@@ -906,7 +933,7 @@ export function createAccountSystem({
         rateCheck('reset-email-ip', req, EMAIL_IP_MAX, EMAIL_WINDOW_MS);
         rateCheck('reset-email', req, EMAIL_MAX, EMAIL_WINDOW_MS, email);
         const user = userByEmail(email);
-        if (user?.email_verified_at && user.status !== 'disabled') await issueCode(user, 'reset_password');
+        if (user && user.status !== 'disabled') await issueCode(user, 'reset_password');
         rateFailure('reset-email-ip', req, EMAIL_IP_MAX, EMAIL_WINDOW_MS);
         rateFailure('reset-email', req, EMAIL_MAX, EMAIL_WINDOW_MS, email);
         return json(res, 200, { ok: true, message: '如果该邮箱已注册，重置验证码已发送' }, cors), true;
@@ -917,7 +944,7 @@ export function createAccountSystem({
         if (!extensionAllowed(req, input.extensionId)) fail(403, 'EXTENSION_NOT_ALLOWED', '只允许官方 GPTLock 扩展使用');
         if (!passwordValid(input.newPassword)) fail(400, 'WEAK_PASSWORD', '新密码至少 10 位');
         const user = userByEmail(input.email);
-        if (!user?.email_verified_at) fail(400, 'CODE_INVALID', '验证码错误或已失效');
+        if (!user || user.status === 'disabled') fail(400, 'CODE_INVALID', '验证码错误或已失效');
         consumeEmailToken(user, 'reset_password', input.code);
         const newPasswordHash = await encodePassword(input.newPassword);
         db.exec('BEGIN IMMEDIATE');
@@ -1080,6 +1107,7 @@ export function createAccountSystem({
     return {
       free: freeConfig(),
       sessionDays: sessionDays(),
+      emailVerificationRequired: emailVerificationRequired(),
       smtp: {
         host: smtp.host,
         port: smtp.port,
@@ -1103,6 +1131,7 @@ export function createAccountSystem({
       email: user.email,
       status: user.status,
       emailVerified: Boolean(user.email_verified_at),
+      emailVerificationExempt: Boolean(user.email_verification_exempt),
       freeExpiresAt: user.free_expires_at,
       membership: membershipPublic(membership),
       entitlement,
@@ -1232,6 +1261,9 @@ export function createAccountSystem({
         setSetting('account_free_max_devices', clampInt(free.maxDevices, 1, 1000, freeConfig().maxDevices));
         setSetting('account_free_max_windows', clampInt(free.maxWindows, 1, 1000, freeConfig().maxWindows));
         setSetting('account_session_days', clampInt(input.sessionDays, 1, 365, sessionDays()));
+        if (input.emailVerificationRequired !== undefined) {
+          setSetting('account_email_verification_required', input.emailVerificationRequired ? '1' : '0');
+        }
 
         const smtp = input.smtp || {};
         if (smtp.host !== undefined) {
@@ -1260,7 +1292,10 @@ export function createAccountSystem({
               .run(method.enabled ? 1 : 0, payUrl, String(method.instructions || '').slice(0, 500), nowIso(), method.code);
           }
         }
-        audit('admin_account_settings_updated', null, { smtpConfigured: smtpConfigured(), free: freeConfig(), sessionDays: sessionDays() });
+        audit('admin_account_settings_updated', null, {
+          smtpConfigured: smtpConfigured(), free: freeConfig(), sessionDays: sessionDays(),
+          emailVerificationRequired: emailVerificationRequired(),
+        });
         return json(res, 200, { ok: true, settings: adminSettingsPublic() }), true;
       }
 
