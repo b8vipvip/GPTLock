@@ -1286,6 +1286,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           accountWindowAllowed: state ? accountAllowsState(state) : false,
         };
       }
+      case 'GPTLOCK-LICENSE-GET':
+      case 'GPTLOCK_LICENSE_GET': {
+        const entitlement = accountState?.entitlement || null;
+        const authorized = Boolean(accountState?.authenticated && entitlement?.active);
+        return {
+          authorized,
+          status: authorized ? 'active' : 'migrated_to_account',
+          legacyUi: true,
+          accountRequired: true,
+          licenseRequired: false,
+          license: authorized ? {
+            expiresAt: entitlement?.expiresAt ?? null,
+            limits: entitlement?.limits ?? null,
+            usage: entitlement?.usage ?? null,
+            label: 'GPTLock account entitlement',
+          } : null,
+          lastError: authorized
+            ? '旧授权码界面已停用；当前授权来自 GPTLock 账号权益。关闭并重新打开扩展弹窗即可加载新版界面。'
+            : '授权码已停用；GPTLock 当前使用账号登录与会员权益。关闭并重新打开扩展弹窗，必要时完全重启浏览器。',
+        };
+      }
+      case 'GPTLOCK-LICENSE-ACTIVATE':
+      case 'GPTLOCK_LICENSE_ACTIVATE':
+        throw Object.assign(new Error('授权码验证已停用；GPTLock 当前使用账号登录。检测到旧版弹窗资源，请关闭弹窗并重新打开，必要时完全重启浏览器。'), { code: 'LICENSE_UI_STALE' });
+      case 'GPTLOCK-LICENSE-CLEAR':
+      case 'GPTLOCK_LICENSE_CLEAR':
+        return { cleared: true, legacyUi: true, accountRequired: true, licenseRequired: false };
       case 'GPTLOCK_ACCOUNT_CONFIG':
         return accountClient.config();
       case 'GPTLOCK_ACCOUNT_REGISTER':

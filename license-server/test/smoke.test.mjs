@@ -118,8 +118,11 @@ test('account system verifies email, enforces entitlements, manages membership, 
     assert.match(adminHtml, /id="emailVerificationRequired"/);
     assert.match(adminHtml, /id="createUserToggle"/);
     assert.match(adminHtml, /id="createUserPanel"/);
+    assert.match(adminHtml, /id="userPasswordDialog"/);
     assert.match(adminJs, /emailVerificationRequired/);
     assert.match(adminJs, /\/admin\/api\/account\/users/);
+    assert.match(adminJs, /saveUserRow/);
+    assert.doesNotMatch(adminJs, /\bprompt\(/);
 
     const config = await jsonRequest(`${base}/api/v1/config`, { headers: { origin: ORIGIN } });
     assert.equal(config.response.status, 200);
@@ -217,6 +220,45 @@ test('account system verifies email, enforces entitlements, manages membership, 
     });
     assert.equal(weakManual.response.status, 400);
     assert.equal(weakManual.data.error.code, 'WEAK_PASSWORD');
+
+    // Administrator can change an existing user's password; plaintext never returns and every old session is revoked.
+    const adminChangedPassword = 'AdminChanged-24680';
+    const passwordChange = await jsonRequest(`${base}/admin/api/account/users/${manualCreate.data.user.id}/password`, {
+      method: 'POST', headers: { cookie }, body: { password: adminChangedPassword },
+    });
+    assert.equal(passwordChange.response.status, 200);
+    assert.equal(passwordChange.data.sessionsRevoked, true);
+    assert.equal(JSON.stringify(passwordChange.data).includes(adminChangedPassword), false);
+
+    const oldManualSession = await jsonRequest(`${base}/api/v1/account/me`, {
+      headers: { origin: ORIGIN, authorization: `Bearer ${manualLogin.data.sessionToken}` },
+    });
+    assert.equal(oldManualSession.response.status, 401);
+
+    const oldManualPasswordLogin = await jsonRequest(`${base}/api/v1/auth/login`, {
+      method: 'POST', headers: { origin: ORIGIN, 'x-forwarded-for': '203.0.113.16' },
+      body: extensionBody({ email: manualEmail, password: manualPassword, deviceId: 'manual-device-old-12345678', browserInstanceId: 'manual-browser-old-12345678' }),
+    });
+    assert.equal(oldManualPasswordLogin.response.status, 401);
+
+    const newManualPasswordLogin = await jsonRequest(`${base}/api/v1/auth/login`, {
+      method: 'POST', headers: { origin: ORIGIN, 'x-forwarded-for': '203.0.113.17' },
+      body: extensionBody({ email: manualEmail, password: adminChangedPassword, deviceId: 'manual-device-new-12345678', browserInstanceId: 'manual-browser-new-12345678' }),
+    });
+    assert.equal(newManualPasswordLogin.response.status, 200);
+
+    const editedManualEmail = 'manual-edited@example.com';
+    const editedExpiry = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString();
+    const userEdit = await jsonRequest(`${base}/admin/api/account/users/${manualCreate.data.user.id}`, {
+      method: 'PATCH', headers: { cookie }, body: {
+        email: editedManualEmail, status: 'active', entitlementExpiresAt: editedExpiry,
+        maxDevicesOverride: 5, maxWindowsOverride: 6,
+      },
+    });
+    assert.equal(userEdit.response.status, 200);
+    assert.equal(userEdit.data.user.email, editedManualEmail);
+    assert.equal(userEdit.data.user.entitlement.limits.devices, 5);
+    assert.equal(userEdit.data.user.entitlement.limits.windows, 6);
 
     // Admin can also explicitly create a verification-exempt account even while global verification is enabled.
     const exemptManualEmail = 'manual-exempt@example.com';

@@ -7,6 +7,9 @@ const el = {
   createUserEmail: $('createUserEmail'), createUserPassword: $('createUserPassword'), createUserEmailAccess: $('createUserEmailAccess'),
   createUserFreeDays: $('createUserFreeDays'), createUserDevices: $('createUserDevices'), createUserWindows: $('createUserWindows'),
   generateUserPassword: $('generateUserPassword'), createUserSubmit: $('createUserSubmit'), createUserMessage: $('createUserMessage'),
+  userPasswordDialog: $('userPasswordDialog'), userPasswordTarget: $('userPasswordTarget'), userPasswordNew: $('userPasswordNew'),
+  userPasswordConfirm: $('userPasswordConfirm'), userPasswordMessage: $('userPasswordMessage'), userPasswordClose: $('userPasswordClose'),
+  userPasswordCancel: $('userPasswordCancel'), userPasswordSubmit: $('userPasswordSubmit'),
   planCards: $('planCards'), refreshOrders: $('refreshOrders'), ordersBody: $('ordersBody'),
   freeDays: $('freeDays'), freeDevices: $('freeDevices'), freeWindows: $('freeWindows'), sessionDays: $('sessionDays'),
   emailVerificationRequired: $('emailVerificationRequired'),
@@ -74,17 +77,34 @@ function button(label, handler, className = '') {
   node.addEventListener('click', handler);
   return node;
 }
-function promptNumber(label, current, { nullable = false } = {}) {
-  const initial = current === null || current === undefined ? '' : String(current);
-  const raw = prompt(`${label}${nullable ? '（留空=跟随套餐/免费默认值）' : ''}`, initial);
-  if (raw === null) return { cancelled: true };
-  if (nullable && !raw.trim()) return { value: null };
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1 || value > 1000) {
-    alert(`${label}必须是 1–1000 的整数`);
-    return { cancelled: true };
+function inputControl(type, value = '', attributes = {}) {
+  const node = document.createElement('input');
+  node.type = type; node.value = value ?? '';
+  for (const [key, attributeValue] of Object.entries(attributes)) {
+    if (attributeValue !== null && attributeValue !== undefined) node.setAttribute(key, String(attributeValue));
   }
-  return { value };
+  return node;
+}
+function selectControl(options, selected) {
+  const node = document.createElement('select');
+  for (const [value, label] of options) {
+    const option = document.createElement('option'); option.value = value; option.textContent = label; option.selected = value === selected; node.append(option);
+  }
+  return node;
+}
+function armInlineConfirm(node, label = '再次点击确认') {
+  const now = Date.now();
+  if (Number(node.dataset.confirmUntil || 0) > now) {
+    node.dataset.confirmUntil = '0';
+    return true;
+  }
+  const original = node.textContent;
+  node.dataset.confirmUntil = String(now + 4000);
+  node.textContent = label;
+  setTimeout(() => {
+    if (Number(node.dataset.confirmUntil || 0) <= Date.now()) { node.textContent = original; node.dataset.confirmUntil = '0'; }
+  }, 4100);
+  return false;
 }
 
 function renderDashboard(data) {
@@ -144,74 +164,145 @@ async function createUser() {
   await Promise.all([loadUsers(), loadDashboard()]);
 }
 
-async function editUser(row) {
-  const currentFree = localDateInput(row.freeExpiresAt);
-  const freeRaw = prompt('免费有效期（本地时间；留空表示清空免费期限）', currentFree);
-  if (freeRaw === null) return;
-  let freeExpiresAt = null;
-  if (freeRaw.trim()) {
-    const date = new Date(freeRaw);
-    if (Number.isNaN(date.getTime())) return alert('免费有效期格式无效');
-    freeExpiresAt = date.toISOString();
+async function saveUserRow(row, controls, messageNode) {
+  const email = controls.email.value.trim();
+  if (!email) throw new Error('邮箱不能为空');
+  let entitlementExpiresAt = null;
+  if (controls.expiry.value) {
+    const date = new Date(controls.expiry.value);
+    if (Number.isNaN(date.getTime())) throw new Error('有效期格式无效');
+    entitlementExpiresAt = date.toISOString();
+  } else if (row.membership) {
+    throw new Error('当前是会员权益，会员有效期不能为空');
   }
-  const devices = promptNumber('自定义设备上限', row.overrides?.devices, { nullable: true });
-  if (devices.cancelled) return;
-  const windows = promptNumber('自定义同时窗口上限', row.overrides?.windows, { nullable: true });
-  if (windows.cancelled) return;
-  await api(`/admin/api/account/users/${row.id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ freeExpiresAt, maxDevicesOverride: devices.value, maxWindowsOverride: windows.value }),
-  });
+  const body = {
+    email,
+    status: controls.status.value,
+    entitlementExpiresAt,
+    maxDevicesOverride: optionalPositiveInt(controls.devices, '设备上限'),
+    maxWindowsOverride: optionalPositiveInt(controls.windows, '窗口上限'),
+  };
+  setMessage(messageNode, '正在保存…');
+  await api(`/admin/api/account/users/${row.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+  setMessage(messageNode, '用户信息与权益已保存。', 'good');
   await Promise.all([loadUsers(), loadDashboard()]);
 }
 
-async function toggleUser(row) {
-  const next = row.status === 'disabled' ? 'active' : 'disabled';
-  const verb = next === 'disabled' ? '停用' : '启用';
-  if (!confirm(`确认${verb} ${row.email}？${next === 'disabled' ? ' 该用户现有登录会话会立即失效。' : ''}`)) return;
-  await api(`/admin/api/account/users/${row.id}`, { method: 'PATCH', body: JSON.stringify({ status: next }) });
-  await Promise.all([loadUsers(), loadDashboard()]);
-}
-
-async function grantMembership(row) {
-  const enabledPlans = plansCache.filter((plan) => plan.enabled);
-  if (!enabledPlans.length) return alert('没有已启用的会员套餐');
-  const choices = enabledPlans.map((plan) => `${plan.code} = ${plan.name} / ${money(plan.priceCents)} / ${plan.durationDays}天`).join('\n');
-  const planCode = prompt(`输入套餐代码：\n${choices}`, enabledPlans[0].code);
-  if (planCode === null) return;
-  const plan = enabledPlans.find((item) => item.code === planCode.trim());
-  if (!plan) return alert('套餐代码无效');
-  if (!confirm(`为 ${row.email} 开通 ${plan.name}？若已有未到期会员，会从现有到期时间继续顺延。`)) return;
+async function grantMembership(row, planCode, messageNode) {
+  const plan = plansCache.find((item) => item.enabled && item.code === planCode);
+  if (!plan) throw new Error('请选择有效会员套餐');
+  setMessage(messageNode, `正在为 ${row.email} 开通 ${plan.name}…`);
   await api(`/admin/api/account/users/${row.id}/grant-membership`, { method: 'POST', body: JSON.stringify({ planCode: plan.code }) });
+  setMessage(messageNode, `${plan.name} 已开通/续期。`, 'good');
   await Promise.all([loadUsers(), loadDashboard()]);
 }
 
-async function resetDevices(row) {
-  if (!confirm(`确认清空 ${row.email} 的全部设备绑定和登录会话？用户需要重新登录。`)) return;
+async function resetDevices(row, messageNode) {
+  setMessage(messageNode, '正在重置设备…');
   await api(`/admin/api/account/users/${row.id}/reset-devices`, { method: 'POST', body: '{}' });
+  setMessage(messageNode, '设备绑定与登录会话已清空。', 'good');
   await loadUsers();
+}
+
+function openUserPasswordDialog(row) {
+  el.userPasswordDialog.dataset.userId = String(row.id);
+  el.userPasswordTarget.textContent = `${row.email} · 用户 #${row.id}`;
+  el.userPasswordNew.value = '';
+  el.userPasswordConfirm.value = '';
+  setMessage(el.userPasswordMessage, '');
+  el.userPasswordDialog.showModal();
+  el.userPasswordNew.focus();
+}
+
+function closeUserPasswordDialog() {
+  if (el.userPasswordDialog.open) el.userPasswordDialog.close();
+  el.userPasswordDialog.dataset.userId = '';
+  el.userPasswordNew.value = '';
+  el.userPasswordConfirm.value = '';
+  setMessage(el.userPasswordMessage, '');
+}
+
+async function submitUserPassword() {
+  const userId = Number(el.userPasswordDialog.dataset.userId);
+  const password = el.userPasswordNew.value;
+  if (!Number.isInteger(userId) || userId <= 0) throw new Error('用户记录无效，请关闭后重试');
+  if (password.length < 10 || password.length > 128) throw new Error('新密码必须为 10–128 位');
+  if (password !== el.userPasswordConfirm.value) throw new Error('两次输入的新密码不一致');
+  el.userPasswordSubmit.disabled = true;
+  setMessage(el.userPasswordMessage, '正在安全更新密码并注销旧会话…');
+  try {
+    await api(`/admin/api/account/users/${userId}/password`, { method: 'POST', body: JSON.stringify({ password }) });
+    setMessage(el.userPasswordMessage, '密码已修改，旧登录会话已全部失效。', 'good');
+    el.userPasswordNew.value = '';
+    el.userPasswordConfirm.value = '';
+    setTimeout(closeUserPasswordDialog, 900);
+  } finally {
+    el.userPasswordSubmit.disabled = false;
+  }
 }
 
 function renderUsers(rows) {
   el.usersBody.textContent = '';
+  const enabledPlans = plansCache.filter((plan) => plan.enabled);
   for (const row of rows) {
     const tr = document.createElement('tr');
-    tr.append(td(row.id), td(row.email));
-    const statusText = row.status === 'disabled' ? '已停用' : (row.emailVerified ? '正常' : (row.emailVerificationExempt ? '免验证' : '待验证'));
-    const statusCell = td(statusText);
-    statusCell.className = row.status === 'disabled' ? 'tone-bad' : ((row.emailVerified || row.emailVerificationExempt) ? 'tone-good' : 'tone-wait');
-    tr.append(statusCell);
-    tr.append(td(accountTier(row)));
-    tr.append(td(`${row.entitlement?.usage?.devices ?? 0}/${row.entitlement?.limits?.devices ?? 0}${row.overrides?.devices ? ' *' : ''}`));
-    tr.append(td(`${row.entitlement?.usage?.windows ?? 0}/${row.entitlement?.limits?.windows ?? 0}${row.overrides?.windows ? ' *' : ''}`));
-    tr.append(td(localDate(row.entitlement?.expiresAt)));
-    const actions = document.createElement('td'); actions.className = 'row-actions';
-    actions.append(
-      button(row.status === 'disabled' ? '启用' : '停用', () => void toggleUser(row), row.status === 'disabled' ? 'good' : 'danger'),
-      button('修改权益', () => void editUser(row)),
-      button('开通会员', () => void grantMembership(row), 'primary'),
-      button('重置设备', () => void resetDevices(row)),
-    );
+    tr.append(td(row.id));
+
+    const emailCell = document.createElement('td');
+    const email = inputControl('email', row.email, { autocomplete: 'off', 'aria-label': `用户 ${row.id} 邮箱` });
+    email.className = 'user-email-input'; emailCell.append(email); tr.append(emailCell);
+
+    const statusCell = document.createElement('td');
+    const status = selectControl([['active', '启用'], ['pending', '待验证'], ['disabled', '停用']], row.status);
+    status.className = 'user-status-select'; statusCell.append(status);
+    const verification = document.createElement('small'); verification.className = (row.emailVerified || row.emailVerificationExempt) ? 'tone-good' : 'tone-wait';
+    verification.textContent = row.emailVerified ? '邮箱已验证' : (row.emailVerificationExempt ? '免邮箱验证' : '邮箱未验证');
+    statusCell.append(document.createElement('br'), verification); tr.append(statusCell);
+
+    const entitlementCell = document.createElement('td');
+    const entitlement = document.createElement('div'); entitlement.className = 'entitlement-editor';
+    const tier = document.createElement('strong'); tier.textContent = accountTier(row);
+    const planRow = document.createElement('div'); planRow.className = 'compact-edit';
+    const planSelect = selectControl(enabledPlans.map((plan) => [plan.code, plan.name]), row.membership?.planCode || enabledPlans[0]?.code || '');
+    const rowMessage = document.createElement('span'); rowMessage.className = 'row-message';
+    const grant = button(row.membership ? '续期' : '开通', () => {
+      if (!armInlineConfirm(grant, '再次点击确认')) return;
+      grant.disabled = true;
+      void grantMembership(row, planSelect.value, rowMessage).catch((error) => setMessage(rowMessage, error.message, 'bad')).finally(() => { grant.disabled = false; });
+    }, 'primary');
+    if (!enabledPlans.length) { planSelect.disabled = true; grant.disabled = true; }
+    planRow.append(planSelect, grant);
+    const tierNote = document.createElement('small'); tierNote.textContent = row.membership ? `当前会员 #${row.membership.id}` : (row.entitlement?.source === 'free' ? '当前使用免费权益' : '当前无有效权益');
+    entitlement.append(tier, planRow, tierNote); entitlementCell.append(entitlement); tr.append(entitlementCell);
+
+    const devicesCell = document.createElement('td'); const devicesWrap = document.createElement('div'); devicesWrap.className = 'limit-editor';
+    const devices = inputControl('number', row.overrides?.devices ?? '', { min: 1, max: 1000, placeholder: '默认' });
+    const devicesUsage = document.createElement('small'); devicesUsage.textContent = `已用 ${row.entitlement?.usage?.devices ?? 0} / 生效 ${row.entitlement?.limits?.devices ?? 0}`;
+    devicesWrap.append(devices, devicesUsage); devicesCell.append(devicesWrap); tr.append(devicesCell);
+
+    const windowsCell = document.createElement('td'); const windowsWrap = document.createElement('div'); windowsWrap.className = 'limit-editor';
+    const windows = inputControl('number', row.overrides?.windows ?? '', { min: 1, max: 1000, placeholder: '默认' });
+    const windowsUsage = document.createElement('small'); windowsUsage.textContent = `已用 ${row.entitlement?.usage?.windows ?? 0} / 生效 ${row.entitlement?.limits?.windows ?? 0}`;
+    windowsWrap.append(windows, windowsUsage); windowsCell.append(windowsWrap); tr.append(windowsCell);
+
+    const expiryCell = document.createElement('td'); const expiryWrap = document.createElement('div'); expiryWrap.className = 'expiry-editor';
+    const expiry = inputControl('datetime-local', localDateInput(row.entitlement?.expiresAt));
+    const expiryNote = document.createElement('small'); expiryNote.textContent = row.membership ? '修改当前会员到期时间' : '修改免费权益到期时间';
+    expiryWrap.append(expiry, expiryNote); expiryCell.append(expiryWrap); tr.append(expiryCell);
+
+    const actions = document.createElement('td'); actions.className = 'row-actions user-actions';
+    const save = button('保存信息/权益', () => {
+      save.disabled = true;
+      void saveUserRow(row, { email, status, devices, windows, expiry }, rowMessage)
+        .catch((error) => setMessage(rowMessage, error.message, 'bad')).finally(() => { save.disabled = false; });
+    }, 'primary');
+    const password = button('修改密码', () => openUserPasswordDialog(row));
+    const reset = button('重置设备', () => {
+      if (!armInlineConfirm(reset, '再次点击重置')) return;
+      reset.disabled = true;
+      void resetDevices(row, rowMessage).catch((error) => setMessage(rowMessage, error.message, 'bad')).finally(() => { reset.disabled = false; });
+    }, 'danger');
+    actions.append(save, password, reset, rowMessage);
     tr.append(actions);
     el.usersBody.append(tr);
   }
@@ -450,7 +541,8 @@ async function loadAll() {
   try {
     await loadDashboard();
     el.login.hidden = true; el.app.hidden = false; el.logout.hidden = false;
-    await Promise.all([loadUsers(), loadPlans(), loadOrders(), loadSettings(), loadRuntimeLogs(), loadAudit(), loadUpdate()]);
+    await loadPlans();
+    await Promise.all([loadUsers(), loadOrders(), loadSettings(), loadRuntimeLogs(), loadAudit(), loadUpdate()]);
     startUpdatePolling();
   } catch (error) {
     if (error.status === 401) {
@@ -478,6 +570,13 @@ el.createUserSubmit.addEventListener('click', () => {
   el.createUserSubmit.disabled = true;
   void createUser().catch((error) => setMessage(el.createUserMessage, error.message, 'bad')).finally(() => { el.createUserSubmit.disabled = false; });
 });
+el.userPasswordClose.addEventListener('click', closeUserPasswordDialog);
+el.userPasswordCancel.addEventListener('click', closeUserPasswordDialog);
+el.userPasswordDialog.addEventListener('cancel', (event) => { event.preventDefault(); closeUserPasswordDialog(); });
+el.userPasswordSubmit.addEventListener('click', () => {
+  void submitUserPassword().catch((error) => setMessage(el.userPasswordMessage, error.message, 'bad'));
+});
+el.userPasswordConfirm.addEventListener('keydown', (event) => { if (event.key === 'Enter') el.userPasswordSubmit.click(); });
 el.refreshOrders.addEventListener('click', () => void loadOrders());
 el.saveSettings.addEventListener('click', () => {
   el.saveSettings.disabled = true;

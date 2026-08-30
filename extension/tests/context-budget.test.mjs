@@ -244,3 +244,40 @@ test('pending over-limit learning can resume after browser restart only with mat
     model: 'gpt-5.6-sol',
   }), null);
 });
+
+
+test('recognizes ChatGPT real conversation-length boundary text in Chinese and English', () => {
+  const zh = budget.classifyConversationLengthLimitText('你已到达此对话的长度上限，你可以开始新聊天以继续对话。');
+  assert.equal(zh?.locale, 'zh-CN');
+  const en = budget.classifyConversationLengthLimitText("You've reached the maximum length for this conversation. You can start a new chat to continue.");
+  assert.equal(en?.locale, 'en');
+  assert.equal(budget.classifyConversationLengthLimitText('我们正在讨论对话长度上限这个概念。'), null);
+});
+
+test('hard-limit learning records a reliable upper bound but refuses to convert DOM-only fallback into a fake token maximum', () => {
+  const previous = budget.nextLearnedProfile({
+    accountScope: 'acct-one', model: 'gpt-5.6-sol', confirmedConversationTokens: 100_000, baseSafeLimitTokens: 90_000,
+  });
+  const domOnly = budget.nextHardLimitProfile({
+    previous, accountScope: 'acct-one', model: 'gpt-5.6-sol', observedConversationTokens: 112_000,
+    measurementSource: 'dom-fallback', measurementReliable: false, conversationKey: 'conversation:one',
+  });
+  assert.equal(domOnly.hardLimitObserved, true);
+  assert.equal(domOnly.hardLimitUpperBoundTokens || 0, 0);
+  assert.equal(domOnly.hardLimitConfidence, 'ui-boundary-only');
+
+  const measured = budget.nextHardLimitProfile({
+    previous: domOnly, accountScope: 'acct-one', model: 'gpt-5.6-sol', observedConversationTokens: 128_000,
+    measurementSource: 'conversation-tree+dom-reconcile', measurementReliable: true, conversationKey: 'conversation:one',
+  });
+  assert.equal(measured.hardLimitUpperBoundTokens, 128_000);
+  assert.equal(measured.hardLimitConfidence, 'measured-upper-bound');
+
+  const constrained = budget.computeBudget({
+    historyTokens: 110_000, contextLimitTokens: 1_050_000, adaptiveSafeLimitTokens: 180_000,
+    hardLimitUpperBoundTokens: measured.hardLimitUpperBoundTokens, confirmedLowerBoundTokens: measured.confirmedConversationTokens,
+  });
+  assert.equal(constrained.safeLimitTokens, 128_000);
+  assert.equal(constrained.reserveTokens, 8_192);
+  assert.equal(constrained.hardLimitActive, true);
+});
