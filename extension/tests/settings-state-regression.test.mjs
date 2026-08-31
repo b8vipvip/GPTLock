@@ -7,7 +7,7 @@ const optionsUrl = new URL('../options.js', import.meta.url);
 const settingsShellUrl = new URL('../settings-shell.js', import.meta.url);
 const migrationUrl = new URL('../settings-migration.js', import.meta.url);
 
-test('v0.5.21 settings keep the global switch interactive and reconcile stale Core versions', async () => {
+test('current settings keep the global switch interactive and reconcile stale Core versions', async () => {
   const manifest = JSON.parse(await readFile(manifestUrl, 'utf8'));
   const settingsPageUrl = new URL(`../${manifest.options_ui.page}`, import.meta.url);
   const [settingsHtml, options, shell, migration] = await Promise.all([
@@ -17,7 +17,7 @@ test('v0.5.21 settings keep the global switch interactive and reconcile stale Co
     readFile(migrationUrl, 'utf8'),
   ]);
 
-  assert.equal(manifest.version, '0.5.21');
+  assert.equal(manifest.version, '0.5.22');
   assert.equal(manifest.options_ui.page, 'settings-v0521.html');
   assert.match(settingsHtml, /<input id="enabled" type="checkbox">/);
   assert.doesNotMatch(settingsHtml, /<input id="enabled"[^>]*disabled/);
