@@ -5,7 +5,7 @@ export const RELEASES_URL = 'https://github.com/b8vipvip/GPTLock/releases/latest
 export const WINDOWS_INSTALLER_NAME = 'GPTLockSetup-x64.exe';
 export const WINDOWS_DOWNLOAD_FILENAME = 'GPTLock/GPTLockSetup-x64.exe';
 export const UPDATE_STATUS_KEY = 'gptlockUiUpdateStatus';
-export const RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION = '0.5.22';
+export const RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION = '0.5.24';
 
 function numericParts(value) {
   const normalized = String(value || '').trim().replace(/^v/i, '');
