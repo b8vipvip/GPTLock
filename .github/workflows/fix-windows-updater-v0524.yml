@@ -23,6 +23,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Apply updater hardening
         run: python .github/scripts/fix_v0524.py
+      - name: Refresh updater structural regression
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('extension/tests/windows-auto-updater.test.mjs')
+          text = path.read_text(encoding='utf-8')
+          old = "  assert.match(updater, /Get-CimInstance Win32_Process/);"
+          new = "  assert.match(updater, /Get-Process -Name 'gptlock-core'/);\n  assert.match(updater, /windows_shell_path/);\n  assert.doesNotMatch(updater, /Timed out waiting for preparing Native Messaging host to exit/);"
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one stale updater assertion, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
       - name: Format Rust
         run: cargo fmt --manifest-path native-core/Cargo.toml
       - name: Run extension and server tests
@@ -38,6 +50,7 @@ jobs:
           ! grep -F 'Timed out waiting for preparing Native Messaging host to exit' native-core/src/updater.rs
           grep -F 'AddSeconds(8)' packaging/windows/GPTLock.iss
           grep -F '"version": "0.5.24"' extension/manifest.json
+          grep -F "Get-Process -Name 'gptlock-core'" extension/tests/windows-auto-updater.test.mjs
           git diff --check
       - name: Commit finalized fix
         run: |
