@@ -26,5 +26,5 @@ test('Windows one-click updater coordinates Core shutdown outside the Native Mes
 
   assert.match(installer, /function StopInstalledCoreProcesses\(\): Boolean;/);
   assert.match(installer, /function PrepareToInstall\(var NeedsRestart: Boolean\): String;/);
-  assert.match(updateManager, /RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION = '0\.5\.22'/);
+  assert.match(updateManager, /RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION = '0\.5\.24'/);
 });
