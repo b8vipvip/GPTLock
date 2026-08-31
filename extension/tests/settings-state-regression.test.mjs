@@ -17,7 +17,7 @@ test('current settings keep the global switch interactive and reconcile stale Co
     readFile(migrationUrl, 'utf8'),
   ]);
 
-  assert.equal(manifest.version, '0.5.24');
+  assert.equal(manifest.version, '0.5.25');
   assert.equal(manifest.options_ui.page, 'settings-v0521.html');
   assert.match(settingsHtml, /<input id="enabled" type="checkbox">/);
   assert.doesNotMatch(settingsHtml, /<input id="enabled"[^>]*disabled/);
