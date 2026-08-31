@@ -22,21 +22,17 @@
     </section>
     <div id="app" hidden>
       <section id="update" class="card update-card">
-        <div class="section-title"><div><h2>服务端一键更新</h2><p class="muted">从受信任的 GPTLock GitHub 仓库拉取目标分支，隔离测试、SQLite 在线备份、部署、重启、健康检查与失败回滚自动完成。</p></div><button id="updateButton" class="primary">一键更新服务端</button></div>
-        <div class="update-meta"><span>产品版本 <strong id="productVersion">—</strong></span><span hidden>服务包 <strong id="serverVersion">—</strong></span><span>提交 <code id="currentCommit">—</code></span><span>更新分支 <code id="targetRef">—</code></span><span>更新器 <strong id="updaterState">—</strong></span></div>
+        <div class="section-title"><div><h2>服务端一键更新</h2><p class="muted">直接从受信任的 GPTLock GitHub 仓库更新服务器：拉取目标分支后先隔离测试，再做 SQLite 在线备份、部署、重启与健康检查；失败会自动回滚。</p></div><button id="updateButton" class="primary">版本更新</button></div>
+        <div class="update-meta"><span>服务版本 <strong id="serverVersion">—</strong></span><span>提交 <code id="currentCommit">—</code></span><span>更新分支 <code id="targetRef">—</code></span></div>
         <div class="progress-track"><div id="updateProgress" class="progress-bar"></div></div>
         <div class="update-status-row"><strong id="updatePercent">0%</strong><span id="updateMessage">尚未执行版本更新</span></div>
         <p id="updateWarning" class="warning" hidden></p>
-        <div id="updateBootstrap" class="create-user-panel" hidden>
-          <div class="section-title"><div><h3>首次启用一键更新</h3><p class="muted">只需在服务器终端执行下面命令一次。安装 root 级 systemd watcher 后，以后直接在本页面点击“一键更新服务端”，Web 进程本身不会获得 sudo 权限。</p></div></div>
-          <div class="field-with-button"><input id="updateBootstrapCommand" type="text" readonly aria-label="安装服务端更新器命令"><button id="copyUpdateBootstrap" type="button">复制命令</button></div>
-        </div>
+        <p class="muted">首次部署更新器需要在服务器终端安装一次 systemd watcher；安装完成后，之后的官网与服务端代码更新都可直接在本页完成，无需给 Web 服务 sudo 权限。</p>
         <pre id="updateLog" class="logbox">暂无更新日志</pre>
       </section>
     </div>
   </main>
 </div>
 <script type="module" src="/admin.js"></script>
-<script type="module" src="/admin-update-enhancer.js"></script>
 </body>
 </html>
