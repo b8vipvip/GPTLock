@@ -4,6 +4,11 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 const ACTIVE = new Set(['queued', 'running', 'restarting', 'rolling_back']);
+const UPDATE_PATH_UNIT = 'gptlock-license-update.path';
+const UPDATE_PATH_FILES = [
+  '/etc/systemd/system/gptlock-license-update.path',
+  '/usr/lib/systemd/system/gptlock-license-update.path',
+];
 
 function readJson(path, fallback = null) {
   try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return fallback; }
@@ -27,6 +32,19 @@ function gitCommit(repoDir) {
   }
 }
 
+function commandOk(command, args) {
+  try {
+    execFileSync(command, args, { stdio: 'ignore', timeout: 2000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
+}
+
 export function createUpdateManager({ serverRoot, dbPath, env = process.env }) {
   const dataDir = env.GPTLOCK_UPDATE_DATA_DIR || dirname(dbPath);
   const repoDir = resolve(env.GPTLOCK_UPDATE_REPO_DIR || join(serverRoot, '..'));
@@ -36,20 +54,44 @@ export function createUpdateManager({ serverRoot, dbPath, env = process.env }) {
   const logFile = join(dataDir, 'update.log');
   const deploymentFile = join(dataDir, 'deployment.json');
   const packagePath = join(serverRoot, 'package.json');
+  const productManifestPath = join(serverRoot, '..', 'extension', 'manifest.json');
+  const bootstrapCommand = `cd ${shellQuote(serverRoot)} && sudo bash scripts/install-updater-systemd.sh`;
 
-  function updaterReady() {
-    return existsSync('/etc/systemd/system/gptlock-license-update.path') || existsSync('/usr/lib/systemd/system/gptlock-license-update.path');
+  function packageVersion() {
+    return String(readJson(packagePath, {})?.version || 'unknown');
+  }
+
+  function productVersion() {
+    return String(readJson(productManifestPath, {})?.version || readJson(deploymentFile, {})?.version || packageVersion());
+  }
+
+  function updaterState() {
+    const installedPath = UPDATE_PATH_FILES.find((path) => existsSync(path)) || null;
+    const allowWithoutSystemd = env.GPTLOCK_UPDATE_ALLOW_WITHOUT_SYSTEMD === '1';
+    const active = installedPath ? commandOk('systemctl', ['is-active', '--quiet', UPDATE_PATH_UNIT]) : false;
+    const enabled = installedPath ? commandOk('systemctl', ['is-enabled', '--quiet', UPDATE_PATH_UNIT]) : false;
+    return {
+      installed: Boolean(installedPath),
+      active,
+      enabled,
+      ready: allowWithoutSystemd || (Boolean(installedPath) && active),
+      unit: UPDATE_PATH_UNIT,
+      testBypass: allowWithoutSystemd,
+    };
   }
 
   function info() {
     const status = readJson(statusFile, { status: 'idle', stage: 'idle', percent: 0, message: '尚未执行版本更新' });
     const deployment = readJson(deploymentFile, {});
-    const pkg = readJson(packagePath, {});
     const commit = gitCommit(repoDir) || deployment.commit || '';
+    const updater = updaterState();
     return {
       ok: true,
-      updaterReady: updaterReady(),
-      serverVersion: pkg.version || deployment.version || 'unknown',
+      updaterReady: updater.ready,
+      updater,
+      bootstrapCommand,
+      serverVersion: productVersion(),
+      serverPackageVersion: packageVersion(),
       currentCommit: commit || null,
       targetRef: ref,
       status,
@@ -58,8 +100,11 @@ export function createUpdateManager({ serverRoot, dbPath, env = process.env }) {
   }
 
   function request() {
-    if (!updaterReady() && env.GPTLOCK_UPDATE_ALLOW_WITHOUT_SYSTEMD !== '1') {
-      const error = new Error('系统更新器尚未安装，请先运行 scripts/install-updater-systemd.sh');
+    const updater = updaterState();
+    if (!updater.ready && env.GPTLOCK_UPDATE_ALLOW_WITHOUT_SYSTEMD !== '1') {
+      const error = new Error(updater.installed
+        ? '系统更新器已安装但监听单元未运行，请在服务器执行安装/修复命令后重试'
+        : '系统更新器尚未安装，请先在服务器执行一次安装命令');
       error.status = 503;
       throw error;
     }
