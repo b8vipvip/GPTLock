@@ -1,0 +1,54 @@
+name: Temporary release lock sync
+
+on:
+  push:
+    branches:
+      - release/v0.5.27-context-remaining
+
+permissions:
+  contents: write
+
+jobs:
+  sync-lock:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - name: Patch only the workspace package version in Cargo.lock
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import difflib
+
+          path = Path('native-core/Cargo.lock')
+          old = path.read_text(encoding='utf-8')
+          needle = 'name = "gptlock-core"\nversion = "0.5.26"'
+          replacement = 'name = "gptlock-core"\nversion = "0.5.27"'
+          count = old.count(needle)
+          if count == 0 and replacement in old:
+              raise SystemExit(0)
+          if count != 1:
+              raise SystemExit(f'expected exactly one gptlock-core 0.5.26 lock entry, got {count}')
+          new = old.replace(needle, replacement, 1)
+          diff = list(difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm=''))
+          changed = [line for line in diff if line.startswith(('+', '-')) and not line.startswith(('+++', '---'))]
+          expected = ['-version = "0.5.26"', '+version = "0.5.27"']
+          if changed != expected:
+              raise SystemExit(f'unexpected Cargo.lock diff: {changed!r}')
+          path.write_text(new, encoding='utf-8')
+          PY
+      - name: Commit synchronized lockfile
+        run: |
+          if git diff --quiet -- native-core/Cargo.lock; then
+            echo 'Cargo.lock already synchronized.'
+            exit 0
+          fi
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add native-core/Cargo.lock
+          git commit -m 'release: sync Cargo.lock to 0.5.27'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
