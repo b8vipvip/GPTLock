@@ -22,11 +22,16 @@
     </section>
     <div id="app" hidden>
       <section id="update" class="card update-card">
-        <div class="section-title"><div><h2>服务端版本更新</h2><p class="muted">自动拉取、测试、SQLite 在线备份、部署、重启和健康检查。</p></div><button id="updateButton" class="primary">版本更新</button></div>
-        <div class="update-meta"><span>版本 <strong id="serverVersion">—</strong></span><span>提交 <code id="currentCommit">—</code></span><span>分支 <code id="targetRef">—</code></span></div>
+        <div class="section-title"><div><h2>服务端一键更新</h2><p class="muted">从受信任的 GPTLock GitHub 仓库拉取目标分支，隔离测试、SQLite 在线备份、部署、重启、健康检查与失败回滚自动完成。</p></div><button id="updateButton" class="primary">一键更新服务端</button></div>
+        <div class="update-meta"><span>产品版本 <strong id="serverVersion">—</strong></span><span>提交 <code id="currentCommit">—</code></span><span>更新分支 <code id="targetRef">—</code></span><span>更新器 <strong id="updaterState">—</strong></span></div>
         <div class="progress-track"><div id="updateProgress" class="progress-bar"></div></div>
         <div class="update-status-row"><strong id="updatePercent">0%</strong><span id="updateMessage">尚未执行版本更新</span></div>
-        <p id="updateWarning" class="warning" hidden></p><pre id="updateLog" class="logbox">暂无更新日志</pre>
+        <p id="updateWarning" class="warning" hidden></p>
+        <div id="updateBootstrap" class="create-user-panel" hidden>
+          <div class="section-title"><div><h3>首次启用一键更新</h3><p class="muted">只需在服务器终端执行下面命令一次。安装 root 级 systemd watcher 后，以后直接在本页面点击“一键更新服务端”，Web 进程本身不会获得 sudo 权限。</p></div></div>
+          <div class="field-with-button"><input id="updateBootstrapCommand" type="text" readonly aria-label="安装服务端更新器命令"><button id="copyUpdateBootstrap" type="button">复制命令</button></div>
+        </div>
+        <pre id="updateLog" class="logbox">暂无更新日志</pre>
       </section>
     </div>
   </main>
