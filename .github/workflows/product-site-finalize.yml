@@ -1,0 +1,86 @@
+name: Product site branch finalizer
+
+on:
+  push:
+    branches:
+      - feat/product-site-account-v0526
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/product-site-account-v0526
+          fetch-depth: 0
+      - name: Patch extension link, versions, and checks
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('extension/options-update.js')
+          s = p.read_text()
+          marker = "const NATIVE_HOST = 'com.gptlock.core';"
+          if 'GPTLOCK_PRODUCT_SITE_URL' not in s:
+              s = s.replace(marker, "const GPTLOCK_PRODUCT_SITE_URL = 'https://gptlock.mv3.cn/';\n" + marker)
+          s = s.replace("void chrome.tabs.create({ url: latestRelease?.releaseUrl || RELEASES_URL });", "void chrome.tabs.create({ url: GPTLOCK_PRODUCT_SITE_URL });")
+          p.write_text(s)
+
+          for name in ['extension/manifest.json', 'extension/package.json', 'native-core/Cargo.toml']:
+              p = Path(name)
+              p.write_text(p.read_text().replace('0.5.25', '0.5.26'))
+
+          p = Path('native-core/Cargo.lock')
+          s = p.read_text()
+          old = 'name = "gptlock-core"\nversion = "0.5.25"'
+          new = 'name = "gptlock-core"\nversion = "0.5.26"'
+          if old not in s:
+              raise SystemExit('gptlock-core 0.5.25 lock entry not found')
+          p.write_text(s.replace(old, new, 1))
+
+          for p in Path('extension/tests').glob('*.test.mjs'):
+              s = p.read_text()
+              if '0.5.25' in s:
+                  p.write_text(s.replace('0.5.25', '0.5.26'))
+
+          p = Path('license-server/package.json')
+          s = p.read_text()
+          s = s.replace('node --check update-manager.mjs', 'node --check update-manager.mjs && node --check site-account.mjs && node --check site-releases.mjs')
+          s = s.replace('node --check public/client-runtime-admin.js', 'node --check public/client-runtime-admin.js && node --check public/site.js')
+          p.write_text(s)
+
+          p = Path('extension/package.json')
+          s = p.read_text()
+          s = s.replace('node --check ../license-server/client-runtime-logs.mjs', 'node --check ../license-server/client-runtime-logs.mjs && node --check ../license-server/site-account.mjs && node --check ../license-server/site-releases.mjs')
+          s = s.replace('node --check ../license-server/public/client-runtime-admin.js', 'node --check ../license-server/public/client-runtime-admin.js && node --check ../license-server/public/site.js')
+          p.write_text(s)
+          PY
+      - name: Validate branch
+        shell: bash
+        run: |
+          node --check license-server/server.mjs
+          node --check license-server/site-account.mjs
+          node --check license-server/site-releases.mjs
+          node --check license-server/public/site.js
+          node --check extension/options-update.js
+          node --test extension/tests/*.test.mjs license-server/test/*.test.mjs
+          cargo fmt --manifest-path native-core/Cargo.toml --all -- --check
+          cargo check --locked --manifest-path native-core/Cargo.toml
+          git diff --check
+      - name: Commit finalized branch
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          rm -f .github/workflows/product-site-finalize.yml
+          git add -A .github/workflows/product-site-finalize.yml extension/manifest.json extension/package.json extension/options-update.js extension/tests native-core/Cargo.toml native-core/Cargo.lock license-server/package.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: finalize GPTLock v0.5.26 product site release"
+            git push origin HEAD:feat/product-site-account-v0526
+          fi
