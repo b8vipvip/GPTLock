@@ -14,12 +14,13 @@ test('service worker migrates already-open legacy settings tabs to the current p
     readFile(migrationUrl, 'utf8'),
   ]);
 
-  assert.equal(manifest.version, '0.5.20');
+  assert.equal(manifest.version, '0.5.21');
   assert.equal(manifest.background.service_worker, 'background-entry.js');
-  assert.equal(manifest.options_ui.page, 'settings-v0519.html');
+  assert.equal(manifest.options_ui.page, 'settings-v0521.html');
   assert.match(entry, /import '\.\/settings-migration\.js';/);
   assert.match(entry, /import '\.\/background\.js';/);
-  assert.match(migration, /CURRENT_SETTINGS_PAGE = 'settings-v0519\.html'/);
+  assert.match(migration, /CURRENT_SETTINGS_PAGE = 'settings-v0521\.html'/);
+  assert.match(migration, /'settings-v0519\.html'/);
   assert.match(migration, /'settings-v0517\.html'/);
   assert.match(migration, /'options\.html'/);
   assert.match(migration, /chrome\.tabs\.query\(\{\}\)/);
