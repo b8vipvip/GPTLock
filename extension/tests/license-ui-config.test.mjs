@@ -11,7 +11,7 @@ const settingsShell = new URL('../settings-shell.js', import.meta.url);
 test('default popup and settings use cache-proof entrypoints with no legacy license controls', async () => {
   const manifest = JSON.parse(await readFile(manifestUrl, 'utf8'));
   assert.equal(manifest.action.default_popup, 'popup-v0513.html');
-  assert.equal(manifest.options_ui.page, 'settings-v0519.html');
+  assert.equal(manifest.options_ui.page, 'settings-v0521.html');
   assert.equal(manifest.background.service_worker, 'background-entry.js');
 
   const defaultPopup = new URL(`../${manifest.action.default_popup}`, import.meta.url);
@@ -47,11 +47,14 @@ test('default popup and settings use cache-proof entrypoints with no legacy lice
   assert.match(shell, /input\[placeholder\^="GPTL-" i\]/);
   assert.match(shell, /授权验证/);
   assert.match(shell, /gptlockPopupRuntimeInfo/);
-  assert.match(shell, /settings-v0519\.html#updates-auto/);
+  assert.match(shell, /getManifest\(\)\.options_ui\?\.page/);
+  assert.match(shell, /#updates-auto/);
 
-  assert.match(settingsGuard, /SETTINGS_REVISION = 'v0519-license-ui-purge-1'/);
+  assert.match(settingsGuard, /SETTINGS_REVISION = 'v0521-settings-state-repair-1'/);
   assert.match(settingsGuard, /input\[placeholder\^="GPTL-" i\]/);
   assert.match(settingsGuard, /授权验证 \/ License/);
+  assert.match(settingsGuard, /gptlockUiUpdateStatus/);
+  assert.match(settingsGuard, /SAFE_CORE_RECONCILE_PHASES/);
 
   assert.match(css, /input\[placeholder\^="GPTL-" i\]/);
   assert.match(css, /section:has\(input\[placeholder\^="GPTL-" i\]\)/);
