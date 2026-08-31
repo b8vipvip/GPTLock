@@ -18,7 +18,8 @@ test('Windows one-click updater coordinates Core shutdown outside the Native Mes
   assert.match(updater, /Get-Process -Id \(\[int\]\$job\.currentPid\)/);
   assert.match(updater, /while \(-not \$installer\.HasExited\)/);
   assert.match(updater, /Stop-InstalledCoreProcesses/);
-  assert.match(updater, /Get-CimInstance Win32_Process/);
+  assert.match(updater, /Get-Process -Name 'gptlock-core'/);
+  assert.match(updater, /windows_shell_path/);
   assert.match(updater, /installed_core_version_output/);
   assert.match(updater, /UPDATE_INSTALLER_LOG_NAME/);
   assert.doesNotMatch(updater, /CREATE_NEW_PROCESS_GROUP/);

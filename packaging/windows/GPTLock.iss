@@ -86,11 +86,15 @@ begin
   Script :=
     '$ErrorActionPreference=''Stop''; ' +
     '$target=[IO.Path]::GetFullPath(''' + CorePath + '''); ' +
+    '$deadline=(Get-Date).AddSeconds(8); ' +
+    'do { ' +
     '$matches=@(Get-Process -Name ''gptlock-core'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $target) } catch { $false } }); ' +
     'foreach ($p in $matches) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }; ' +
-    'Start-Sleep -Milliseconds 500; ' +
+    'Start-Sleep -Milliseconds 150; ' +
     '$remaining=@(Get-Process -Name ''gptlock-core'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $target) } catch { $false } }); ' +
-    'if ($remaining.Count -gt 0) { throw ''GPTLock core still running'' }';
+    'if ($remaining.Count -eq 0) { exit 0 } ' +
+    '} while ((Get-Date) -lt $deadline); ' +
+    'throw ''GPTLock core still running after retry window''';
   Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + Script + '"';
   Result := Exec(
     ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
