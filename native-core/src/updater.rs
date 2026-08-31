@@ -8,6 +8,10 @@ const INSTALLER_FILE_NAME: &str = "GPTLockSetup-x64.exe";
 const UPDATE_HELPER_LOG_NAME: &str = "update-helper.log";
 #[cfg(windows)]
 const UPDATE_INSTALLER_LOG_NAME: &str = "update-installer.log";
+#[cfg(windows)]
+const UPDATE_COORDINATOR_SCRIPT_NAME: &str = "update-coordinator.ps1";
+#[cfg(windows)]
+const UPDATE_COORDINATOR_JOB_NAME: &str = "update-job.json";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +32,8 @@ pub struct PrepareUpdateResult {
     pub download_unblocked: bool,
     pub helper_log_path: String,
     pub installer_log_path: String,
+    pub coordinator_script_path: String,
+    pub coordinator_job_path: String,
     pub launcher_strategy: String,
     pub launcher_process_id: u32,
 }
@@ -173,46 +179,167 @@ fn unblock_verified_download(path: &Path) -> Result<bool> {
 }
 
 #[cfg(windows)]
-fn windows_command_line(
-    installer: &Path,
-    install_root: &Path,
-    installer_log: &Path,
-) -> Result<String> {
-    let installer = installer
-        .to_str()
-        .context("Windows installer path is not valid UTF-8 / Windows 安装器路径不是有效 UTF-8")?;
+fn windows_installer_arguments(install_root: &Path, installer_log: &Path) -> Result<String> {
     let install_root = install_root
         .to_str()
         .context("Windows install root is not valid UTF-8 / Windows 安装目录不是有效 UTF-8")?;
     let installer_log = installer_log.to_str().context(
         "Windows installer log path is not valid UTF-8 / Windows 安装日志路径不是有效 UTF-8",
     )?;
-    if [installer, install_root, installer_log]
+    if [install_root, installer_log]
         .iter()
         .any(|value| value.contains('"'))
     {
         bail!("Windows update path contains an invalid quote / Windows 更新路径包含非法引号");
     }
     Ok(format!(
-        "\"{installer}\" /SUPPRESSMSGBOXES /NORESTART /VERYSILENT /DIR=\"{install_root}\" /LOG=\"{installer_log}\""
+        "/SUPPRESSMSGBOXES /NORESTART /VERYSILENT /DIR=\"{install_root}\" /LOG=\"{installer_log}\""
     ))
 }
 
 #[cfg(windows)]
-fn launch_installer_via_wmi(
-    installer: &Path,
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCoordinatorJob {
+    current_pid: u32,
+    installer_path: String,
+    installer_arguments: String,
+    install_root: String,
+    core_path: String,
+    target_version: String,
+    helper_log_path: String,
+}
+
+#[cfg(windows)]
+fn coordinator_script() -> &'static str {
+    r#"param([Parameter(Mandatory=$true)][string]$JobPath)
+$ErrorActionPreference = 'Stop'
+$job = Get-Content -LiteralPath $JobPath -Raw | ConvertFrom-Json
+
+function Write-HelperLog([string]$Message) {
+  $stamp = (Get-Date).ToString('o')
+  Add-Content -LiteralPath $job.helperLogPath -Value ("$stamp $Message") -Encoding UTF8
+}
+
+function Stop-InstalledCoreProcesses {
+  $target = [IO.Path]::GetFullPath([string]$job.corePath)
+  Get-CimInstance Win32_Process -Filter "Name='gptlock-core.exe'" -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.ExecutablePath -and ([IO.Path]::GetFullPath([string]$_.ExecutablePath) -ieq $target)
+    } |
+    ForEach-Object {
+      try {
+        Stop-Process -Id ([int]$_.ProcessId) -Force -ErrorAction Stop
+        Write-HelperLog ("stopped_core pid=" + $_.ProcessId)
+      } catch {
+        Write-HelperLog ("stop_core_failed pid=" + $_.ProcessId + " error=" + $_.Exception.Message)
+      }
+    }
+}
+
+try {
+  Write-HelperLog ("coordinator_started target=" + $job.targetVersion + " current_pid=" + $job.currentPid)
+  $deadline = (Get-Date).AddSeconds(20)
+  while (Get-Process -Id ([int]$job.currentPid) -ErrorAction SilentlyContinue) {
+    if ((Get-Date) -ge $deadline) { throw 'Timed out waiting for preparing Native Messaging host to exit' }
+    Start-Sleep -Milliseconds 100
+  }
+  Write-HelperLog 'preparing_native_host_exited'
+
+  Stop-InstalledCoreProcesses
+  $installer = Start-Process -FilePath ([string]$job.installerPath) -ArgumentList ([string]$job.installerArguments) -WorkingDirectory ([string]$job.installRoot) -WindowStyle Hidden -PassThru
+  Write-HelperLog ("installer_started pid=" + $installer.Id)
+
+  while (-not $installer.HasExited) {
+    Stop-InstalledCoreProcesses
+    Start-Sleep -Milliseconds 250
+    $installer.Refresh()
+  }
+  $exitCode = $installer.ExitCode
+  Write-HelperLog ("installer_exited code=" + $exitCode)
+  if ($exitCode -ne 0) { throw ("Installer exited with code " + $exitCode) }
+
+  Stop-InstalledCoreProcesses
+  Start-Sleep -Milliseconds 500
+  $versionOutput = (& ([string]$job.corePath) --version 2>&1 | Out-String).Trim()
+  Write-HelperLog ("installed_core_version_output=" + $versionOutput)
+  if ($versionOutput -notmatch [regex]::Escape([string]$job.targetVersion)) {
+    throw ("Installed Core version did not match target " + $job.targetVersion + ": " + $versionOutput)
+  }
+  Write-HelperLog 'coordinator_completed'
+  exit 0
+} catch {
+  Write-HelperLog ("coordinator_failed error=" + $_.Exception.Message)
+  exit 1
+}
+"#
+}
+
+#[cfg(windows)]
+fn write_update_coordinator_files(
     install_root: &Path,
+    installer: &Path,
     installer_log: &Path,
+    helper_log: &Path,
+    target_version: &str,
+    current_pid: u32,
+) -> Result<(PathBuf, PathBuf)> {
+    use std::fs;
+
+    let script_path = install_root.join(UPDATE_COORDINATOR_SCRIPT_NAME);
+    let job_path = install_root.join(UPDATE_COORDINATOR_JOB_NAME);
+    let core_path = install_root.join("bin").join("gptlock-core.exe");
+    let job = UpdateCoordinatorJob {
+        current_pid,
+        installer_path: installer.to_string_lossy().into_owned(),
+        installer_arguments: windows_installer_arguments(install_root, installer_log)?,
+        install_root: install_root.to_string_lossy().into_owned(),
+        core_path: core_path.to_string_lossy().into_owned(),
+        target_version: target_version.to_owned(),
+        helper_log_path: helper_log.to_string_lossy().into_owned(),
+    };
+    fs::write(&script_path, coordinator_script()).with_context(|| {
+        format!("failed to write update coordinator: {}", script_path.display())
+    })?;
+    fs::write(
+        &job_path,
+        serde_json::to_vec_pretty(&job).context("serialize update coordinator job")?,
+    )
+    .with_context(|| format!("failed to write update coordinator job: {}", job_path.display()))?;
+    Ok((script_path, job_path))
+}
+
+#[cfg(windows)]
+fn windows_coordinator_command_line(script_path: &Path, job_path: &Path) -> Result<String> {
+    let script_path = script_path
+        .to_str()
+        .context("Windows coordinator path is not valid UTF-8 / Windows 协调器路径不是有效 UTF-8")?;
+    let job_path = job_path
+        .to_str()
+        .context("Windows update job path is not valid UTF-8 / Windows 更新任务路径不是有效 UTF-8")?;
+    if [script_path, job_path].iter().any(|value| value.contains('"')) {
+        bail!("Windows update path contains an invalid quote / Windows 更新路径包含非法引号");
+    }
+    Ok(format!(
+        "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script_path}\" -JobPath \"{job_path}\""
+    ))
+}
+
+#[cfg(windows)]
+fn launch_coordinator_via_wmi(
+    script_path: &Path,
+    job_path: &Path,
+    install_root: &Path,
 ) -> Result<u32> {
     use std::process::Command;
 
-    // Native Messaging hosts are owned by the browser. Any ordinary child process can
-    // inherit the browser's Windows Job Object and be killed when the native port closes
-    // or when Setup stops the old Core. Ask the local WMI provider to create the installer
-    // instead, and explicitly request CREATE_BREAKAWAY_FROM_JOB. The installer's lifetime
-    // is then independent from the short-lived Native Messaging host that prepared it.
+    // The coordinator is created by WMI with CREATE_BREAKAWAY_FROM_JOB, so it survives the
+    // Native Messaging host that prepared the update. It waits for that host to exit before
+    // starting Setup, then continuously terminates only the installed gptlock-core.exe while
+    // Setup is running. This prevents Chrome's automatic Native Messaging reconnects and the
+    // update page's probes from re-locking the executable that Setup is trying to replace.
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-    let command_line = windows_command_line(installer, install_root, installer_log)?;
+    let command_line = windows_coordinator_command_line(script_path, job_path)?;
     let install_root_text = install_root
         .to_str()
         .context("Windows install root is not valid UTF-8 / Windows 安装目录不是有效 UTF-8")?;
@@ -231,10 +358,10 @@ fn launch_installer_via_wmi(
         .env("GPTLOCK_UPDATE_COMMAND_LINE", command_line)
         .env("GPTLOCK_INSTALL_ROOT", install_root_text)
         .output()
-        .context("failed to invoke WMI update launcher / 无法调用 WMI 更新启动器")?;
+        .context("failed to invoke WMI update coordinator / 无法调用 WMI 更新协调器")?;
     if !output.status.success() {
         bail!(
-            "WMI update launcher failed / WMI 更新启动器失败: {}",
+            "WMI update coordinator failed / WMI 更新协调器失败: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
@@ -243,7 +370,7 @@ fn launch_installer_via_wmi(
         .lines()
         .rev()
         .find_map(|line| line.trim().parse::<u32>().ok())
-        .context("WMI launcher did not return installer PID / WMI 启动器未返回安装器 PID")?;
+        .context("WMI coordinator did not return PID / WMI 协调器未返回 PID")?;
     Ok(process_id)
 }
 
@@ -252,12 +379,11 @@ fn write_update_launch_log(
     helper_log_path: &Path,
     installer_log_path: &Path,
     target_version: &str,
-    launcher_process_id: u32,
 ) -> Result<()> {
     use std::fs;
 
     let text = format!(
-        "launcher_strategy=wmi_breakaway\ntarget_version={target_version}\ninstaller_pid={launcher_process_id}\ninstaller_log={}\n",
+        "launcher_strategy=wmi_coordinator_breakaway\ntarget_version={target_version}\ninstaller_log={}\n",
         installer_log_path.display()
     );
     fs::write(helper_log_path, text).with_context(|| {
@@ -266,6 +392,20 @@ fn write_update_launch_log(
             helper_log_path.display()
         )
     })
+}
+
+#[cfg(windows)]
+fn append_update_launcher_pid(helper_log_path: &Path, launcher_process_id: u32) -> Result<()> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(helper_log_path)
+        .with_context(|| format!("failed to open update launch log: {}", helper_log_path.display()))?;
+    writeln!(file, "coordinator_pid={launcher_process_id}")
+        .context("failed to append update coordinator PID")
 }
 
 pub fn prepare_update(request: PrepareUpdateRequest) -> Result<PrepareUpdateResult> {
@@ -297,14 +437,25 @@ pub fn prepare_update(request: PrepareUpdateRequest) -> Result<PrepareUpdateResu
         let pid = std::process::id();
         let helper_log_path = install_root.join(UPDATE_HELPER_LOG_NAME);
         let installer_log_path = install_root.join(UPDATE_INSTALLER_LOG_NAME);
-        let launcher_process_id =
-            launch_installer_via_wmi(&installer_path, &install_root, &installer_log_path)?;
+        let (coordinator_script_path, coordinator_job_path) = write_update_coordinator_files(
+            &install_root,
+            &installer_path,
+            &installer_log_path,
+            &helper_log_path,
+            &target_version,
+            pid,
+        )?;
         write_update_launch_log(
             &helper_log_path,
             &installer_log_path,
             &target_version,
-            launcher_process_id,
         )?;
+        let launcher_process_id = launch_coordinator_via_wmi(
+            &coordinator_script_path,
+            &coordinator_job_path,
+            &install_root,
+        )?;
+        append_update_launcher_pid(&helper_log_path, launcher_process_id)?;
 
         Ok(PrepareUpdateResult {
             target_version,
@@ -315,7 +466,9 @@ pub fn prepare_update(request: PrepareUpdateRequest) -> Result<PrepareUpdateResu
             download_unblocked,
             helper_log_path: helper_log_path.to_string_lossy().into_owned(),
             installer_log_path: installer_log_path.to_string_lossy().into_owned(),
-            launcher_strategy: "wmi_breakaway".to_owned(),
+            coordinator_script_path: coordinator_script_path.to_string_lossy().into_owned(),
+            coordinator_job_path: coordinator_job_path.to_string_lossy().into_owned(),
+            launcher_strategy: "wmi_coordinator_breakaway".to_owned(),
             launcher_process_id,
         })
     }
@@ -346,15 +499,24 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn formats_silent_installer_command_line() {
-        let installer = Path::new(r"C:\Users\test\Downloads\GPTLockSetup-x64.exe");
+    fn formats_silent_installer_arguments() {
         let install_root = Path::new(r"C:\Users\test\AppData\Local\GPTLock");
         let installer_log = install_root.join(UPDATE_INSTALLER_LOG_NAME);
-        let command = windows_command_line(installer, install_root, &installer_log).unwrap();
-        assert!(command.starts_with("\"C:\\Users\\test\\Downloads\\GPTLockSetup-x64.exe\""));
-        assert!(command.contains("/VERYSILENT"));
-        assert!(command.contains("/DIR=\"C:\\Users\\test\\AppData\\Local\\GPTLock\""));
-        assert!(command.contains("update-installer.log"));
+        let arguments = windows_installer_arguments(install_root, &installer_log).unwrap();
+        assert!(arguments.contains("/VERYSILENT"));
+        assert!(arguments.contains("/DIR=\"C:\\Users\\test\\AppData\\Local\\GPTLock\""));
+        assert!(arguments.contains("update-installer.log"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn coordinator_waits_for_preparing_host_and_suppresses_core_reconnects() {
+        let script = coordinator_script();
+        assert!(script.contains("Get-Process -Id ([int]$job.currentPid)"));
+        assert!(script.contains("Stop-InstalledCoreProcesses"));
+        assert!(script.contains("while (-not $installer.HasExited)"));
+        assert!(script.contains("Get-CimInstance Win32_Process"));
+        assert!(script.contains("installed_core_version_output"));
     }
 
     #[cfg(windows)]
