@@ -1,0 +1,135 @@
+name: Finalize v0.5.24 Windows updater hardening
+
+on:
+  push:
+    branches: [fix/windows-auto-update-path-v0524]
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    if: ${{ !contains(github.event.head_commit.message, '[updater-v0524]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/windows-auto-update-path-v0524
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Patch updater, installer and version
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, found {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          updater = 'native-core/src/updater.rs'
+
+          replace_once(
+              updater,
+              '''    Ok(parent.to_path_buf())\n}\n\n#[cfg(windows)]\nfn powershell_hash(path: &Path) -> Result<String> {''',
+              '''    Ok(parent.to_path_buf())\n}\n\n#[cfg(windows)]\nfn windows_shell_path(path: &Path) -> Result<String> {\n    let raw = path\n        .to_str()\n        .context("Windows update path is not valid UTF-8 / Windows 更新路径不是有效 UTF-8")?;\n    let normalized = if let Some(rest) = raw.strip_prefix("\\\\\\\\?\\\\UNC\\\\") {\n        format!("\\\\\\\\{rest}")\n    } else if let Some(rest) = raw.strip_prefix("\\\\\\\\?\\\\") {\n        rest.to_owned()\n    } else {\n        raw.to_owned()\n    };\n    if normalized.contains('\\"') {\n        bail!("Windows update path contains an invalid quote / Windows 更新路径包含非法引号");\n    }\n    Ok(normalized)\n}\n\n#[cfg(windows)]\nfn powershell_hash(path: &Path) -> Result<String> {'''
+          )
+
+          replace_once(
+              updater,
+              '''    let install_root = install_root\n        .to_str()\n        .context("Windows install root is not valid UTF-8 / Windows 安装目录不是有效 UTF-8")?;\n    let installer_log = installer_log.to_str().context(\n        "Windows installer log path is not valid UTF-8 / Windows 安装日志路径不是有效 UTF-8",\n    )?;\n    if [install_root, installer_log]\n        .iter()\n        .any(|value| value.contains('\\"'))\n    {\n        bail!("Windows update path contains an invalid quote / Windows 更新路径包含非法引号");\n    }\n    Ok(format!(\n        "/SUPPRESSMSGBOXES /NORESTART /VERYSILENT /DIR=\\\\\\"{install_root}\\\\\\" /LOG=\\\\\\"{installer_log}\\\\\\""\n    ))''',
+              '''    let install_root = windows_shell_path(install_root)?;\n    let installer_log = windows_shell_path(installer_log)?;\n    Ok(format!(\n        "/SUPPRESSMSGBOXES /NORESTART /VERYSILENT /DIR=\\\\\\"{install_root}\\\\\\" /LOG=\\\\\\"{installer_log}\\\\\\""\n    ))'''
+          )
+
+          replace_once(
+              updater,
+              '''function Stop-InstalledCoreProcesses {\n  $target = [IO.Path]::GetFullPath([string]$job.corePath)\n  Get-CimInstance Win32_Process -Filter "Name='gptlock-core.exe'" -ErrorAction SilentlyContinue |\n    Where-Object {\n      $_.ExecutablePath -and ([IO.Path]::GetFullPath([string]$_.ExecutablePath) -ieq $target)\n    } |\n    ForEach-Object {\n      try {\n        Stop-Process -Id ([int]$_.ProcessId) -Force -ErrorAction Stop\n        Write-HelperLog ("stopped_core pid=" + $_.ProcessId)\n      } catch {\n        Write-HelperLog ("stop_core_failed pid=" + $_.ProcessId + " error=" + $_.Exception.Message)\n      }\n    }\n}\n\ntry {\n  Write-HelperLog ("coordinator_started target=" + $job.targetVersion + " current_pid=" + $job.currentPid)\n  $deadline = (Get-Date).AddSeconds(20)\n  while (Get-Process -Id ([int]$job.currentPid) -ErrorAction SilentlyContinue) {\n    if ((Get-Date) -ge $deadline) { throw 'Timed out waiting for preparing Native Messaging host to exit' }\n    Start-Sleep -Milliseconds 100\n  }\n  Write-HelperLog 'preparing_native_host_exited'\n\n  Stop-InstalledCoreProcesses\n  $installer = Start-Process''',
+              '''function Get-InstalledCoreProcesses {\n  $target = [IO.Path]::GetFullPath([string]$job.corePath)\n  return @(Get-Process -Name 'gptlock-core' -ErrorAction SilentlyContinue | Where-Object {\n    try { $_.Path -and ([IO.Path]::GetFullPath([string]$_.Path) -ieq $target) } catch { $false }\n  })\n}\n\nfunction Stop-InstalledCoreProcesses {\n  foreach ($process in @(Get-InstalledCoreProcesses)) {\n    try {\n      Stop-Process -Id ([int]$process.Id) -Force -ErrorAction Stop\n      Write-HelperLog ("stopped_core pid=" + $process.Id)\n    } catch {\n      Write-HelperLog ("stop_core_failed pid=" + $process.Id + " error=" + $_.Exception.Message)\n    }\n  }\n}\n\ntry {\n  Write-HelperLog ("coordinator_started target=" + $job.targetVersion + " current_pid=" + $job.currentPid)\n  $deadline = (Get-Date).AddSeconds(3)\n  while (Get-Process -Id ([int]$job.currentPid) -ErrorAction SilentlyContinue) {\n    if ((Get-Date) -ge $deadline) {\n      Write-HelperLog 'preparing_native_host_still_running_forcing_shutdown'\n      break\n    }\n    Start-Sleep -Milliseconds 100\n  }\n  if (-not (Get-Process -Id ([int]$job.currentPid) -ErrorAction SilentlyContinue)) {\n    Write-HelperLog 'preparing_native_host_exited'\n  }\n\n  Stop-InstalledCoreProcesses\n  Start-Sleep -Milliseconds 150\n  Stop-InstalledCoreProcesses\n  $installer = Start-Process'''
+          )
+
+          replace_once(
+              updater,
+              '''    let script_path = install_root.join(UPDATE_COORDINATOR_SCRIPT_NAME);\n    let job_path = install_root.join(UPDATE_COORDINATOR_JOB_NAME);\n    let core_path = install_root.join("bin").join("gptlock-core.exe");\n    let job = UpdateCoordinatorJob {\n        current_pid,\n        installer_path: installer.to_string_lossy().into_owned(),\n        installer_arguments: windows_installer_arguments(install_root, installer_log)?,\n        install_root: install_root.to_string_lossy().into_owned(),\n        core_path: core_path.to_string_lossy().into_owned(),\n        target_version: target_version.to_owned(),\n        helper_log_path: helper_log.to_string_lossy().into_owned(),\n    };''',
+              '''    let script_path = install_root.join(UPDATE_COORDINATOR_SCRIPT_NAME);\n    let job_path = install_root.join(UPDATE_COORDINATOR_JOB_NAME);\n    let core_path = install_root.join("bin").join("gptlock-core.exe");\n    let job = UpdateCoordinatorJob {\n        current_pid,\n        installer_path: windows_shell_path(installer)?,\n        installer_arguments: windows_installer_arguments(install_root, installer_log)?,\n        install_root: windows_shell_path(install_root)?,\n        core_path: windows_shell_path(&core_path)?,\n        target_version: target_version.to_owned(),\n        helper_log_path: windows_shell_path(helper_log)?,\n    };'''
+          )
+
+          replace_once(
+              updater,
+              '''    let script_path = script_path.to_str().context(\n        "Windows coordinator path is not valid UTF-8 / Windows 协调器路径不是有效 UTF-8",\n    )?;\n    let job_path = job_path.to_str().context(\n        "Windows update job path is not valid UTF-8 / Windows 更新任务路径不是有效 UTF-8",\n    )?;\n    if [script_path, job_path]\n        .iter()\n        .any(|value| value.contains('\\"'))\n    {\n        bail!("Windows update path contains an invalid quote / Windows 更新路径包含非法引号");\n    }\n    Ok(format!(''',
+              '''    let script_path = windows_shell_path(script_path)?;\n    let job_path = windows_shell_path(job_path)?;\n    Ok(format!('''
+          )
+
+          replace_once(
+              updater,
+              '''    let install_root_text = install_root\n        .to_str()\n        .context("Windows install root is not valid UTF-8 / Windows 安装目录不是有效 UTF-8")?;''',
+              '''    let install_root_text = windows_shell_path(install_root)?;'''
+          )
+
+          replace_once(
+              updater,
+              '''        .env("GPTLOCK_INSTALL_ROOT", install_root_text)''',
+              '''        .env("GPTLOCK_INSTALL_ROOT", &install_root_text)'''
+          )
+
+          replace_once(
+              updater,
+              '''        assert!(script.contains("Get-Process -Id ([int]$job.currentPid)"));\n        assert!(script.contains("Stop-InstalledCoreProcesses"));\n        assert!(script.contains("while (-not $installer.HasExited)"));\n        assert!(script.contains("Get-CimInstance Win32_Process"));\n        assert!(script.contains("installed_core_version_output"));''',
+              '''        assert!(script.contains("Get-Process -Id ([int]$job.currentPid)"));\n        assert!(script.contains("preparing_native_host_still_running_forcing_shutdown"));\n        assert!(!script.contains("Timed out waiting for preparing Native Messaging host to exit"));\n        assert!(script.contains("Stop-InstalledCoreProcesses"));\n        assert!(script.contains("while (-not $installer.HasExited)"));\n        assert!(script.contains("Get-Process -Name 'gptlock-core'"));\n        assert!(script.contains("installed_core_version_output"));'''
+          )
+
+          marker = '''    #[cfg(windows)]\n    #[test]\n    fn coordinator_waits_for_preparing_host_and_suppresses_core_reconnects() {'''
+          insertion = '''    #[cfg(windows)]\n    #[test]\n    fn normalizes_extended_windows_paths_for_powershell_and_wmi() {\n        assert_eq!(\n            windows_shell_path(Path::new(r"\\\\?\\D:\\AI\\GPTLock")).unwrap(),\n            r"D:\\AI\\GPTLock"\n        );\n        assert_eq!(\n            windows_shell_path(Path::new(r"\\\\?\\UNC\\server\\share\\GPTLock")).unwrap(),\n            r"\\\\server\\share\\GPTLock"\n        );\n    }\n\n''' + marker
+          replace_once(updater, marker, insertion)
+
+          installer = 'packaging/windows/GPTLock.iss'
+          replace_once(
+              installer,
+              '''    '$matches=@(Get-Process -Name ''gptlock-core'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $target) } catch { $false } }); ' +\n    'foreach ($p in $matches) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }; ' +\n    'Start-Sleep -Milliseconds 500; ' +\n    '$remaining=@(Get-Process -Name ''gptlock-core'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $target) } catch { $false } }); ' +\n    'if ($remaining.Count -gt 0) { throw ''GPTLock core still running'' }';''',
+              '''    '$deadline=(Get-Date).AddSeconds(8); ' +\n    'do { ' +\n    '$matches=@(Get-Process -Name ''gptlock-core'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $target) } catch { $false } }); ' +\n    'foreach ($p in $matches) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }; ' +\n    'Start-Sleep -Milliseconds 150; ' +\n    '$remaining=@(Get-Process -Name ''gptlock-core'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $target) } catch { $false } }); ' +\n    'if ($remaining.Count -eq 0) { exit 0 } ' +\n    '} while ((Get-Date) -lt $deadline); ' +\n    'throw ''GPTLock core still running after retry window''';'''
+          )
+
+          for path in [
+              'extension/manifest.json',
+              'extension/package.json',
+              'native-core/Cargo.toml',
+              'native-core/Cargo.lock',
+              'extension/tests/settings-runtime-migration.test.mjs',
+              'extension/tests/settings-state-regression.test.mjs',
+          ]:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if '0.5.23' in text:
+                  p.write_text(text.replace('0.5.23', '0.5.24'), encoding='utf-8')
+
+      - name: Format Rust
+        run: cargo fmt --manifest-path native-core/Cargo.toml
+      - name: Run extension and server tests
+        working-directory: extension
+        run: npm test
+      - name: Check Native Core
+        run: |
+          cargo check --manifest-path native-core/Cargo.toml --locked
+          cargo test --manifest-path native-core/Cargo.toml --locked
+      - name: Validate patch invariants
+        shell: bash
+        run: |
+          grep -F 'preparing_native_host_still_running_forcing_shutdown' native-core/src/updater.rs
+          ! grep -F 'Timed out waiting for preparing Native Messaging host to exit' native-core/src/updater.rs
+          grep -F 'AddSeconds(8)' packaging/windows/GPTLock.iss
+          grep -F '"version": "0.5.24"' extension/manifest.json
+          git diff --check
+      - name: Commit finalized fix and remove one-shot workflow
+        shell: bash
+        run: |
+          rm .github/workflows/fix-windows-updater-v0524.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: harden Windows updater path and core handoff [updater-v0524]'
+          git push origin HEAD:fix/windows-auto-update-path-v0524
