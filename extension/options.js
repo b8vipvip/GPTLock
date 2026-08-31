@@ -33,6 +33,17 @@ const elements = {
 
 let loadedSettings = normalizeSettings();
 
+function ensureEnabledControlInteractive() {
+  if (!elements.enabled) return;
+  if (elements.enabled.disabled) elements.enabled.disabled = false;
+  elements.enabled.removeAttribute('disabled');
+  elements.enabled.closest('.check-row')?.removeAttribute('aria-disabled');
+}
+
+ensureEnabledControlInteractive();
+const enabledControlObserver = new MutationObserver(() => ensureEnabledControlInteractive());
+enabledControlObserver.observe(elements.enabled, { attributes: true, attributeFilter: ['disabled'] });
+
 function checkbox(container, name, id, label, detail = '') {
   const row = document.createElement('label');
   row.className = 'check-row';
@@ -115,6 +126,7 @@ function renderStatus(nativeStatus = {}) {
 }
 
 async function load() {
+  ensureEnabledControlInteractive();
   const state = await sendMessage({ type: 'GPTLOCK_GET_STATE' });
   elements.extensionVersion.textContent = state.extensionVersion || '';
   const policy = normalizePolicy(state.policy);
@@ -126,6 +138,7 @@ async function load() {
   document.querySelector(`input[name="mode"][value="${policy.strictMode}"]`).checked = true;
   elements.preferredReasoning.value = loadedSettings.preferredReasoning;
   elements.enabled.checked = loadedSettings.enabled;
+  ensureEnabledControlInteractive();
   elements.networkVerification.checked = loadedSettings.networkVerificationEnabled;
   elements.autoAlignSelection.checked = loadedSettings.autoAlignSelection;
   renderStatus(state.nativeStatus);
@@ -204,6 +217,9 @@ elements.logs.addEventListener('click', () => {
 elements.installCore.addEventListener('click', () => {
   void chrome.tabs.create({ url: RELEASES_URL });
 });
+
+window.addEventListener('pageshow', ensureEnabledControlInteractive);
+window.addEventListener('unload', () => enabledControlObserver.disconnect(), { once: true });
 
 void load().catch((error) => {
   renderStatus({ connected: false, lastError: error.message });

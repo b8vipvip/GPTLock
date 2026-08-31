@@ -1,5 +1,7 @@
 const SETTINGS_RUNTIME_KEY = 'gptlockSettingsRuntimeInfo';
-const SETTINGS_REVISION = 'v0519-license-ui-purge-1';
+const UPDATE_STATUS_KEY = 'gptlockUiUpdateStatus';
+const SETTINGS_REVISION = 'v0521-settings-state-repair-1';
+const SAFE_CORE_RECONCILE_PHASES = new Set(['idle', 'checking', 'ready', 'up_to_date', 'error']);
 
 const LEGACY_LICENSE_SELECTORS = [
   '.license-card',
@@ -45,6 +47,47 @@ function removeLegacyLicenseUi() {
   return removed;
 }
 
+function getRuntimeState() {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ type: 'GPTLOCK_GET_STATE' }, (response) => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else if (!response?.ok) reject(new Error(response?.error || 'Extension request failed'));
+      else resolve(response.data);
+    });
+  });
+}
+
+let coreReconcileRunning = false;
+async function reconcileDisplayedCoreVersion() {
+  if (coreReconcileRunning) return;
+  coreReconcileRunning = true;
+  try {
+    const state = await getRuntimeState();
+    const nativeVersion = state?.nativeStatus?.connected ? state.nativeStatus.version : null;
+    if (!nativeVersion) return;
+
+    const coreNode = document.getElementById('updateCoreVersion');
+    if (coreNode) coreNode.textContent = nativeVersion;
+
+    const stored = await chrome.storage.local.get(UPDATE_STATUS_KEY);
+    const status = stored[UPDATE_STATUS_KEY];
+    if (!status || !SAFE_CORE_RECONCILE_PHASES.has(status.phase)) return;
+    if (status.nativeVersion === nativeVersion) return;
+    await chrome.storage.local.set({
+      [UPDATE_STATUS_KEY]: {
+        ...status,
+        nativeVersion,
+        coreVersionReconciledAt: new Date().toISOString(),
+      },
+    });
+  } catch {
+    // The normal options/update modules remain authoritative; reconciliation is best effort.
+  } finally {
+    coreReconcileRunning = false;
+  }
+}
+
 async function persistRuntimeFingerprint() {
   try {
     await chrome.storage.local.set({
@@ -66,7 +109,18 @@ async function persistRuntimeFingerprint() {
 
 removeLegacyLicenseUi();
 void persistRuntimeFingerprint();
+void reconcileDisplayedCoreVersion();
+
 const observer = new MutationObserver(() => removeLegacyLicenseUi());
 observer.observe(document.documentElement, { childList: true, subtree: true });
-window.addEventListener('pageshow', () => removeLegacyLicenseUi());
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local' || !changes[UPDATE_STATUS_KEY]) return;
+  window.setTimeout(() => void reconcileDisplayedCoreVersion(), 0);
+});
+
+window.addEventListener('pageshow', () => {
+  removeLegacyLicenseUi();
+  void reconcileDisplayedCoreVersion();
+});
 window.addEventListener('unload', () => observer.disconnect(), { once: true });

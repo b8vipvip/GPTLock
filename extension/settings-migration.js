@@ -1,7 +1,8 @@
-export const CURRENT_SETTINGS_PAGE = 'settings-v0519.html';
+export const CURRENT_SETTINGS_PAGE = 'settings-v0521.html';
 export const LEGACY_SETTINGS_PAGES = new Set([
   'options.html',
   'settings-v0517.html',
+  'settings-v0519.html',
 ]);
 
 function extensionPageName(url) {
@@ -39,8 +40,8 @@ function runMigration() {
 
 // A runtime reload after an in-place update can leave an already-open extension page
 // rendered with its old DOM. Run immediately when the new service worker starts, and
-// again on install/startup, so stale License-era settings tabs are navigated to the
-// current cache-busted settings document without requiring the user to close them.
+// again on install/startup, so stale settings tabs are navigated to the current
+// cache-busted settings document without requiring the user to close them.
 runMigration();
 chrome.runtime.onInstalled.addListener(runMigration);
 chrome.runtime.onStartup.addListener(runMigration);
