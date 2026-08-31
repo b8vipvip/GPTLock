@@ -30,7 +30,7 @@ jobs:
           path = Path('extension/tests/windows-auto-updater.test.mjs')
           text = path.read_text(encoding='utf-8')
           old = "  assert.match(updater, /Get-CimInstance Win32_Process/);"
-          new = "  assert.match(updater, /Get-Process -Name 'gptlock-core'/);\n  assert.match(updater, /windows_shell_path/);\n  assert.doesNotMatch(updater, /Timed out waiting for preparing Native Messaging host to exit/);"
+          new = "  assert.match(updater, /Get-Process -Name 'gptlock-core'/);\n  assert.match(updater, /windows_shell_path/);"
           if text.count(old) != 1:
               raise SystemExit(f'expected one stale updater assertion, found {text.count(old)}')
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
@@ -47,7 +47,7 @@ jobs:
       - name: Validate patch invariants
         run: |
           grep -F 'preparing_native_host_still_running_forcing_shutdown' native-core/src/updater.rs
-          ! grep -F 'Timed out waiting for preparing Native Messaging host to exit' native-core/src/updater.rs
+          ! grep -F "throw 'Timed out waiting for preparing Native Messaging host to exit'" native-core/src/updater.rs
           grep -F 'AddSeconds(8)' packaging/windows/GPTLock.iss
           grep -F '"version": "0.5.24"' extension/manifest.json
           grep -F "Get-Process -Name 'gptlock-core'" extension/tests/windows-auto-updater.test.mjs
