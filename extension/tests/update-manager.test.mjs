@@ -21,11 +21,12 @@ test('normalizes and compares release versions', () => {
   assert.equal(compareVersions('bad', '0.4.0'), null);
 });
 
-test('requires the coordinated updater core baseline for Windows one-click installs', () => {
-  assert.equal(RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION, '0.5.22');
-  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.20'), false);
+test('requires the hardened updater core baseline for Windows one-click installs', () => {
+  assert.equal(RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION, '0.5.24');
   assert.equal(supportsReliableWindowsOneClickUpdate('0.5.21'), false);
-  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.22'), true);
+  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.22'), false);
+  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.23'), false);
+  assert.equal(supportsReliableWindowsOneClickUpdate('0.5.24'), true);
   assert.equal(supportsReliableWindowsOneClickUpdate('1.0.0'), true);
   assert.equal(supportsReliableWindowsOneClickUpdate('bad'), false);
   assert.equal(supportsReliableWindowsOneClickUpdate(null), false);
