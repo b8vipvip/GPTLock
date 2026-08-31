@@ -6,7 +6,7 @@
   "engines": { "node": ">=22.16.0" },
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check server.mjs && node --check account-system.mjs && node --check client-runtime-logs.mjs && node --check smtp-client.mjs && node --check runtime-log.mjs && node --check update-manager.mjs && node --check public/admin.js && node --check public/client-runtime-admin.js",
+    "check": "node --check server.mjs && node --check account-system.mjs && node --check client-runtime-logs.mjs && node --check smtp-client.mjs && node --check runtime-log.mjs && node --check update-manager.mjs && node --check site-account.mjs && node --check site-releases.mjs && node --check public/admin.js && node --check public/client-runtime-admin.js && node --check public/site.js",
     "test": "node --test test/*.test.mjs"
   }
 }

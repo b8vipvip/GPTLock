@@ -9,6 +9,7 @@ import {
 } from './update-manager.js';
 import { appendRuntimeLog } from './runtime-log.js';
 
+const GPTLOCK_PRODUCT_SITE_URL = 'https://gptlock.mv3.cn/';
 const NATIVE_HOST = 'com.gptlock.core';
 const DOWNLOAD_TIMEOUT_MS = 3 * 60 * 1000;
 const INSTALL_TIMEOUT_MS = 3 * 60 * 1000;
@@ -487,7 +488,7 @@ async function restoreStoredStatus() {
 }
 
 function openReleasePage() {
-  void chrome.tabs.create({ url: latestRelease?.releaseUrl || RELEASES_URL });
+  void chrome.tabs.create({ url: GPTLOCK_PRODUCT_SITE_URL });
 }
 
 el.check.addEventListener('click', () => void checkForUpdates().catch(() => {}));
