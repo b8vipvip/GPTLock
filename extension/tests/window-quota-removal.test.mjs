@@ -11,7 +11,7 @@ test('legacy License cannot become active and window count cannot gate GPTLock',
   ]);
   const manifest = JSON.parse(manifestText);
   const settings = await readFile(new URL(`../${manifest.options_ui.page}`, import.meta.url), 'utf8');
-  assert.equal(manifest.options_ui.page, 'settings-v0519.html');
+  assert.equal(manifest.options_ui.page, 'settings-v0521.html');
   assert.doesNotMatch(settings, /授权验证 \/ License|id="licenseCode"|GPTL-/);
   const gate = background.match(/function accountAllowsState\([^)]*\) \{[\s\S]*?\n\}/)?.[0] || '';
   assert.match(gate, /authenticated/);
