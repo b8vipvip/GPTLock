@@ -14,7 +14,7 @@ test('service worker migrates already-open legacy settings tabs to the current p
     readFile(migrationUrl, 'utf8'),
   ]);
 
-  assert.equal(manifest.version, '0.5.21');
+  assert.equal(manifest.version, '0.5.22');
   assert.equal(manifest.background.service_worker, 'background-entry.js');
   assert.equal(manifest.options_ui.page, 'settings-v0521.html');
   assert.match(entry, /import '\.\/settings-migration\.js';/);
