@@ -63,7 +63,8 @@ function openUpdateCenter(event) {
   event.preventDefault();
   event.stopPropagation();
   event.stopImmediatePropagation();
-  const url = chrome.runtime.getURL('settings-v0519.html#updates-auto');
+  const settingsPage = chrome.runtime.getManifest().options_ui?.page || 'settings-v0521.html';
+  const url = chrome.runtime.getURL(`${settingsPage}#updates-auto`);
   void chrome.tabs.create({ url }).then(() => window.close());
 }
 
