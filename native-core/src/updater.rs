@@ -299,25 +299,36 @@ fn write_update_coordinator_files(
         helper_log_path: helper_log.to_string_lossy().into_owned(),
     };
     fs::write(&script_path, coordinator_script()).with_context(|| {
-        format!("failed to write update coordinator: {}", script_path.display())
+        format!(
+            "failed to write update coordinator: {}",
+            script_path.display()
+        )
     })?;
     fs::write(
         &job_path,
         serde_json::to_vec_pretty(&job).context("serialize update coordinator job")?,
     )
-    .with_context(|| format!("failed to write update coordinator job: {}", job_path.display()))?;
+    .with_context(|| {
+        format!(
+            "failed to write update coordinator job: {}",
+            job_path.display()
+        )
+    })?;
     Ok((script_path, job_path))
 }
 
 #[cfg(windows)]
 fn windows_coordinator_command_line(script_path: &Path, job_path: &Path) -> Result<String> {
-    let script_path = script_path
-        .to_str()
-        .context("Windows coordinator path is not valid UTF-8 / Windows 协调器路径不是有效 UTF-8")?;
-    let job_path = job_path
-        .to_str()
-        .context("Windows update job path is not valid UTF-8 / Windows 更新任务路径不是有效 UTF-8")?;
-    if [script_path, job_path].iter().any(|value| value.contains('"')) {
+    let script_path = script_path.to_str().context(
+        "Windows coordinator path is not valid UTF-8 / Windows 协调器路径不是有效 UTF-8",
+    )?;
+    let job_path = job_path.to_str().context(
+        "Windows update job path is not valid UTF-8 / Windows 更新任务路径不是有效 UTF-8",
+    )?;
+    if [script_path, job_path]
+        .iter()
+        .any(|value| value.contains('"'))
+    {
         bail!("Windows update path contains an invalid quote / Windows 更新路径包含非法引号");
     }
     Ok(format!(
@@ -403,7 +414,12 @@ fn append_update_launcher_pid(helper_log_path: &Path, launcher_process_id: u32) 
         .create(true)
         .append(true)
         .open(helper_log_path)
-        .with_context(|| format!("failed to open update launch log: {}", helper_log_path.display()))?;
+        .with_context(|| {
+            format!(
+                "failed to open update launch log: {}",
+                helper_log_path.display()
+            )
+        })?;
     writeln!(file, "coordinator_pid={launcher_process_id}")
         .context("failed to append update coordinator PID")
 }
@@ -445,11 +461,7 @@ pub fn prepare_update(request: PrepareUpdateRequest) -> Result<PrepareUpdateResu
             &target_version,
             pid,
         )?;
-        write_update_launch_log(
-            &helper_log_path,
-            &installer_log_path,
-            &target_version,
-        )?;
+        write_update_launch_log(&helper_log_path, &installer_log_path, &target_version)?;
         let launcher_process_id = launch_coordinator_via_wmi(
             &coordinator_script_path,
             &coordinator_job_path,
