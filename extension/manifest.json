@@ -34,7 +34,8 @@
         "context-budget.js",
         "content.js",
         "model-catalog.js",
-        "model-auto-lock.js"
+        "model-auto-lock.js",
+        "context-remaining-indicator.js"
       ],
       "run_at": "document_idle"
     }
