@@ -47,7 +47,7 @@ test('learned real thread boundary uses the most conservative observed chat-scal
       hardLimitObservedMessages: 100,
     },
   });
-  assert.equal(result.percent, 30);
+  assert.ok(Math.abs(result.percent - 30) < 1e-9);
   assert.equal(result.metricCount, 3);
   assert.equal(result.source, 'learned-chatgpt-thread-boundary');
 });
