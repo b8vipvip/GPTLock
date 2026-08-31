@@ -1,0 +1,50 @@
+name: Finalize v0.5.24 Windows updater hardening
+
+on:
+  push:
+    branches:
+      - fix/windows-auto-update-path-v0524
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    if: ${{ !contains(github.event.head_commit.message, '[updater-v0524]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/windows-auto-update-path-v0524
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Apply updater hardening
+        run: python .github/scripts/fix_v0524.py
+      - name: Format Rust
+        run: cargo fmt --manifest-path native-core/Cargo.toml
+      - name: Run extension and server tests
+        working-directory: extension
+        run: npm test
+      - name: Check Native Core
+        run: |
+          cargo check --manifest-path native-core/Cargo.toml --locked
+          cargo test --manifest-path native-core/Cargo.toml --locked
+      - name: Validate patch invariants
+        run: |
+          grep -F 'preparing_native_host_still_running_forcing_shutdown' native-core/src/updater.rs
+          ! grep -F 'Timed out waiting for preparing Native Messaging host to exit' native-core/src/updater.rs
+          grep -F 'AddSeconds(8)' packaging/windows/GPTLock.iss
+          grep -F '"version": "0.5.24"' extension/manifest.json
+          git diff --check
+      - name: Commit finalized fix
+        run: |
+          rm .github/workflows/fix-windows-updater-v0524.yml
+          rm .github/scripts/fix_v0524.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: harden Windows updater path and core handoff [updater-v0524]'
+          git push origin HEAD:fix/windows-auto-update-path-v0524
