@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-test('Windows one-click updater launches installer outside the Native Messaging host job', async () => {
+test('Windows one-click updater coordinates Core shutdown outside the Native Messaging host job', async () => {
   const [updater, updateManager, installer] = await Promise.all([
     readFile(new URL('../../native-core/src/updater.rs', import.meta.url), 'utf8'),
     readFile(new URL('../update-manager.js', import.meta.url), 'utf8'),
@@ -12,15 +12,18 @@ test('Windows one-click updater launches installer outside the Native Messaging 
   assert.match(updater, /Win32_ProcessStartup/);
   assert.match(updater, /CREATE_BREAKAWAY_FROM_JOB/);
   assert.match(updater, /CreateFlags=\{CREATE_BREAKAWAY_FROM_JOB\}/);
-  assert.match(updater, /Win32_Process'; \$result=\$processClass\.Create/);
-  assert.match(updater, /launcher_strategy: "wmi_breakaway"/);
+  assert.match(updater, /launcher_strategy: "wmi_coordinator_breakaway"/);
+  assert.match(updater, /UPDATE_COORDINATOR_SCRIPT_NAME/);
+  assert.match(updater, /UPDATE_COORDINATOR_JOB_NAME/);
+  assert.match(updater, /Get-Process -Id \(\[int\]\$job\.currentPid\)/);
+  assert.match(updater, /while \(-not \$installer\.HasExited\)/);
+  assert.match(updater, /Stop-InstalledCoreProcesses/);
+  assert.match(updater, /Get-CimInstance Win32_Process/);
+  assert.match(updater, /installed_core_version_output/);
   assert.match(updater, /UPDATE_INSTALLER_LOG_NAME/);
-  assert.doesNotMatch(updater, /Start-Process -FilePath \$installer/);
   assert.doesNotMatch(updater, /CREATE_NEW_PROCESS_GROUP/);
-  assert.doesNotMatch(updater, /function Stop-GptLockCore/);
-  assert.doesNotMatch(updater, /Stop-Process -Id \{current_pid\}/);
 
   assert.match(installer, /function StopInstalledCoreProcesses\(\): Boolean;/);
   assert.match(installer, /function PrepareToInstall\(var NeedsRestart: Boolean\): String;/);
-  assert.match(updateManager, /RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION = '0\.5\.20'/);
+  assert.match(updateManager, /RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION = '0\.5\.22'/);
 });
