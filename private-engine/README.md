@@ -32,4 +32,6 @@ cargo test --manifest-path private-engine/Cargo.toml --all-targets
 cargo build --manifest-path private-engine/Cargo.toml --release
 ```
 
+Pull-request CI validates the private engine on both Linux and Windows and also verifies that the compiled engine is present in the platform installer/package without leaking its Rust source.
+
 The product release workflow builds this crate in the same private repository so no cross-repository source or artifact handoff is required.
