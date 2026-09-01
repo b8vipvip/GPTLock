@@ -5,10 +5,8 @@ use serde_json::{Map, Value};
 
 const MAX_WALK_DEPTH: usize = 14;
 const MAX_BODY_CHARS: usize = 16 * 1024 * 1024;
-const OFFICIAL_CONVERSATION_PATHS: [&str; 2] = [
-    "/backend-api/conversation",
-    "/backend-api/f/conversation",
-];
+const OFFICIAL_CONVERSATION_PATHS: [&str; 2] =
+    ["/backend-api/conversation", "/backend-api/f/conversation"];
 const MODEL_KEYS: [&str; 12] = [
     "model_slug",
     "modelslug",
@@ -41,12 +39,7 @@ const SKIPPED_CONTENT_KEYS: [&str; 7] = [
     "output_text",
     "arguments",
 ];
-const MODEL_HEADERS: [&str; 4] = [
-    "x-openai-model",
-    "openai-model",
-    "x-gpt-model",
-    "x-model",
-];
+const MODEL_HEADERS: [&str; 4] = ["x-openai-model", "openai-model", "x-gpt-model", "x-model"];
 const REASONING_HEADERS: [&str; 3] = [
     "x-openai-reasoning-effort",
     "x-reasoning-effort",
@@ -297,7 +290,11 @@ pub fn evaluate_request(input: &RequestEnvelope) -> RequestDecision {
         return decision;
     }
 
-    let Some(raw_model) = object.get("model").and_then(Value::as_str).map(str::to_string) else {
+    let Some(raw_model) = object
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
         decision.reason = "top_level_model_missing".to_string();
         return decision;
     };
@@ -371,9 +368,15 @@ pub fn evaluate_request(input: &RequestEnvelope) -> RequestDecision {
         .and_then(normalize_reasoning_level);
 
     if decision.changed {
-        decision.post_data = serde_json::to_string(&value).unwrap_or_else(|_| input.post_data.clone());
+        decision.post_data =
+            serde_json::to_string(&value).unwrap_or_else(|_| input.post_data.clone());
     }
-    decision.reason = if decision.changed { "rewritten" } else { "already_locked" }.to_string();
+    decision.reason = if decision.changed {
+        "rewritten"
+    } else {
+        "already_locked"
+    }
+    .to_string();
     decision
 }
 
@@ -404,7 +407,13 @@ fn path_score(path: &[String], key: &str, kind: &str) -> i32 {
         }
         return if path.len() <= 2 { 90 } else { 0 };
     }
-    if metadata { 115 } else if path.len() <= 3 { 95 } else { 0 }
+    if metadata {
+        115
+    } else if path.len() <= 3 {
+        95
+    } else {
+        0
+    }
 }
 
 fn walk_value(value: &Value, candidates: &mut CandidateSet, path: &mut Vec<String>, depth: usize) {
@@ -462,16 +471,30 @@ fn select_candidate(candidates: &[Candidate]) -> Selection {
     if candidates.is_empty() {
         return Selection::default();
     }
-    let best_score = candidates.iter().map(|candidate| candidate.score).max().unwrap_or_default();
+    let best_score = candidates
+        .iter()
+        .map(|candidate| candidate.score)
+        .max()
+        .unwrap_or_default();
     let strong: Vec<&Candidate> = candidates
         .iter()
         .filter(|candidate| candidate.score >= best_score - 10)
         .collect();
-    let values: BTreeSet<&str> = strong.iter().map(|candidate| candidate.value.as_str()).collect();
+    let values: BTreeSet<&str> = strong
+        .iter()
+        .map(|candidate| candidate.value.as_str())
+        .collect();
     if values.len() != 1 {
-        return Selection { value: None, conflict: true, path: None };
+        return Selection {
+            value: None,
+            conflict: true,
+            path: None,
+        };
     }
-    let best = candidates.iter().filter(|candidate| candidate.score == best_score).last();
+    let best = candidates
+        .iter()
+        .filter(|candidate| candidate.score == best_score)
+        .last();
     Selection {
         value: values.iter().next().map(|value| (*value).to_string()),
         conflict: false,
@@ -567,10 +590,18 @@ fn collect_embedded_stream_objects(value: &Value, objects: &mut Vec<Value>, dept
 fn inspect_body(body: &str, mime_type: &str) -> BodyInspection {
     let body_length = body.len();
     if body.is_empty() {
-        return BodyInspection { values: Vec::new(), body_length, body_format: "empty".to_string() };
+        return BodyInspection {
+            values: Vec::new(),
+            body_length,
+            body_format: "empty".to_string(),
+        };
     }
     if body.len() > MAX_BODY_CHARS {
-        return BodyInspection { values: Vec::new(), body_length, body_format: "too_large".to_string() };
+        return BodyInspection {
+            values: Vec::new(),
+            body_length,
+            body_format: "too_large".to_string(),
+        };
     }
 
     let trimmed = body.trim();
@@ -580,7 +611,10 @@ fn inspect_body(body: &str, mime_type: &str) -> BodyInspection {
         values.push(parsed);
         formats.push("json");
     }
-    if mime_type.to_ascii_lowercase().contains("event-stream") || trimmed.contains("\ndata:") || trimmed.starts_with("data:") {
+    if mime_type.to_ascii_lowercase().contains("event-stream")
+        || trimmed.contains("\ndata:")
+        || trimmed.starts_with("data:")
+    {
         let objects = parse_sse_objects(trimmed);
         if !objects.is_empty() {
             values.extend(objects);
@@ -612,11 +646,18 @@ fn inspect_body(body: &str, mime_type: &str) -> BodyInspection {
     BodyInspection {
         values,
         body_length,
-        body_format: if formats.is_empty() { "unparsed".to_string() } else { formats.join("+") },
+        body_format: if formats.is_empty() {
+            "unparsed".to_string()
+        } else {
+            formats.join("+")
+        },
     }
 }
 
-fn header_value(headers: &BTreeMap<String, String>, names: &[&str]) -> (Option<String>, Option<String>) {
+fn header_value(
+    headers: &BTreeMap<String, String>,
+    names: &[&str],
+) -> (Option<String>, Option<String>) {
     let normalized: BTreeMap<String, String> = headers
         .iter()
         .map(|(name, value)| (name.to_ascii_lowercase(), value.clone()))
@@ -633,10 +674,13 @@ pub fn evaluate_response(input: &ResponseEnvelope) -> EvidenceResult {
     let (raw_header_model, model_header) = header_value(&input.headers, &MODEL_HEADERS);
     let (raw_header_reasoning, reasoning_header) = header_value(&input.headers, &REASONING_HEADERS);
     let header_model = raw_header_model.as_deref().and_then(normalize_model_id);
-    let header_reasoning = raw_header_reasoning.as_deref().and_then(normalize_reasoning_level);
+    let header_reasoning = raw_header_reasoning
+        .as_deref()
+        .and_then(normalize_reasoning_level);
 
     let inspected = inspect_body(&input.body, &input.mime_type);
-    let (body_model, body_reasoning, model_count, reasoning_count) = inspect_objects(&inspected.values);
+    let (body_model, body_reasoning, model_count, reasoning_count) =
+        inspect_objects(&inspected.values);
 
     let model_conflict = body_model.conflict
         || match (&header_model, &body_model.value) {
@@ -649,16 +693,30 @@ pub fn evaluate_response(input: &ResponseEnvelope) -> EvidenceResult {
             _ => false,
         };
 
-    let model = if model_conflict { None } else { header_model.or(body_model.value) };
-    let reasoning = if reasoning_conflict { None } else { header_reasoning.or(body_reasoning.value) };
+    let model = if model_conflict {
+        None
+    } else {
+        header_model.or(body_model.value)
+    };
+    let reasoning = if reasoning_conflict {
+        None
+    } else {
+        header_reasoning.or(body_reasoning.value)
+    };
     let model_field = model_header.clone().or(body_model.path);
     let reasoning_field = reasoning_header.clone().or(body_reasoning.path);
 
     EvidenceResult {
         model,
         reasoning,
-        conflicts: EvidenceConflicts { model: model_conflict, reasoning: reasoning_conflict },
-        fields: EvidenceFields { model: model_field, reasoning: reasoning_field },
+        conflicts: EvidenceConflicts {
+            model: model_conflict,
+            reasoning: reasoning_conflict,
+        },
+        fields: EvidenceFields {
+            model: model_field,
+            reasoning: reasoning_field,
+        },
         evidence_source: "network_response_metadata".to_string(),
         diagnostics: EvidenceDiagnostics {
             body_length: inspected.body_length,
@@ -666,7 +724,10 @@ pub fn evaluate_response(input: &ResponseEnvelope) -> EvidenceResult {
             parsed_object_count: inspected.values.len(),
             model_candidate_count: model_count,
             reasoning_candidate_count: reasoning_count,
-            matched_header_fields: [model_header, reasoning_header].into_iter().flatten().collect(),
+            matched_header_fields: [model_header, reasoning_header]
+                .into_iter()
+                .flatten()
+                .collect(),
         },
     }
 }
@@ -682,19 +743,34 @@ fn ratio_remaining(current: Option<u64>, observed_limit: Option<u64>) -> Option<
 
 pub fn context_remaining(snapshot: &ContextSnapshot, profile: &ContextProfile) -> ContextRemaining {
     if snapshot.hard_limit_visible {
-        return ContextRemaining { percent: 0.0, source: "chatgpt-visible-hard-limit".to_string() };
+        return ContextRemaining {
+            percent: 0.0,
+            source: "chatgpt-visible-hard-limit".to_string(),
+        };
     }
 
     let learned: Vec<f64> = [
-        ratio_remaining(snapshot.cumulative_tokens, profile.hard_limit_observed_tokens),
-        ratio_remaining(snapshot.cumulative_characters, profile.hard_limit_observed_characters),
-        ratio_remaining(snapshot.cumulative_messages, profile.hard_limit_observed_messages),
+        ratio_remaining(
+            snapshot.cumulative_tokens,
+            profile.hard_limit_observed_tokens,
+        ),
+        ratio_remaining(
+            snapshot.cumulative_characters,
+            profile.hard_limit_observed_characters,
+        ),
+        ratio_remaining(
+            snapshot.cumulative_messages,
+            profile.hard_limit_observed_messages,
+        ),
     ]
     .into_iter()
     .flatten()
     .collect();
     if let Some(percent) = learned.into_iter().reduce(f64::min) {
-        return ContextRemaining { percent, source: "learned-chat-boundary".to_string() };
+        return ContextRemaining {
+            percent,
+            source: "learned-chat-boundary".to_string(),
+        };
     }
 
     if let (Some(remaining), Some(limit)) = (
@@ -709,7 +785,10 @@ pub fn context_remaining(snapshot: &ContextSnapshot, profile: &ContextProfile) -
         }
     }
 
-    ContextRemaining { percent: 100.0, source: "unknown".to_string() }
+    ContextRemaining {
+        percent: 100.0,
+        source: "unknown".to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -723,7 +802,8 @@ mod tests {
             host: "chatgpt.com".into(),
             path: "/backend-api/conversation".into(),
             method: "POST".into(),
-            post_data: json!({"model":"gpt-5.5","reasoning_effort":"medium","messages":[]}).to_string(),
+            post_data: json!({"model":"gpt-5.5","reasoning_effort":"medium","messages":[]})
+                .to_string(),
             locked_models: vec!["gpt-5.6-sol".into()],
             allowed_reasoning_levels: vec!["high".into()],
             preferred_reasoning: Some("high".into()),
@@ -743,7 +823,8 @@ mod tests {
             body: json!({
                 "message": {"content": {"parts": ["model: gpt-5.6-sol"]}},
                 "metadata": {"served_model_slug":"gpt-5.5", "reasoning_effort":"high"}
-            }).to_string(),
+            })
+            .to_string(),
             headers: BTreeMap::new(),
             mime_type: "application/json".into(),
         };
@@ -761,7 +842,8 @@ mod tests {
                     "resolved_model_slug":"gpt-5.6-sol-wm",
                     "reasoning_effort":"high"
                 }
-            }).to_string(),
+            })
+            .to_string(),
             headers: BTreeMap::new(),
             mime_type: "application/json".into(),
         };

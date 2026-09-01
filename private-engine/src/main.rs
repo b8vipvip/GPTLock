@@ -22,7 +22,10 @@ fn read_frame<R: Read>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
     }
     let length = u32::from_le_bytes(length) as usize;
     if length == 0 || length > MAX_FRAME_BYTES {
-        return Err(io::Error::new(ErrorKind::InvalidData, "invalid frame length"));
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "invalid frame length",
+        ));
     }
     let mut payload = vec![0_u8; length];
     reader.read_exact(&mut payload)?;
@@ -33,7 +36,10 @@ fn write_frame<W: Write>(writer: &mut W, value: &Value) -> io::Result<()> {
     let payload = serde_json::to_vec(value)
         .map_err(|error| io::Error::new(ErrorKind::InvalidData, error.to_string()))?;
     if payload.len() > MAX_FRAME_BYTES {
-        return Err(io::Error::new(ErrorKind::InvalidData, "response frame too large"));
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "response frame too large",
+        ));
     }
     writer.write_all(&(payload.len() as u32).to_le_bytes())?;
     writer.write_all(&payload)?;
@@ -120,7 +126,11 @@ fn evaluate_context_payload(payload: Value) -> Result<Value, String> {
 fn handle(message: Value) -> Value {
     let id = message.get("id").cloned().unwrap_or(Value::Null);
     if message.get("protocolVersion").and_then(Value::as_u64) != Some(PROTOCOL_VERSION) {
-        return error(id, "unsupported_protocol", "unsupported core bridge protocol version");
+        return error(
+            id,
+            "unsupported_protocol",
+            "unsupported core bridge protocol version",
+        );
     }
     let Some(kind) = message.get("type").and_then(Value::as_str) else {
         return error(id, "invalid_message", "missing message type");
@@ -170,7 +180,10 @@ fn main() -> io::Result<()> {
         let message = match serde_json::from_slice::<Value>(&frame) {
             Ok(value) => value,
             Err(error_value) => {
-                write_frame(&mut writer, &error(Value::Null, "invalid_json", error_value.to_string()))?;
+                write_frame(
+                    &mut writer,
+                    &error(Value::Null, "invalid_json", error_value.to_string()),
+                )?;
                 continue;
             }
         };
@@ -280,8 +293,14 @@ mod tests {
     fn top_level_patch_diff_is_generic() {
         let patches = request_patches("{\"a\":1,\"b\":2}", "{\"a\":3,\"c\":4}");
         assert_eq!(patches.len(), 3);
-        assert!(patches.iter().any(|patch| patch["op"] == "replace" && patch["path"] == json!(["a"])));
-        assert!(patches.iter().any(|patch| patch["op"] == "remove" && patch["path"] == json!(["b"])));
-        assert!(patches.iter().any(|patch| patch["op"] == "add" && patch["path"] == json!(["c"])));
+        assert!(patches
+            .iter()
+            .any(|patch| patch["op"] == "replace" && patch["path"] == json!(["a"])));
+        assert!(patches
+            .iter()
+            .any(|patch| patch["op"] == "remove" && patch["path"] == json!(["b"])));
+        assert!(patches
+            .iter()
+            .any(|patch| patch["op"] == "add" && patch["path"] == json!(["c"])));
     }
 }

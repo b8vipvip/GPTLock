@@ -76,10 +76,9 @@ fn normalize_model(value: Option<&str>) -> Option<String> {
     if value.is_empty() || value.len() > 128 {
         return None;
     }
-    if !value
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | ':' | '-'))
-    {
+    if !value.chars().all(|character| {
+        character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | ':' | '-')
+    }) {
         return None;
     }
     Some(match value.as_str() {
@@ -95,7 +94,8 @@ fn model_window(model: Option<&str>) -> (u64, &'static str) {
     if model.starts_with("gpt-5.4-mini") || model.starts_with("gpt-5.4-nano") {
         return (400_000, "model-window");
     }
-    if model.starts_with("gpt-5.6") || model.starts_with("gpt-5.5") || model.starts_with("gpt-5.4") {
+    if model.starts_with("gpt-5.6") || model.starts_with("gpt-5.5") || model.starts_with("gpt-5.4")
+    {
         return (1_050_000, "model-window");
     }
     (DEFAULT_CONTEXT_WINDOW_TOKENS, "conservative-fallback")
@@ -197,17 +197,19 @@ pub fn evaluate_context_budget(input: &ContextBudgetInput) -> Result<ContextBudg
     };
     let reserve_tokens = reserve_tokens(reserve_basis);
 
-    let history_tokens = input
-        .history
-        .iter()
-        .fold(0_u64, |total, part| total.saturating_add(part_tokens(part, true)));
+    let history_tokens = input.history.iter().fold(0_u64, |total, part| {
+        total.saturating_add(part_tokens(part, true))
+    });
     let draft_tokens = part_tokens(&input.draft, !input.draft.text.trim().is_empty());
     let used_tokens = history_tokens.saturating_add(draft_tokens);
     let projected_tokens = used_tokens.saturating_add(reserve_tokens);
     let remaining_tokens = safe_limit_tokens.saturating_sub(used_tokens);
-    let percent_used = ((used_tokens as f64 / safe_limit_tokens as f64) * 100.0).min(MAX_DISPLAY_PERCENT);
-    let projected_percent = ((projected_tokens as f64 / safe_limit_tokens as f64) * 100.0).min(MAX_DISPLAY_PERCENT);
-    let remaining_percent = ((remaining_tokens as f64 / safe_limit_tokens as f64) * 100.0).clamp(0.0, 100.0);
+    let percent_used =
+        ((used_tokens as f64 / safe_limit_tokens as f64) * 100.0).min(MAX_DISPLAY_PERCENT);
+    let projected_percent =
+        ((projected_tokens as f64 / safe_limit_tokens as f64) * 100.0).min(MAX_DISPLAY_PERCENT);
+    let remaining_percent =
+        ((remaining_tokens as f64 / safe_limit_tokens as f64) * 100.0).clamp(0.0, 100.0);
 
     Ok(ContextBudgetResult {
         nominal_limit_tokens,
