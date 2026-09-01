@@ -79,11 +79,12 @@ function contentType(name) {
 }
 
 function generationFor(releases) {
-  const fingerprint = releases.map((release) => ({
-    tag: release.tag,
-    publishedAt: release.publishedAt,
-    assets: release.assets.map((asset) => [asset.name, asset.digest, asset.size]),
-  }));
+  const latest = releases[0] || null;
+  const fingerprint = latest ? {
+    tag: latest.tag,
+    publishedAt: latest.publishedAt,
+    assets: latest.assets.map((asset) => [asset.name, asset.digest, asset.size]),
+  } : null;
   return createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex').slice(0, 24);
 }
 
@@ -235,8 +236,21 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
     });
     if (!response.ok) throw new Error(`GitHub release feed returned ${response.status}`);
     const rows = safeReleaseRows(await response.json());
-    const releases = [];
-    for (const row of rows) releases.push(await mirrorRelease(row));
+    if (!rows.length) return publishIndex([]);
+
+    // The newest formal release is authoritative. It must mirror completely before
+    // clients are notified, but historical archive failures must never block it.
+    const releases = [await mirrorRelease(rows[0])];
+    publishIndex(releases);
+
+    for (const row of rows.slice(1)) {
+      try {
+        releases.push(await mirrorRelease(row));
+      } catch {
+        // Historical releases are best-effort archive data. Their failure does not
+        // roll back or delay an already verified newest release.
+      }
+    }
     return publishIndex(releases);
   }
 
