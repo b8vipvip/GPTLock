@@ -3,6 +3,26 @@ import { createCoreBridgeRequest, parseCoreBridgeResponse } from './core-bridge.
 const NATIVE_HOST = 'com.gptlock.core';
 const REQUEST_TIMEOUT_MS = 4500;
 const CAPABILITY_TTL_MS = 30_000;
+const PRIVATE_ENGINE_FEATURES = Object.freeze([
+  'requestEvaluation',
+  'responseEvaluation',
+  'contextEvaluation',
+  'contextBudgetEvaluation',
+  'compactRequestPatches',
+]);
+
+export function normalizePrivateEngineCapabilities(response) {
+  const engine = response?.ok === true && response?.data?.privateEngine && typeof response.data.privateEngine === 'object'
+    ? response.data.privateEngine
+    : {};
+  const capability = {
+    available: engine.available === true && Number(engine.protocolVersion) === 2,
+    protocolVersion: Number(engine.protocolVersion) === 2 ? 2 : null,
+    capabilityProbe: engine.capabilityProbe === true,
+  };
+  for (const feature of PRIVATE_ENGINE_FEATURES) capability[feature] = engine[feature] === true;
+  return capability;
+}
 
 export class PrivateCoreChannel {
   constructor() {
@@ -63,24 +83,31 @@ export class PrivateCoreChannel {
     });
   }
 
-  async isAvailable() {
+  async capabilities() {
     const now = Date.now();
     if (this.capabilityCache && this.capabilityCache.expiresAt > now) {
-      return this.capabilityCache.available;
+      return this.capabilityCache.data;
     }
     try {
       const response = await this.requestRaw({ id: this.nextId('cap'), type: 'get_capabilities' });
-      const available = Boolean(
-        response?.ok === true
-          && response?.data?.privateEngine?.available === true
-          && response?.data?.privateEngine?.protocolVersion === 2,
-      );
-      this.capabilityCache = { available, expiresAt: now + CAPABILITY_TTL_MS };
-      return available;
+      const data = normalizePrivateEngineCapabilities(response);
+      this.capabilityCache = { data, expiresAt: now + CAPABILITY_TTL_MS };
+      return data;
     } catch {
-      this.capabilityCache = { available: false, expiresAt: now + Math.min(CAPABILITY_TTL_MS, 5000) };
-      return false;
+      const data = normalizePrivateEngineCapabilities(null);
+      this.capabilityCache = { data, expiresAt: now + Math.min(CAPABILITY_TTL_MS, 5000) };
+      return data;
     }
+  }
+
+  async isAvailable() {
+    return (await this.capabilities()).available;
+  }
+
+  async supports(feature) {
+    if (!PRIVATE_ENGINE_FEATURES.includes(feature)) return false;
+    const capability = await this.capabilities();
+    return capability.available && capability.capabilityProbe && capability[feature] === true;
   }
 
   async request(type, payload, prefix = 'private') {

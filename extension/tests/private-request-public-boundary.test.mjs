@@ -6,7 +6,7 @@ const files = [
   new URL('../private-core-channel.js', import.meta.url),
   new URL('../private-context-bridge.js', import.meta.url),
   new URL('../private-context-indicator.js', import.meta.url),
-  new URL('../private-context-budget-shadow.js', import.meta.url),
+  new URL('../private-context-budget-authority.js', import.meta.url),
   new URL('../private-request-hook.js', import.meta.url),
   new URL('../private-request-routing.js', import.meta.url),
   new URL('../private-response-hook.js', import.meta.url),

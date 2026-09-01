@@ -102,6 +102,8 @@
   let lastHardLimitNotice = null;
   let hardLimitLearningInFlight = false;
   let lastHardLimitFingerprint = null;
+  let privateSendCheckInFlight = false;
+  let privateAuthorityReplayUntil = 0;
 
   function normalizeModelId(value) {
     const model = String(value ?? '').trim().toLowerCase();
@@ -294,10 +296,12 @@
     let tokens = 0;
     let characters = 0;
     let countedMessages = 0;
+    const privateHistoryParts = [];
     for (const message of messages) {
       const text = conversationMessageText(message);
       const media = conversationMessageMediaCounts(message);
       if (!text && media.images === 0 && media.attachments === 0) continue;
+      privateHistoryParts.push({ text, images: media.images, attachments: media.attachments });
       characters += text.length;
       tokens += estimateTextTokens(text)
         + (media.images * IMAGE_TOKEN_ESTIMATE)
@@ -311,6 +315,7 @@
       characters: Math.max(0, Math.ceil(characters)),
       messageCount: countedMessages,
       currentNode: payload?.current_node ? String(payload.current_node).slice(0, 256) : null,
+      privateHistoryParts,
     };
   }
 
@@ -534,6 +539,28 @@
     };
   }
 
+  function privateHistorySnapshot() {
+    const conversationKey = currentConversationKey();
+    const cacheFresh = Boolean(
+      conversationMetricsCache
+      && conversationMetricsCache.conversationKey === conversationKey
+      && Date.now() - conversationMetricsCheckedAt <= CONVERSATION_METRICS_MAX_AGE_MS
+      && Array.isArray(conversationMetricsCache.privateHistoryParts)
+      && conversationMetricsCache.privateHistoryParts.length > 0
+    );
+    if (!cacheFresh) return null;
+    return {
+      conversationKey,
+      model: detectModel(),
+      measuredAt: conversationMetricsCache.measuredAt || null,
+      history: conversationMetricsCache.privateHistoryParts.map((part) => ({
+        text: typeof part?.text === 'string' ? part.text : '',
+        images: Math.max(0, Number(part?.images) || 0),
+        attachments: Math.max(0, Number(part?.attachments) || 0),
+      })),
+    };
+  }
+
   const api = {
     contextWindowForModel,
     estimateTextTokens,
@@ -549,6 +576,11 @@
     buildContextCheckpoint,
     serializePendingBypassRecord,
     restorePendingBypassRecord,
+    privateHistorySnapshot,
+    refreshPrivateHistory: async () => {
+      await refreshConversationMetrics(true);
+      return privateHistorySnapshot();
+    },
     snapshot: () => lastSnapshot,
     learningProfile: () => activeProfile,
     checkpoint: () => restoredCheckpoint,
@@ -997,9 +1029,11 @@
   }
 
   function indicatorDetail(snapshot) {
-    const source = snapshot.contextWindowSource === 'openai-api-model-window'
-      ? '公开模型窗口'
-      : '保守回退窗口';
+    const source = snapshot.budgetAuthority === 'private-engine'
+      ? '本地私有核心'
+      : snapshot.contextWindowSource === 'openai-api-model-window'
+        ? '公开模型窗口'
+        : '保守回退窗口';
     const rows = [
       `上下文额度：${snapshot.percent.toFixed(1)}%（本地完整聊天估算）`,
       `当前完整聊天：约 ${formatCompactTokens(snapshot.fullConversationTokens)} tokens · ${formatCompactNumber(snapshot.fullConversationCharacters)} 字符 · ${snapshot.messageCount} 条消息 · ${snapshot.historyMeasurementSource === 'conversation-tree+dom-reconcile' ? '完整活动分支' : 'DOM 回退'}`,
@@ -1074,6 +1108,10 @@
   }
 
   function publishSnapshot(next) {
+    const authority = globalThis.__GPTLOCK_PRIVATE_CONTEXT_BUDGET_AUTHORITY__;
+    if (authority?.applyToSnapshot) {
+      try { next = authority.applyToSnapshot(next) || next; } catch { /* compatibility fallback */ }
+    }
     const previousFingerprint = lastSnapshot
       ? `${Math.round(lastSnapshot.percent * 10)}:${lastSnapshot.model}:${lastSnapshot.messageCount}:${lastSnapshot.wouldExceed}:${lastSnapshot.safeLimitTokens}`
       : '';
@@ -1206,6 +1244,18 @@
     if (form?.requestSubmit) form.requestSubmit();
   }
 
+  function replayPotentialSend() {
+    privateAuthorityReplayUntil = Date.now() + 1_500;
+    const button = findSendButton();
+    if (button) {
+      button.click();
+      return;
+    }
+    const composer = findComposer();
+    const form = composer?.closest('form');
+    if (form?.requestSubmit) form.requestSubmit();
+  }
+
   function showContextWarning(snapshot) {
     closeWarning();
     warningSnapshot = snapshot;
@@ -1244,10 +1294,46 @@
       sendAllowedAt = now;
       return true;
     }
+    if (privateAuthorityReplayUntil > now) {
+      privateAuthorityReplayUntil = 0;
+      sendAllowedAt = now;
+      return true;
+    }
     if (bypassUntil > now) {
       bypassUntil = 0;
       sendAllowedAt = now;
       return true;
+    }
+
+    const authority = globalThis.__GPTLOCK_PRIVATE_CONTEXT_BUDGET_AUTHORITY__;
+    if (authority?.shouldGuardSend?.()) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      if (privateSendCheckInFlight) return false;
+      privateSendCheckInFlight = true;
+      void authority.evaluateForSend().then((outcome) => {
+        if (outcome?.ok && outcome.result) {
+          let next = snapshotNow();
+          next = authority.applyResultToSnapshot?.(next, outcome.result, outcome) || next;
+          publishSnapshot(next);
+          if (next.wouldExceed) showContextWarning(next);
+          else replayPotentialSend();
+          return;
+        }
+        recompute();
+        const fallback = lastSnapshot;
+        if (fallback?.wouldExceed) showContextWarning(fallback);
+        else replayPotentialSend();
+      }).catch(() => {
+        recompute();
+        const fallback = lastSnapshot;
+        if (fallback?.wouldExceed) showContextWarning(fallback);
+        else replayPotentialSend();
+      }).finally(() => {
+        privateSendCheckInFlight = false;
+      });
+      return false;
     }
 
     recompute();
