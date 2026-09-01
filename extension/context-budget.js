@@ -1,17 +1,4 @@
 (() => {
-  const MODEL_CONTEXT_WINDOWS = Object.freeze([
-    { pattern: /^gpt-5\.6(?:-|$)/, tokens: 1_050_000, source: 'openai-api-model-window' },
-    { pattern: /^gpt-5\.5(?:-|$)/, tokens: 1_050_000, source: 'openai-api-model-window' },
-    { pattern: /^gpt-5\.4-(?:mini|nano)(?:-|$)/, tokens: 400_000, source: 'openai-api-model-window' },
-    { pattern: /^gpt-5\.4(?:-|$)/, tokens: 1_050_000, source: 'openai-api-model-window' },
-  ]);
-  const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
-  const SAFETY_BUDGET_RATIO = 0.88;
-  const WARNING_PERCENT = 80;
-  const MAX_DISPLAY_PERCENT = 999;
-  const MESSAGE_OVERHEAD_TOKENS = 14;
-  const IMAGE_TOKEN_ESTIMATE = 1_200;
-  const ATTACHMENT_TOKEN_ESTIMATE = 4_000;
   const REFRESH_DEBOUNCE_MS = 220;
   const PERIODIC_REFRESH_MS = 1_500;
   const SEND_DEDUPE_MS = 750;
@@ -23,10 +10,6 @@
   const CONVERSATION_FETCH_TIMEOUT_MS = 5_000;
   const CONVERSATION_METRICS_REFRESH_MS = 5_000;
   const CONVERSATION_METRICS_MAX_AGE_MS = 30_000;
-  const LEARNING_HEADROOM_RATIO = 0.06;
-  const LEARNING_HEADROOM_MIN_TOKENS = 8_192;
-  const LEARNING_HEADROOM_MAX_TOKENS = 128_000;
-  const MAX_ADAPTIVE_LIMIT_TOKENS = 16_000_000;
   const CONTEXT_PROFILE_STORAGE_PREFIX = 'gptlock.context-profile.v1:';
   const CONTEXT_STATE_STORAGE_PREFIX = 'gptlock.context-state.v1:';
   const PENDING_BYPASS_STORAGE_PREFIX = 'gptlock.context-pending-bypass.v1:';
@@ -113,122 +96,10 @@
     return /^[a-z0-9._:-]{1,128}$/.test(model) ? model : null;
   }
 
-  function contextWindowForModel(value) {
-    const model = normalizeModelId(value);
-    if (model) {
-      const matched = MODEL_CONTEXT_WINDOWS.find(({ pattern }) => pattern.test(model));
-      if (matched) return { model, tokens: matched.tokens, source: matched.source };
-    }
-    return {
-      model,
-      tokens: DEFAULT_CONTEXT_WINDOW_TOKENS,
-      source: 'conservative-fallback',
-    };
-  }
-
-  function estimateTextTokens(value) {
-    const text = String(value ?? '');
-    if (!text) return 0;
-    let cjk = 0;
-    let ascii = 0;
-    let emoji = 0;
-    let other = 0;
-    let lineBreaks = 0;
-
-    for (const char of text) {
-      const code = char.codePointAt(0) ?? 0;
-      if (char === '\n') lineBreaks += 1;
-      if (
-        (code >= 0x3400 && code <= 0x9fff)
-        || (code >= 0x3040 && code <= 0x30ff)
-        || (code >= 0xac00 && code <= 0xd7af)
-      ) {
-        cjk += 1;
-      } else if (
-        (code >= 0x1f000 && code <= 0x1faff)
-        || (code >= 0x2600 && code <= 0x27bf)
-      ) {
-        emoji += 1;
-      } else if (code <= 0x7f) {
-        ascii += 1;
-      } else if (!/\s/u.test(char)) {
-        other += 1;
-      }
-    }
-
-    return Math.max(1, Math.ceil(
-      (cjk * 1.12)
-      + (ascii / 3.65)
-      + (emoji * 2.2)
-      + (other * 1.35)
-      + (lineBreaks * 0.18)
-    ));
-  }
-
-  function reserveTokensForWindow(contextLimitTokens) {
-    return Math.min(64_000, Math.max(8_192, Math.round(contextLimitTokens * 0.04)));
-  }
-
-  function learningHeadroomTokens(confirmedConversationTokens) {
-    const confirmed = Math.max(0, Number(confirmedConversationTokens) || 0);
-    return Math.min(
-      LEARNING_HEADROOM_MAX_TOKENS,
-      Math.max(LEARNING_HEADROOM_MIN_TOKENS, Math.round(confirmed * LEARNING_HEADROOM_RATIO)),
-    );
-  }
-
-  function clampAdaptiveLimit(value) {
-    return Math.min(
-      MAX_ADAPTIVE_LIMIT_TOKENS,
-      Math.max(0, Math.ceil(Number(value) || 0)),
-    );
-  }
-
-  function computeBudget({
-    historyTokens = 0,
-    draftTokens = 0,
-    contextLimitTokens = DEFAULT_CONTEXT_WINDOW_TOKENS,
-    adaptiveSafeLimitTokens = 0,
-    hardLimitUpperBoundTokens = 0,
-    confirmedLowerBoundTokens = 0,
-  } = {}) {
-    const nominalLimit = Math.max(16_000, Number(contextLimitTokens) || DEFAULT_CONTEXT_WINDOW_TOKENS);
-    const baseSafeLimitTokens = Math.floor(nominalLimit * SAFETY_BUDGET_RATIO);
-    const learnedSafeLimitTokens = clampAdaptiveLimit(adaptiveSafeLimitTokens);
-    const confirmedLower = clampAdaptiveLimit(confirmedLowerBoundTokens);
-    const learnedHardUpper = clampAdaptiveLimit(hardLimitUpperBoundTokens);
-    const hardLimitUsable = learnedHardUpper > confirmedLower;
-    const unconstrainedSafeLimitTokens = Math.max(baseSafeLimitTokens, learnedSafeLimitTokens);
-    const safeLimitTokens = hardLimitUsable
-      ? Math.max(16_000, confirmedLower, Math.min(unconstrainedSafeLimitTokens, learnedHardUpper))
-      : unconstrainedSafeLimitTokens;
-    const reserveBasis = hardLimitUsable ? safeLimitTokens : Math.max(nominalLimit, safeLimitTokens);
-    const reserveTokens = reserveTokensForWindow(reserveBasis);
-    const usedTokens = Math.max(0, Math.ceil(historyTokens + draftTokens));
-    const projectedTokens = usedTokens + reserveTokens;
-    const percent = Math.min(MAX_DISPLAY_PERCENT, (usedTokens / safeLimitTokens) * 100);
-    const projectedPercent = Math.min(MAX_DISPLAY_PERCENT, (projectedTokens / safeLimitTokens) * 100);
-    const remainingTokens = Math.max(0, safeLimitTokens - usedTokens);
-    return {
-      nominalLimitTokens: nominalLimit,
-      baseSafeLimitTokens,
-      adaptiveSafeLimitTokens: learnedSafeLimitTokens,
-      hardLimitUpperBoundTokens: learnedHardUpper,
-      confirmedLowerBoundTokens: confirmedLower,
-      safeLimitTokens,
-      reserveTokens,
-      historyTokens: Math.max(0, Math.ceil(historyTokens)),
-      draftTokens: Math.max(0, Math.ceil(draftTokens)),
-      usedTokens,
-      projectedTokens,
-      percent,
-      projectedPercent,
-      remainingTokens,
-      warning: percent >= WARNING_PERCENT,
-      wouldExceed: projectedTokens >= safeLimitTokens,
-      adaptiveActive: learnedSafeLimitTokens > baseSafeLimitTokens,
-      hardLimitActive: hardLimitUsable && safeLimitTokens <= learnedHardUpper,
-    };
+  function storedMetric(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number <= 0) return 0;
+    return Math.min(Number.MAX_SAFE_INTEGER, Math.ceil(number));
   }
 
   function conversationMessageText(message) {
@@ -294,7 +165,6 @@
   function extractConversationMetrics(payload) {
     const messages = activeConversationMessages(payload);
     if (!messages.length) return null;
-    let tokens = 0;
     let characters = 0;
     let countedMessages = 0;
     const privateHistoryParts = [];
@@ -304,15 +174,10 @@
       if (!text && media.images === 0 && media.attachments === 0) continue;
       privateHistoryParts.push({ text, images: media.images, attachments: media.attachments });
       characters += text.length;
-      tokens += estimateTextTokens(text)
-        + (media.images * IMAGE_TOKEN_ESTIMATE)
-        + (media.attachments * ATTACHMENT_TOKEN_ESTIMATE)
-        + MESSAGE_OVERHEAD_TOKENS;
       countedMessages += 1;
     }
     if (!countedMessages) return null;
     return {
-      tokens: Math.max(0, Math.ceil(tokens)),
       characters: Math.max(0, Math.ceil(characters)),
       messageCount: countedMessages,
       currentNode: payload?.current_node ? String(payload.current_node).slice(0, 256) : null,
@@ -442,47 +307,6 @@
     };
   }
 
-  function nextLearnedProfile({
-    previous = null,
-    accountScope,
-    accountScopeSource = 'unknown',
-    model,
-    confirmedConversationTokens,
-    confirmedCharacters = 0,
-    conversationKey = 'unknown',
-    measuredAt = new Date().toISOString(),
-    baseSafeLimitTokens = 0,
-  } = {}) {
-    const normalizedModel = normalizeModelId(model);
-    const confirmed = clampAdaptiveLimit(confirmedConversationTokens);
-    if (!accountScope || !normalizedModel || confirmed <= 0) return null;
-    const previousConfirmed = clampAdaptiveLimit(previous?.confirmedConversationTokens);
-    const nextConfirmed = Math.max(previousConfirmed, confirmed);
-    const candidateAdaptive = clampAdaptiveLimit(nextConfirmed + learningHeadroomTokens(nextConfirmed));
-    const previousAdaptive = clampAdaptiveLimit(previous?.adaptiveSafeLimitTokens);
-    const adaptiveSafeLimitTokens = Math.max(
-      Math.ceil(Number(baseSafeLimitTokens) || 0), previousAdaptive, candidateAdaptive,
-    );
-    return {
-      ...(previous && typeof previous === 'object' ? previous : {}),
-      schemaVersion: 1,
-      accountScope,
-      accountScopeSource,
-      model: normalizedModel,
-      confirmedConversationTokens: nextConfirmed,
-      confirmedCharacters: Math.max(
-        Math.max(0, Math.ceil(Number(previous?.confirmedCharacters) || 0)),
-        Math.max(0, Math.ceil(Number(confirmedCharacters) || 0)),
-      ),
-      adaptiveSafeLimitTokens,
-      successfulBypassCount: Math.max(0, Math.floor(Number(previous?.successfulBypassCount) || 0)) + 1,
-      firstConfirmedAt: previous?.firstConfirmedAt || measuredAt,
-      lastConfirmedAt: measuredAt,
-      lastConversationKey: String(conversationKey || 'unknown').slice(0, 256),
-      evidence: 'explicit-over-limit-send+formal-request+settled-assistant-turn',
-    };
-  }
-
   function classifyConversationLengthLimitText(value) {
     const text = String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 1_000);
     if (!text) return null;
@@ -490,54 +314,6 @@
       if (entry.pattern.test(text)) return { matched: true, locale: entry.locale, text };
     }
     return null;
-  }
-
-  function nextHardLimitProfile({
-    previous = null,
-    accountScope,
-    accountScopeSource = 'unknown',
-    model,
-    observedConversationTokens = 0,
-    observedCharacters = 0,
-    observedMessages = 0,
-    conversationKey = 'unknown',
-    measuredAt = new Date().toISOString(),
-    measurementSource = 'unknown',
-    measurementReliable = false,
-    noticeText = '',
-    actionText = '',
-  } = {}) {
-    const normalizedModel = normalizeModelId(model);
-    const account = String(accountScope ?? '').trim();
-    if (!account || !normalizedModel) return null;
-    const observed = clampAdaptiveLimit(observedConversationTokens);
-    const confirmedLower = clampAdaptiveLimit(previous?.confirmedConversationTokens);
-    const previousUpper = clampAdaptiveLimit(previous?.hardLimitUpperBoundTokens);
-    const usableObservation = Boolean(measurementReliable && observed > confirmedLower);
-    const hardLimitUpperBoundTokens = usableObservation
-      ? (previousUpper > confirmedLower ? Math.min(previousUpper, observed) : observed)
-      : previousUpper;
-    return {
-      ...(previous && typeof previous === 'object' ? previous : {}),
-      schemaVersion: 1,
-      accountScope: account,
-      accountScopeSource,
-      model: normalizedModel,
-      hardLimitObserved: true,
-      hardLimitObservedCount: Math.max(0, Math.floor(Number(previous?.hardLimitObservedCount) || 0)) + 1,
-      hardLimitObservedTokens: observed,
-      hardLimitObservedCharacters: Math.max(0, Math.ceil(Number(observedCharacters) || 0)),
-      hardLimitObservedMessages: Math.max(0, Math.ceil(Number(observedMessages) || 0)),
-      hardLimitUpperBoundTokens,
-      hardLimitTokenCapUsable: hardLimitUpperBoundTokens > confirmedLower,
-      hardLimitConfidence: usableObservation ? 'measured-upper-bound' : 'ui-boundary-only',
-      hardLimitMeasurementSource: String(measurementSource || 'unknown').slice(0, 80),
-      hardLimitLastObservedAt: measuredAt,
-      hardLimitLastConversationKey: String(conversationKey || 'unknown').slice(0, 256),
-      hardLimitLastText: String(noticeText || '').replace(/\s+/g, ' ').trim().slice(0, 500),
-      hardLimitActionText: String(actionText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
-      hardLimitEvidence: 'chatgpt-visible-conversation-length-limit',
-    };
   }
 
   function privateHistorySnapshot() {
@@ -563,14 +339,8 @@
   }
 
   const api = {
-    contextWindowForModel,
-    estimateTextTokens,
-    computeBudget,
-    learningHeadroomTokens,
     profileStorageKey,
-    nextLearnedProfile,
     classifyConversationLengthLimitText,
-    nextHardLimitProfile,
     extractConversationMetrics,
     checkpointStorageKey,
     pendingBypassStorageKey,
@@ -644,14 +414,7 @@
   }
 
   function elementMetrics(element) {
-    const text = elementText(element);
-    return {
-      characters: text.length,
-      tokens: estimateTextTokens(text)
-        + (imageCount(element) * IMAGE_TOKEN_ESTIMATE)
-        + (attachmentCount(element) * ATTACHMENT_TOKEN_ESTIMATE)
-        + MESSAGE_OVERHEAD_TOKENS,
-    };
+    return { characters: elementText(element).length };
   }
 
   function conversationElements() {
@@ -689,10 +452,9 @@
   function assistantStats() {
     const elements = assistantElements();
     const last = elements[elements.length - 1] || null;
-    const lastMetrics = last ? elementMetrics(last) : { tokens: 0, characters: 0 };
+    const lastMetrics = last ? elementMetrics(last) : { characters: 0 };
     return {
       count: elements.length,
-      lastTokens: lastMetrics.tokens,
       lastCharacters: lastMetrics.characters,
     };
   }
@@ -916,79 +678,61 @@
     return String(Math.round(number));
   }
 
-  function activeAdaptiveLimit(model) {
-    const normalizedModel = normalizeModelId(model);
-    if (!activeProfile || !currentAccountScope || !normalizedModel) return 0;
-    if (activeProfile.accountScope !== currentAccountScope || activeProfile.model !== normalizedModel) return 0;
-    return clampAdaptiveLimit(activeProfile.adaptiveSafeLimitTokens);
-  }
-
-  function activeHardLimit(model) {
-    const normalizedModel = normalizeModelId(model);
-    if (!activeProfile || !currentAccountScope || !normalizedModel) return { upper: 0, confirmed: 0 };
-    if (activeProfile.accountScope !== currentAccountScope || normalizeModelId(activeProfile.model) !== normalizedModel) return { upper: 0, confirmed: 0 };
-    return {
-      upper: clampAdaptiveLimit(activeProfile.hardLimitUpperBoundTokens),
-      confirmed: clampAdaptiveLimit(activeProfile.confirmedConversationTokens),
-    };
-  }
-
   function snapshotNow() {
     const messages = conversationElements();
-    const domHistory = messages.reduce((total, element) => {
-      const metrics = elementMetrics(element);
-      total.tokens += metrics.tokens;
-      total.characters += metrics.characters;
-      return total;
-    }, { tokens: 0, characters: 0 });
+    const domHistoryCharacters = messages.reduce(
+      (total, element) => total + elementMetrics(element).characters,
+      0,
+    );
+    const conversationKey = currentConversationKey();
     const cacheFresh = Boolean(
       conversationMetricsCache
-      && conversationMetricsCache.conversationKey === currentConversationKey()
+      && conversationMetricsCache.conversationKey === conversationKey
       && Date.now() - conversationMetricsCheckedAt <= CONVERSATION_METRICS_MAX_AGE_MS
     );
     const checkpointUsable = Boolean(
       !cacheFresh
       && restoredCheckpoint
       && restoredCheckpoint.accountScope === currentAccountScope
-      && restoredCheckpoint.conversationKey === currentConversationKey()
+      && restoredCheckpoint.conversationKey === conversationKey
     );
-    const history = cacheFresh ? {
-      tokens: Math.max(domHistory.tokens, conversationMetricsCache.tokens),
-      characters: Math.max(domHistory.characters, conversationMetricsCache.characters),
-    } : checkpointUsable ? {
-      tokens: Math.max(domHistory.tokens, Number(restoredCheckpoint.activeContextTokens) || 0),
-      characters: Math.max(domHistory.characters, Number(restoredCheckpoint.activeContextCharacters) || 0),
-    } : domHistory;
+    const historyCharacters = cacheFresh
+      ? Math.max(domHistoryCharacters, Number(conversationMetricsCache.characters) || 0)
+      : checkpointUsable
+        ? Math.max(domHistoryCharacters, Number(restoredCheckpoint.activeContextCharacters) || 0)
+        : domHistoryCharacters;
     const historyMessageCount = cacheFresh
-      ? Math.max(messages.length, conversationMetricsCache.messageCount)
+      ? Math.max(messages.length, Number(conversationMetricsCache.messageCount) || 0)
       : checkpointUsable
         ? Math.max(messages.length, Number(restoredCheckpoint.activeMessageCount) || 0)
         : messages.length;
-    const composer = findComposer();
-    const draft = composerText(composer);
-    const composerRoot = composer?.closest('form') || composer?.parentElement;
-    const draftTokens = estimateTextTokens(draft)
-      + (imageCount(composerRoot) * IMAGE_TOKEN_ESTIMATE)
-      + (attachmentCount(composerRoot) * ATTACHMENT_TOKEN_ESTIMATE)
-      + (draft.trim() ? MESSAGE_OVERHEAD_TOKENS : 0);
+    const draft = composerText();
     const model = detectModel();
-    const windowProfile = contextWindowForModel(model);
-    const adaptiveSafeLimitTokens = activeAdaptiveLimit(windowProfile.model);
-    const learnedHardLimit = activeHardLimit(windowProfile.model);
-    const budget = computeBudget({
-      historyTokens: history.tokens,
-      draftTokens,
-      contextLimitTokens: windowProfile.tokens,
-      adaptiveSafeLimitTokens,
-      hardLimitUpperBoundTokens: learnedHardLimit.upper,
-      confirmedLowerBoundTokens: learnedHardLimit.confirmed,
-    });
+    const confirmedLowerBoundTokens = storedMetric(activeProfile?.confirmedConversationTokens);
+    const hardLimitUpperBoundTokens = storedMetric(activeProfile?.hardLimitUpperBoundTokens);
     return {
-      ...budget,
-      model: windowProfile.model,
-      contextWindowSource: windowProfile.source,
+      nominalLimitTokens: 0,
+      baseSafeLimitTokens: 0,
+      adaptiveSafeLimitTokens: storedMetric(activeProfile?.adaptiveSafeLimitTokens),
+      hardLimitUpperBoundTokens,
+      confirmedLowerBoundTokens,
+      safeLimitTokens: 0,
+      reserveTokens: 0,
+      historyTokens: 0,
+      draftTokens: 0,
+      usedTokens: 0,
+      projectedTokens: 0,
+      percent: 0,
+      projectedPercent: 0,
+      remainingTokens: 0,
+      warning: false,
+      wouldExceed: false,
+      adaptiveActive: false,
+      hardLimitActive: false,
+      model,
+      contextWindowSource: 'private-engine-required',
       messageCount: historyMessageCount,
-      historyCharacters: history.characters,
+      historyCharacters,
       historyMeasurementSource: cacheFresh
         ? 'conversation-tree+dom-reconcile'
         : checkpointUsable
@@ -996,49 +740,59 @@
           : 'dom-fallback',
       checkpointRestored: checkpointUsable,
       checkpointMeasuredAt: checkpointUsable ? restoredCheckpoint.lastMeasuredAt ?? null : null,
-      cumulativeConversationTokens: checkpointUsable || restoredCheckpoint
-        ? Math.max(history.tokens, Number(restoredCheckpoint?.cumulativeTokens) || 0)
-        : history.tokens,
-      cumulativeConversationCharacters: checkpointUsable || restoredCheckpoint
-        ? Math.max(history.characters, Number(restoredCheckpoint?.cumulativeCharacters) || 0)
-        : history.characters,
-      cumulativeMessageCount: checkpointUsable || restoredCheckpoint
-        ? Math.max(historyMessageCount, Number(restoredCheckpoint?.cumulativeMessages) || 0)
+      cumulativeConversationTokens: storedMetric(restoredCheckpoint?.cumulativeTokens),
+      cumulativeConversationCharacters: restoredCheckpoint
+        ? Math.max(historyCharacters, Number(restoredCheckpoint.cumulativeCharacters) || 0)
+        : historyCharacters,
+      cumulativeMessageCount: restoredCheckpoint
+        ? Math.max(historyMessageCount, Number(restoredCheckpoint.cumulativeMessages) || 0)
         : historyMessageCount,
       draftCharacters: draft.length,
-      fullConversationCharacters: history.characters + draft.length,
-      fullConversationTokens: budget.usedTokens,
-      conversationKey: currentConversationKey(),
-      learnedConfirmedTokens: budget.adaptiveActive
-        ? clampAdaptiveLimit(activeProfile?.confirmedConversationTokens)
-        : 0,
-      learnedSuccessCount: budget.adaptiveActive
-        ? Math.max(0, Number(activeProfile?.successfulBypassCount) || 0)
-        : 0,
-      learnedAt: budget.adaptiveActive ? activeProfile?.lastConfirmedAt ?? null : null,
-      hardLimitVisible: Boolean(lastHardLimitNotice && lastHardLimitNotice.conversationKey === currentConversationKey()),
-      hardLimitObservedTokens: clampAdaptiveLimit(activeProfile?.hardLimitObservedTokens),
+      fullConversationCharacters: historyCharacters + draft.length,
+      fullConversationTokens: 0,
+      conversationKey,
+      learnedConfirmedTokens: confirmedLowerBoundTokens,
+      learnedSuccessCount: Math.max(0, Number(activeProfile?.successfulBypassCount) || 0),
+      learnedAt: activeProfile?.lastConfirmedAt ?? null,
+      hardLimitVisible: Boolean(lastHardLimitNotice && lastHardLimitNotice.conversationKey === conversationKey),
+      hardLimitObservedTokens: storedMetric(activeProfile?.hardLimitObservedTokens),
       hardLimitObservedCount: Math.max(0, Number(activeProfile?.hardLimitObservedCount) || 0),
       hardLimitConfidence: activeProfile?.hardLimitConfidence ?? (lastHardLimitNotice ? 'ui-boundary-only' : null),
       hardLimitMeasurementSource: activeProfile?.hardLimitMeasurementSource ?? null,
       hardLimitLastObservedAt: activeProfile?.hardLimitLastObservedAt ?? null,
       accountScopeAvailable: Boolean(currentAccountScope),
       accountScopeSource: currentAccountScopeSource,
+      budgetAuthority: 'pending-private-engine',
+      budgetAvailable: false,
       measuredAt: new Date().toISOString(),
       estimateOnly: true,
     };
   }
 
   function indicatorDetail(snapshot) {
-    const source = snapshot.budgetAuthority === 'private-engine'
-      ? '本地私有核心'
-      : snapshot.contextWindowSource === 'openai-api-model-window'
-        ? '公开模型窗口'
-        : '保守回退窗口';
+    const historySource = snapshot.historyMeasurementSource === 'conversation-tree+dom-reconcile'
+      ? '完整活动分支'
+      : snapshot.historyMeasurementSource === 'checkpoint+dom-restore'
+        ? '本地检查点恢复'
+        : 'DOM 回退';
+    if (snapshot.budgetAuthority !== 'private-engine') {
+      const rows = [
+        '上下文额度：等待本地私有核心评估',
+        `当前活动聊天：${formatCompactNumber(snapshot.fullConversationCharacters)} 字符 · ${snapshot.messageCount} 条消息 · ${historySource}`,
+        `模型：${snapshot.model || '未识别'}`,
+        '安全策略：浏览器扩展不再执行模型窗口、token/media 权重或发送预算公式；私有核心不可用时正常聊天 fail-open，不生成伪 token 额度。',
+      ];
+      if (snapshot.learnedConfirmedTokens > 0) {
+        rows.push(`历史私有学习：已保存成功下限 ${formatCompactTokens(snapshot.learnedConfirmedTokens)} tokens（${snapshot.learnedSuccessCount} 次）`);
+      }
+      if (snapshot.hardLimitVisible) rows.push('ChatGPT 已显示真实“对话长度上限”提示；等待私有核心决定是否形成数值上界。');
+      return rows.join('\n');
+    }
+
     const rows = [
-      `上下文额度：${snapshot.percent.toFixed(1)}%（本地完整聊天估算）`,
-      `当前完整聊天：约 ${formatCompactTokens(snapshot.fullConversationTokens)} tokens · ${formatCompactNumber(snapshot.fullConversationCharacters)} 字符 · ${snapshot.messageCount} 条消息 · ${snapshot.historyMeasurementSource === 'conversation-tree+dom-reconcile' ? '完整活动分支' : 'DOM 回退'}`,
-      `基础安全预算：${formatCompactTokens(snapshot.baseSafeLimitTokens)} / 公开窗口 ${formatCompactTokens(snapshot.nominalLimitTokens)}`,
+      `上下文额度：${snapshot.percent.toFixed(1)}%（本地私有核心）`,
+      `当前完整聊天：约 ${formatCompactTokens(snapshot.fullConversationTokens)} tokens · ${formatCompactNumber(snapshot.fullConversationCharacters)} 字符 · ${snapshot.messageCount} 条消息 · ${historySource}`,
+      `基础安全预算：${formatCompactTokens(snapshot.baseSafeLimitTokens)} / 模型窗口 ${formatCompactTokens(snapshot.nominalLimitTokens)}`,
     ];
     if (snapshot.checkpointRestored) {
       rows.push(`恢复状态：已从上次本地检查点恢复（${snapshot.checkpointMeasuredAt || '时间未知'}），正在与 ChatGPT 当前活动会话重新对账。`);
@@ -1049,9 +803,9 @@
     if (snapshot.hardLimitVisible || snapshot.hardLimitObservedCount > 0) {
       if (snapshot.hardLimitUpperBoundTokens > snapshot.confirmedLowerBoundTokens) {
         const lower = snapshot.confirmedLowerBoundTokens > 0 ? `；已确认成功下限 ≥ ${formatCompactTokens(snapshot.confirmedLowerBoundTokens)}` : '';
-        rows.push(`ChatGPT 实测会话硬上限：≤ ${formatCompactTokens(snapshot.hardLimitUpperBoundTokens)} tokens${lower}（真实“对话长度上限”界面提示）`);
+        rows.push(`ChatGPT 实测会话硬上限：≤ ${formatCompactTokens(snapshot.hardLimitUpperBoundTokens)} tokens${lower}`);
       } else {
-        rows.push('ChatGPT 实测会话硬上限：已检测到真实“对话长度上限”提示；当前只有 DOM/不完整历史估算，因此暂不把该 token 数写成可信上限。');
+        rows.push('ChatGPT 已检测到真实“对话长度上限”提示；当前没有可用的可信数值上界。');
       }
     }
     if (snapshot.adaptiveActive) {
@@ -1065,11 +819,11 @@
     rows.push(
       `预留回复：${formatCompactTokens(snapshot.reserveTokens)}`,
       `剩余发送预算：约 ${formatCompactTokens(snapshot.remainingTokens)}`,
-      `模型：${snapshot.model || '未识别'} · ${source}`,
+      `模型：${snapshot.model || '未识别'} · 本地私有核心`,
       snapshot.accountScopeAvailable
-        ? '账户学习：已建立本地匿名账户范围；成功超限发送会自动抬高该账户/模型的发送预算。'
+        ? '账户学习：已建立本地匿名账户范围；数值学习由本地私有核心完成。'
         : '账户学习：尚未识别当前 ChatGPT 账户；识别成功前不会跨账户学习。',
-      '说明：插件优先读取当前会话 conversation tree 并沿 current_node 活动分支统计，再与 DOM 新内容取较大值；读取失败时退回 DOM。真实“对话长度上限”提示可以证明 ChatGPT 产品层已经封顶，但提示本身不包含官方 token 数；只有历史测量完整时才会形成可用于发送预算的 token 上界。ChatGPT 隐藏系统提示、服务端压缩/裁剪和精确 tokenizer 仍不对扩展完整开放，因此实测上下界都不等同于官方物理模型窗口。',
+      '说明：浏览器只采集当前活动 conversation tree、DOM 与媒体计数；模型窗口、token 估算、预算和学习数值均由本地编译私有核心计算。',
     );
     return rows.join('\n');
   }
@@ -1098,11 +852,16 @@
       row.innerHTML = '<span class="model-key">上下文</span><span class="model-value">估算中</span>';
       button.append(row);
     }
-    row.dataset.status = snapshot.wouldExceed ? 'danger' : snapshot.warning ? 'warning' : 'safe';
+    const hasPrivateBudget = snapshot.budgetAuthority === 'private-engine';
+    row.dataset.status = hasPrivateBudget && snapshot.wouldExceed ? 'danger' : hasPrivateBudget && snapshot.warning ? 'warning' : 'safe';
     const value = row.querySelector('.model-value');
     if (value) {
-      const adaptiveMark = snapshot.adaptiveActive ? '↗' : '';
-      value.textContent = `${snapshot.percent.toFixed(snapshot.percent < 10 ? 1 : 0)}%${adaptiveMark} · 约${formatCompactTokens(snapshot.remainingTokens)}余`;
+      if (hasPrivateBudget) {
+        const adaptiveMark = snapshot.adaptiveActive ? '↗' : '';
+        value.textContent = `${snapshot.percent.toFixed(snapshot.percent < 10 ? 1 : 0)}%${adaptiveMark} · 约${formatCompactTokens(snapshot.remainingTokens)}余`;
+      } else {
+        value.textContent = '等待私有核心';
+      }
     }
     row.title = indicatorDetail(snapshot);
     row.setAttribute('aria-label', indicatorDetail(snapshot));
@@ -1114,14 +873,14 @@
       try { next = authority.applyToSnapshot(next) || next; } catch { /* compatibility fallback */ }
     }
     const previousFingerprint = lastSnapshot
-      ? `${Math.round(lastSnapshot.percent * 10)}:${lastSnapshot.model}:${lastSnapshot.messageCount}:${lastSnapshot.wouldExceed}:${lastSnapshot.safeLimitTokens}`
+      ? `${Math.round(lastSnapshot.percent * 10)}:${lastSnapshot.model}:${lastSnapshot.messageCount}:${lastSnapshot.wouldExceed}:${lastSnapshot.safeLimitTokens}:${lastSnapshot.budgetAuthority}`
       : '';
     lastSnapshot = next;
     mountIndicatorRow(next);
-    if (next.historyMeasurementSource === 'conversation-tree+dom-reconcile') {
+    if (next.historyMeasurementSource === 'conversation-tree+dom-reconcile' && next.budgetAuthority === 'private-engine') {
       queueConversationCheckpointPersist(next);
     }
-    const fingerprint = `${Math.round(next.percent * 10)}:${next.model}:${next.messageCount}:${next.wouldExceed}:${next.safeLimitTokens}`;
+    const fingerprint = `${Math.round(next.percent * 10)}:${next.model}:${next.messageCount}:${next.wouldExceed}:${next.safeLimitTokens}:${next.budgetAuthority}`;
     if (fingerprint !== previousFingerprint) {
       window.dispatchEvent(new CustomEvent('gptlock:context-budget', { detail: next }));
     }
@@ -1132,9 +891,8 @@
     try {
       const notice = findVisibleConversationLengthLimit();
       if (notice) lastHardLimitNotice = { ...notice, conversationKey: currentConversationKey(), detectedAt: new Date().toISOString() };
-      const next = snapshotNow();
-      publishSnapshot(next);
-      if (notice) void persistHardLimitObservation(next, lastHardLimitNotice);
+      publishSnapshot(snapshotNow());
+      if (notice) void persistHardLimitObservation(lastSnapshot, lastHardLimitNotice);
       void refreshConversationMetrics();
       void maybeFinalizeBypassLearning();
     } catch {
@@ -1475,10 +1233,11 @@
   async function persistHardLimitObservation(snapshot, notice) {
     if (!snapshot || !notice || hardLimitLearningInFlight) return null;
     const model = normalizeModelId(snapshot.model) || detectModel();
-    const observedTokens = Math.max(
+    const privateBudgetAvailable = snapshot.budgetAuthority === 'private-engine';
+    const observedTokens = privateBudgetAvailable ? Math.max(
       Math.ceil(Number(snapshot.fullConversationTokens) || 0),
       Math.ceil(Number(snapshot.cumulativeConversationTokens) || 0),
-    );
+    ) : 0;
     const fingerprint = `${snapshot.conversationKey}:${model}:${snapshot.historyMeasurementSource}:${observedTokens}`;
     if (lastHardLimitFingerprint === fingerprint) return activeProfile;
     hardLimitLearningInFlight = true;
@@ -1488,52 +1247,66 @@
       if (!key) return null;
       const stored = await chrome.storage.local.get(key);
       const previous = stored[key] ?? null;
-      const measurementReliable = ['conversation-tree+dom-reconcile', 'checkpoint+dom-restore'].includes(snapshot.historyMeasurementSource);
+      const measurementReliable = privateBudgetAvailable && ['conversation-tree+dom-reconcile', 'checkpoint+dom-restore'].includes(snapshot.historyMeasurementSource);
       const observedCharacters = Math.max(snapshot.fullConversationCharacters || 0, snapshot.cumulativeConversationCharacters || 0);
       const observedMessages = Math.max(snapshot.messageCount || 0, snapshot.cumulativeMessageCount || 0);
       const measuredAt = new Date().toISOString();
-      const privateNumbers = await evaluatePrivateContextProfile('hard_limit', {
-        model,
-        previous,
-        observedConversationTokens: observedTokens,
-        measurementReliable,
-      });
-      const next = privateNumbers ? {
-        ...(previous && typeof previous === 'object' ? previous : {}),
-        schemaVersion: 1,
-        accountScope: currentAccountScope,
-        accountScopeSource: currentAccountScopeSource || 'unknown',
-        model,
-        hardLimitObserved: true,
-        hardLimitObservedCount: privateNumbers.hardLimitObservedCount,
-        hardLimitObservedTokens: observedTokens,
-        hardLimitObservedCharacters: Math.max(0, Math.ceil(Number(observedCharacters) || 0)),
-        hardLimitObservedMessages: Math.max(0, Math.ceil(Number(observedMessages) || 0)),
-        hardLimitUpperBoundTokens: privateNumbers.hardLimitUpperBoundTokens,
-        hardLimitTokenCapUsable: privateNumbers.hardLimitTokenCapUsable,
-        hardLimitConfidence: privateNumbers.hardLimitConfidence,
-        hardLimitMeasurementSource: String(snapshot.historyMeasurementSource || 'unknown').slice(0, 80),
-        hardLimitLastObservedAt: measuredAt,
-        hardLimitLastConversationKey: String(snapshot.conversationKey || 'unknown').slice(0, 256),
-        hardLimitLastText: String(notice.text || '').replace(/\s+/g, ' ').trim().slice(0, 500),
-        hardLimitActionText: String(notice.actionText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
-        hardLimitEvidence: 'chatgpt-visible-conversation-length-limit',
-        numericDerivation: 'private-engine',
-      } : nextHardLimitProfile({
-        previous,
-        accountScope: currentAccountScope,
-        accountScopeSource: currentAccountScopeSource || 'unknown',
-        model,
-        observedConversationTokens: observedTokens,
-        observedCharacters,
-        observedMessages,
-        conversationKey: snapshot.conversationKey,
-        measuredAt,
-        measurementSource: snapshot.historyMeasurementSource,
-        measurementReliable,
-        noticeText: notice.text,
-        actionText: notice.actionText,
-      });
+      const privateNumbers = privateBudgetAvailable
+        ? await evaluatePrivateContextProfile('hard_limit', {
+          model,
+          previous,
+          observedConversationTokens: observedTokens,
+          measurementReliable,
+        })
+        : null;
+      let next;
+      if (privateNumbers) {
+        next = {
+          ...(previous && typeof previous === 'object' ? previous : {}),
+          schemaVersion: 1,
+          accountScope: currentAccountScope,
+          accountScopeSource: currentAccountScopeSource || 'unknown',
+          model,
+          hardLimitObserved: true,
+          hardLimitObservedCount: privateNumbers.hardLimitObservedCount,
+          hardLimitObservedTokens: observedTokens,
+          hardLimitObservedCharacters: Math.max(0, Math.ceil(Number(observedCharacters) || 0)),
+          hardLimitObservedMessages: Math.max(0, Math.ceil(Number(observedMessages) || 0)),
+          hardLimitUpperBoundTokens: privateNumbers.hardLimitUpperBoundTokens,
+          hardLimitTokenCapUsable: privateNumbers.hardLimitTokenCapUsable,
+          hardLimitConfidence: privateNumbers.hardLimitConfidence,
+          hardLimitMeasurementSource: String(snapshot.historyMeasurementSource || 'unknown').slice(0, 80),
+          hardLimitLastObservedAt: measuredAt,
+          hardLimitLastConversationKey: String(snapshot.conversationKey || 'unknown').slice(0, 256),
+          hardLimitLastText: String(notice.text || '').replace(/\s+/g, ' ').trim().slice(0, 500),
+          hardLimitActionText: String(notice.actionText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+          hardLimitEvidence: 'chatgpt-visible-conversation-length-limit',
+          numericDerivation: 'private-engine',
+        };
+      } else {
+        next = {
+          ...(previous && typeof previous === 'object' ? previous : {}),
+          schemaVersion: 1,
+          accountScope: currentAccountScope,
+          accountScopeSource: currentAccountScopeSource || 'unknown',
+          model,
+          hardLimitObserved: true,
+          hardLimitObservedCount: Math.max(0, Math.floor(Number(previous?.hardLimitObservedCount) || 0)) + 1,
+          hardLimitObservedTokens: storedMetric(observedTokens),
+          hardLimitObservedCharacters: Math.max(0, Math.ceil(Number(observedCharacters) || 0)),
+          hardLimitObservedMessages: Math.max(0, Math.ceil(Number(observedMessages) || 0)),
+          hardLimitUpperBoundTokens: storedMetric(previous?.hardLimitUpperBoundTokens),
+          hardLimitTokenCapUsable: previous?.hardLimitTokenCapUsable === true,
+          hardLimitConfidence: 'ui-boundary-only',
+          hardLimitMeasurementSource: String(snapshot.historyMeasurementSource || 'unknown').slice(0, 80),
+          hardLimitLastObservedAt: measuredAt,
+          hardLimitLastConversationKey: String(snapshot.conversationKey || 'unknown').slice(0, 256),
+          hardLimitLastText: String(notice.text || '').replace(/\s+/g, ' ').trim().slice(0, 500),
+          hardLimitActionText: String(notice.actionText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+          hardLimitEvidence: 'chatgpt-visible-conversation-length-limit',
+          numericDerivation: 'unavailable',
+        };
+      }
       if (!next) return null;
       await chrome.storage.local.set({ [key]: next });
       activeProfile = next;
@@ -1657,43 +1430,26 @@
         confirmedConversationTokens,
         confirmedCharacters,
       });
-      let next = null;
-      if (privateNumbers) {
-        next = {
-          ...(previous && typeof previous === 'object' ? previous : {}),
-          schemaVersion: 1,
-          accountScope,
-          accountScopeSource,
-          model,
-          confirmedConversationTokens: privateNumbers.confirmedConversationTokens,
-          confirmedCharacters: privateNumbers.confirmedCharacters,
-          adaptiveSafeLimitTokens: privateNumbers.adaptiveSafeLimitTokens,
-          successfulBypassCount: privateNumbers.successfulBypassCount,
-          firstConfirmedAt: previous?.firstConfirmedAt || measuredAt,
-          lastConfirmedAt: measuredAt,
-          lastConversationKey: String(postSnapshot.conversationKey || 'unknown').slice(0, 256),
-          evidence: 'explicit-over-limit-send+formal-request+settled-assistant-turn',
-          numericDerivation: 'private-engine',
-        };
-      } else {
-        const windowProfile = contextWindowForModel(model);
-        const baseSafeLimitTokens = Math.floor(windowProfile.tokens * SAFETY_BUDGET_RATIO);
-        next = nextLearnedProfile({
-          previous,
-          accountScope,
-          accountScopeSource,
-          model,
-          confirmedConversationTokens,
-          confirmedCharacters,
-          conversationKey: postSnapshot.conversationKey,
-          measuredAt,
-          baseSafeLimitTokens,
-        });
-      }
-      if (!next) {
+      if (!privateNumbers) {
         await discardPendingBypass();
         return null;
       }
+      const next = {
+        ...(previous && typeof previous === 'object' ? previous : {}),
+        schemaVersion: 1,
+        accountScope,
+        accountScopeSource,
+        model,
+        confirmedConversationTokens: privateNumbers.confirmedConversationTokens,
+        confirmedCharacters: privateNumbers.confirmedCharacters,
+        adaptiveSafeLimitTokens: privateNumbers.adaptiveSafeLimitTokens,
+        successfulBypassCount: privateNumbers.successfulBypassCount,
+        firstConfirmedAt: previous?.firstConfirmedAt || measuredAt,
+        lastConfirmedAt: measuredAt,
+        lastConversationKey: String(postSnapshot.conversationKey || 'unknown').slice(0, 256),
+        evidence: 'explicit-over-limit-send+formal-request+settled-assistant-turn',
+        numericDerivation: 'private-engine',
+      };
       await chrome.storage.local.set({ [key]: next });
       activeProfile = next;
       activeProfileKey = key;
@@ -1741,8 +1497,8 @@
       return;
     }
     const assistant = assistantStats();
-    if (assistant.count <= pending.baselineAssistantCount || assistant.lastTokens <= 0) return;
-    const signature = `${assistant.count}:${assistant.lastTokens}:${assistant.lastCharacters}`;
+    if (assistant.count <= pending.baselineAssistantCount || assistant.lastCharacters <= 0) return;
+    const signature = `${assistant.count}:${assistant.lastCharacters}`;
     if (signature !== pending.stableSignature) {
       pending.stableSignature = signature;
       pending.stableSince = Date.now();
@@ -1802,7 +1558,7 @@
     root.innerHTML = `
       <style>.toast{max-width:460px;padding:11px 13px;border-radius:12px;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;box-shadow:0 12px 30px rgba(154,52,18,.14);font:650 12px/1.45 system-ui,sans-serif}</style>
       <div class="toast"></div>`;
-    const upper = clampAdaptiveLimit(profile?.hardLimitUpperBoundTokens);
+    const upper = storedMetric(profile?.hardLimitUpperBoundTokens);
     root.querySelector('.toast').textContent = upper
       ? `GPTLock 已捕获 ChatGPT 真实“对话长度上限”提示，并记录该账户/模型的实测上界 ≤ ${formatCompactTokens(upper)} tokens。后续发送预算会同时受成功下限与该上界约束。`
       : 'GPTLock 已捕获 ChatGPT 真实“对话长度上限”提示。当前会话历史只能从 DOM 回退估算，数据不完整，因此不会把这个不完整 token 数误写成最大上限；事件已记录，后续会继续对账。';
