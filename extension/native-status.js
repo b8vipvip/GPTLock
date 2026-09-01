@@ -1,4 +1,4 @@
-export const RELEASES_URL = 'https://github.com/b8vipvip/GPTLock/releases/latest';
+export const RELEASES_URL = 'https://gptlock.mv3.cn/releases';
 
 export function classifyNativeError(error) {
   const message = String(error || '').trim().toLowerCase();
