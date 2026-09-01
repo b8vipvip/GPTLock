@@ -1,6 +1,5 @@
 import { privateCoreChannel } from './private-core-channel.js';
 
-const REMAINING_MESSAGE_TYPE = 'GPTLOCK_PRIVATE_CONTEXT_EVALUATE';
 const BUDGET_MESSAGE_TYPE = 'GPTLOCK_PRIVATE_CONTEXT_BUDGET';
 const PROFILE_MESSAGE_TYPE = 'GPTLOCK_PRIVATE_CONTEXT_PROFILE';
 const MAX_METRIC = Number.MAX_SAFE_INTEGER;
@@ -32,26 +31,6 @@ function sanitizeTextPart(value = {}) {
     text,
     images: boundedCount(value?.images),
     attachments: boundedCount(value?.attachments),
-  };
-}
-
-export function sanitizePrivateContextPayload(value = {}) {
-  const snapshot = value?.snapshot && typeof value.snapshot === 'object' ? value.snapshot : {};
-  const profile = value?.profile && typeof value.profile === 'object' ? value.profile : {};
-  return {
-    snapshot: {
-      hardLimitVisible: Boolean(snapshot.hardLimitVisible),
-      cumulativeTokens: boundedMetric(snapshot.cumulativeTokens),
-      cumulativeCharacters: boundedMetric(snapshot.cumulativeCharacters),
-      cumulativeMessages: boundedMetric(snapshot.cumulativeMessages),
-      fallbackSafeLimitTokens: boundedMetric(snapshot.fallbackSafeLimitTokens),
-      fallbackRemainingTokens: boundedMetric(snapshot.fallbackRemainingTokens),
-    },
-    profile: {
-      hardLimitObservedTokens: boundedMetric(profile.hardLimitObservedTokens),
-      hardLimitObservedCharacters: boundedMetric(profile.hardLimitObservedCharacters),
-      hardLimitObservedMessages: boundedMetric(profile.hardLimitObservedMessages),
-    },
   };
 }
 
@@ -126,17 +105,6 @@ export function sanitizePrivateContextBudgetPayload(value = {}) {
   };
 }
 
-export function normalizePrivateContextResult(value) {
-  const percent = Number(value?.percent);
-  if (!Number.isFinite(percent)) throw new TypeError('private context result percent is invalid');
-  const source = String(value?.source ?? '').trim();
-  if (!source || source.length > 96) throw new TypeError('private context result source is invalid');
-  return {
-    percent: Math.min(100, Math.max(0, percent)),
-    source,
-  };
-}
-
 function requiredMetric(value, name) {
   const metric = boundedMetric(value);
   if (metric === null) throw new TypeError(`private context budget ${name} is invalid`);
@@ -186,7 +154,7 @@ function safeErrorCode(error) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (![REMAINING_MESSAGE_TYPE, BUDGET_MESSAGE_TYPE, PROFILE_MESSAGE_TYPE].includes(message?.type)) return false;
+  if (![BUDGET_MESSAGE_TYPE, PROFILE_MESSAGE_TYPE].includes(message?.type)) return false;
 
   void (async () => {
     try {
@@ -218,13 +186,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: true, data: normalizePrivateContextBudgetResult(raw) });
         return;
       }
-      if (!(await privateCoreChannel.isAvailable())) {
-        sendResponse({ ok: false, error: 'private_engine_unavailable' });
-        return;
-      }
-      const payload = sanitizePrivateContextPayload(message.payload);
-      const raw = await privateCoreChannel.request('evaluate_context', payload, 'context');
-      sendResponse({ ok: true, data: normalizePrivateContextResult(raw) });
     } catch (error) {
       privateCoreChannel.invalidate();
       sendResponse({ ok: false, error: safeErrorCode(error) });
@@ -235,7 +196,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 export {
-  REMAINING_MESSAGE_TYPE as PRIVATE_CONTEXT_MESSAGE_TYPE,
   BUDGET_MESSAGE_TYPE as PRIVATE_CONTEXT_BUDGET_MESSAGE_TYPE,
   PROFILE_MESSAGE_TYPE as PRIVATE_CONTEXT_PROFILE_MESSAGE_TYPE,
 };

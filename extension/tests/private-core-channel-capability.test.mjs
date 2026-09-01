@@ -4,7 +4,7 @@ import test from 'node:test';
 const channelModule = await import(`../private-core-channel.js?test=${Date.now()}`);
 const { PrivateCoreChannel, normalizePrivateEngineCapabilities } = channelModule;
 
-test('capability normalization whitelists only supported compiled-engine features', () => {
+test('capability normalization whitelists only current compiled-engine features', () => {
   const capability = normalizePrivateEngineCapabilities({
     ok: true,
     data: {
@@ -22,11 +22,11 @@ test('capability normalization whitelists only supported compiled-engine feature
   assert.equal(capability.available, true);
   assert.equal(capability.contextBudgetEvaluation, true);
   assert.equal(capability.contextProfileEvaluation, true);
-  assert.equal(capability.contextEvaluation, true);
+  assert.equal(Object.hasOwn(capability, 'contextEvaluation'), false);
   assert.equal(Object.hasOwn(capability, 'privateRuleDump'), false);
 });
 
-test('supports requires both an executable probe and the requested feature', async () => {
+test('supports requires both an executable probe and a current mode-specific feature', async () => {
   const channel = new PrivateCoreChannel();
   channel.requestRaw = async () => ({
     ok: true,
@@ -37,10 +37,12 @@ test('supports requires both an executable probe and the requested feature', asy
         capabilityProbe: true,
         contextEvaluation: true,
         contextBudgetEvaluation: false,
+        contextProfileEvaluation: true,
       },
     },
   });
-  assert.equal(await channel.supports('contextEvaluation'), true);
+  assert.equal(await channel.supports('contextEvaluation'), false);
   assert.equal(await channel.supports('contextBudgetEvaluation'), false);
+  assert.equal(await channel.supports('contextProfileEvaluation'), true);
   assert.equal(await channel.supports('unknownFeature'), false);
 });

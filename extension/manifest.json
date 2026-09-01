@@ -35,8 +35,7 @@
         "private-context-budget-authority.js",
         "content.js",
         "model-catalog.js",
-        "model-auto-lock.js",
-        "private-context-indicator.js"
+        "model-auto-lock.js"
       ],
       "run_at": "document_idle"
     }

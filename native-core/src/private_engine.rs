@@ -134,7 +134,6 @@ fn capability_from_probe(installed: bool, response: Option<&Value>) -> Value {
         "capabilityProbe": false,
         "requestEvaluation": false,
         "responseEvaluation": false,
-        "contextEvaluation": false,
         "contextBudgetEvaluation": false,
         "contextProfileEvaluation": false,
         "compactRequestPatches": false,
@@ -160,7 +159,6 @@ fn capability_from_probe(installed: bool, response: Option<&Value>) -> Value {
     for feature in [
         "requestEvaluation",
         "responseEvaluation",
-        "contextEvaluation",
         "contextBudgetEvaluation",
         "contextProfileEvaluation",
         "compactRequestPatches",
@@ -296,7 +294,6 @@ mod tests {
             "data": {
                 "requestEvaluation": true,
                 "responseEvaluation": true,
-                "contextEvaluation": true,
                 "contextBudgetEvaluation": true,
                 "compactRequestPatches": true,
                 "privateRuleDump": true
@@ -310,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn capability_probe_is_backward_compatible_with_an_older_engine() {
+    fn capability_probe_treats_older_engines_as_missing_mode_specific_context_features() {
         let response = serde_json::json!({
             "id": "cap",
             "ok": true,
@@ -319,8 +316,9 @@ mod tests {
         });
         let capability = capability_from_probe(true, Some(&response));
         assert_eq!(capability["available"], true);
-        assert_eq!(capability["contextEvaluation"], true);
         assert_eq!(capability["contextBudgetEvaluation"], false);
+        assert_eq!(capability["contextProfileEvaluation"], false);
+        assert!(capability.get("contextEvaluation").is_none());
     }
 
     #[test]
