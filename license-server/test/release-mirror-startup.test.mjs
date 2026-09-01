@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -7,6 +7,8 @@ import test from 'node:test';
 import { createSiteReleaseFeed } from '../site-releases.mjs';
 
 const ORIGIN = 'https://gptlock.mv3.cn';
+const updater = new URL('../scripts/update-server.sh', import.meta.url);
+const installer = new URL('../scripts/install-updater-systemd.sh', import.meta.url);
 
 test('release mirror defaults beside the configured production database instead of inside the deployed checkout', async (t) => {
   const checkout = mkdtempSync(join(tmpdir(), 'gptlock-readonly-checkout-'));
@@ -73,4 +75,17 @@ test('an unavailable release mirror degrades only the update channel and never t
   assert.equal(synced.ok, true);
   assert.equal(synced.warning, 'release_mirror_storage_unavailable');
   assert.equal(networkCalls, 0);
+});
+
+test('system updater provisions writable mirror storage and records service diagnostics before rollback', () => {
+  const updateScript = readFileSync(updater, 'utf8');
+  const installScript = readFileSync(installer, 'utf8');
+
+  assert.match(updateScript, /RELEASE_MIRROR_DIR="\$\{GPTLOCK_RELEASE_MIRROR_DIR:-\$DATA_DIR\/releases\}"/);
+  assert.match(updateScript, /chown "\$RUNTIME_USER:\$RUNTIME_GROUP" "\$RELEASE_MIRROR_DIR"/);
+  assert.match(updateScript, /systemctl status "\$SERVICE" --no-pager -l/);
+  assert.match(updateScript, /journalctl -u "\$SERVICE" -n 100 --no-pager/);
+
+  assert.match(installScript, /RELEASE_MIRROR_DIR="\$\{GPTLOCK_RELEASE_MIRROR_DIR:-\$DATA_DIR\/releases\}"/);
+  assert.match(installScript, /chown "\$RUNTIME_USER:\$RUNTIME_GROUP" "\$DATA_DIR" "\$RELEASE_MIRROR_DIR"/);
 });
