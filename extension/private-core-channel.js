@@ -6,7 +6,6 @@ const CAPABILITY_TTL_MS = 30_000;
 const PRIVATE_ENGINE_FEATURES = Object.freeze([
   'requestEvaluation',
   'responseEvaluation',
-  'contextEvaluation',
   'contextBudgetEvaluation',
   'contextProfileEvaluation',
   'compactRequestPatches',

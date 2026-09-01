@@ -123,32 +123,6 @@ pub struct EvidenceResult {
     pub diagnostics: EvidenceDiagnostics,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ContextSnapshot {
-    pub hard_limit_visible: bool,
-    pub cumulative_tokens: Option<u64>,
-    pub cumulative_characters: Option<u64>,
-    pub cumulative_messages: Option<u64>,
-    pub fallback_safe_limit_tokens: Option<u64>,
-    pub fallback_remaining_tokens: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ContextProfile {
-    pub hard_limit_observed_tokens: Option<u64>,
-    pub hard_limit_observed_characters: Option<u64>,
-    pub hard_limit_observed_messages: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ContextRemaining {
-    pub percent: f64,
-    pub source: String,
-}
-
 #[derive(Debug, Clone)]
 struct Candidate {
     value: String,
@@ -731,65 +705,6 @@ pub fn evaluate_response(input: &ResponseEnvelope) -> EvidenceResult {
     }
 }
 
-fn ratio_remaining(current: Option<u64>, observed_limit: Option<u64>) -> Option<f64> {
-    let current = current? as f64;
-    let limit = observed_limit? as f64;
-    if limit <= 0.0 {
-        return None;
-    }
-    Some((100.0 * (1.0 - current / limit)).clamp(0.0, 100.0))
-}
-
-pub fn context_remaining(snapshot: &ContextSnapshot, profile: &ContextProfile) -> ContextRemaining {
-    if snapshot.hard_limit_visible {
-        return ContextRemaining {
-            percent: 0.0,
-            source: "chatgpt-visible-hard-limit".to_string(),
-        };
-    }
-
-    let learned: Vec<f64> = [
-        ratio_remaining(
-            snapshot.cumulative_tokens,
-            profile.hard_limit_observed_tokens,
-        ),
-        ratio_remaining(
-            snapshot.cumulative_characters,
-            profile.hard_limit_observed_characters,
-        ),
-        ratio_remaining(
-            snapshot.cumulative_messages,
-            profile.hard_limit_observed_messages,
-        ),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    if let Some(percent) = learned.into_iter().reduce(f64::min) {
-        return ContextRemaining {
-            percent,
-            source: "learned-chat-boundary".to_string(),
-        };
-    }
-
-    if let (Some(remaining), Some(limit)) = (
-        snapshot.fallback_remaining_tokens,
-        snapshot.fallback_safe_limit_tokens,
-    ) {
-        if limit > 0 {
-            return ContextRemaining {
-                percent: (remaining as f64 * 100.0 / limit as f64).clamp(0.0, 100.0),
-                source: "local-operational-budget".to_string(),
-            };
-        }
-    }
-
-    ContextRemaining {
-        percent: 100.0,
-        source: "unknown".to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -849,39 +764,5 @@ mod tests {
         let evidence = evaluate_response(&response);
         assert!(evidence.conflicts.model);
         assert!(evidence.model.is_none());
-    }
-
-    #[test]
-    fn visible_hard_limit_forces_zero_remaining() {
-        let result = context_remaining(
-            &ContextSnapshot {
-                hard_limit_visible: true,
-                fallback_safe_limit_tokens: Some(924_000),
-                fallback_remaining_tokens: Some(900_000),
-                ..Default::default()
-            },
-            &ContextProfile::default(),
-        );
-        assert_eq!(result.percent, 0.0);
-        assert_eq!(result.source, "chatgpt-visible-hard-limit");
-    }
-
-    #[test]
-    fn learned_context_boundary_uses_most_conservative_observed_ratio() {
-        let result = context_remaining(
-            &ContextSnapshot {
-                cumulative_tokens: Some(70),
-                cumulative_characters: Some(600),
-                cumulative_messages: Some(14),
-                ..Default::default()
-            },
-            &ContextProfile {
-                hard_limit_observed_tokens: Some(100),
-                hard_limit_observed_characters: Some(1000),
-                hard_limit_observed_messages: Some(20),
-            },
-        );
-        assert!((result.percent - 30.0).abs() < 0.0001);
-        assert_eq!(result.source, "learned-chat-boundary");
     }
 }

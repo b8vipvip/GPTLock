@@ -7,8 +7,7 @@ use std::io::{self, ErrorKind, Read, Write};
 use context_budget::{evaluate_context_budget, ContextBudgetInput};
 use context_profile::{evaluate_context_profile, ContextProfileEvaluationInput};
 use gptlock_private_engine::{
-    context_remaining, evaluate_request, evaluate_response, ContextProfile, ContextSnapshot,
-    RequestDecision, RequestEnvelope, ResponseEnvelope,
+    evaluate_request, evaluate_response, RequestDecision, RequestEnvelope, ResponseEnvelope,
 };
 use serde_json::{json, Value};
 
@@ -125,14 +124,7 @@ fn evaluate_context_payload(payload: Value) -> Result<Value, String> {
             .and_then(|result| serde_json::to_value(result).map_err(|error| error.to_string()));
     }
 
-    let snapshot = payload.get("snapshot").cloned().unwrap_or(Value::Null);
-    let profile = payload.get("profile").cloned().unwrap_or_else(|| json!({}));
-    serde_json::from_value::<ContextSnapshot>(snapshot)
-        .and_then(|snapshot| {
-            serde_json::from_value::<ContextProfile>(profile)
-                .map(|profile| json!(context_remaining(&snapshot, &profile)))
-        })
-        .map_err(|error| error.to_string())
+    Err("unsupported context evaluation mode".to_string())
 }
 
 fn handle(message: Value) -> Value {
@@ -154,7 +146,6 @@ fn handle(message: Value) -> Value {
             "protocolVersion": PROTOCOL_VERSION,
             "requestEvaluation": true,
             "responseEvaluation": true,
-            "contextEvaluation": true,
             "contextBudgetEvaluation": true,
             "contextProfileEvaluation": true,
             "compactRequestPatches": true
@@ -220,7 +211,6 @@ mod tests {
         assert_eq!(response["ok"], true);
         assert_eq!(response["protocolVersion"], 2);
         assert_eq!(response["data"]["compactRequestPatches"], true);
-        assert_eq!(response["data"]["contextEvaluation"], true);
         assert_eq!(response["data"]["contextBudgetEvaluation"], true);
         assert_eq!(response["data"]["contextProfileEvaluation"], true);
     }
@@ -271,34 +261,22 @@ mod tests {
     }
 
     #[test]
-    fn context_evaluation_returns_only_compact_remaining_result() {
+    fn context_evaluation_requires_an_explicit_private_mode() {
         let response = handle(json!({
             "id": "ctx-1",
             "type": "evaluate_context",
             "protocolVersion": 2,
             "payload": {
-                "snapshot": {
-                    "hardLimitVisible": false,
-                    "cumulativeTokens": 70,
-                    "cumulativeCharacters": 600,
-                    "cumulativeMessages": 14,
-                    "fallbackSafeLimitTokens": 924000,
-                    "fallbackRemainingTokens": 800000,
-                    "chatContent": "must never be echoed"
-                },
-                "profile": {
-                    "hardLimitObservedTokens": 100,
-                    "hardLimitObservedCharacters": 1000,
-                    "hardLimitObservedMessages": 20,
-                    "noticeText": "must never be echoed"
-                }
+                "snapshot": { "fallbackRemainingTokens": 800000 },
+                "profile": {}
             }
         }));
-        assert_eq!(response["ok"], true);
-        assert!((response["data"]["percent"].as_f64().unwrap() - 30.0).abs() < 0.0001);
-        assert_eq!(response["data"]["source"], "learned-chat-boundary");
-        assert_eq!(response["data"].as_object().unwrap().len(), 2);
-        assert!(!response.to_string().contains("must never be echoed"));
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "invalid_payload");
+        assert!(response["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unsupported context evaluation mode"));
     }
 
     #[test]

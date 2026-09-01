@@ -16,41 +16,10 @@ test('private context bridge registers one runtime listener', () => {
   assert.equal(listeners.length, 1);
 });
 
-test('bridge strips unrelated fields and bounds numeric metrics', () => {
-  const payload = bridge.sanitizePrivateContextPayload({
-    snapshot: {
-      hardLimitVisible: true,
-      cumulativeTokens: 12.9,
-      cumulativeCharacters: -1,
-      cumulativeMessages: Number.POSITIVE_INFINITY,
-      fallbackSafeLimitTokens: 1000,
-      fallbackRemainingTokens: 250,
-      chatContent: 'secret',
-    },
-    profile: {
-      hardLimitObservedTokens: 2000,
-      hardLimitObservedCharacters: null,
-      hardLimitObservedMessages: 20,
-      noticeText: 'secret',
-    },
-  });
-
-  assert.deepEqual(payload, {
-    snapshot: {
-      hardLimitVisible: true,
-      cumulativeTokens: 12,
-      cumulativeCharacters: null,
-      cumulativeMessages: null,
-      fallbackSafeLimitTokens: 1000,
-      fallbackRemainingTokens: 250,
-    },
-    profile: {
-      hardLimitObservedTokens: 2000,
-      hardLimitObservedCharacters: null,
-      hardLimitObservedMessages: 20,
-    },
-  });
-  assert.doesNotMatch(JSON.stringify(payload), /secret/);
+test('legacy coarse context remaining bridge surface is removed', () => {
+  assert.equal(Object.hasOwn(bridge, 'sanitizePrivateContextPayload'), false);
+  assert.equal(Object.hasOwn(bridge, 'normalizePrivateContextResult'), false);
+  assert.equal(Object.hasOwn(bridge, 'PRIVATE_CONTEXT_MESSAGE_TYPE'), false);
 });
 
 test('budget bridge transports chat text locally but strips unrelated metadata', () => {
@@ -68,7 +37,6 @@ test('budget bridge transports chat text locally but strips unrelated metadata',
       accountScope: 'must-not-cross',
     },
   });
-
   assert.deepEqual(payload, {
     model: 'gpt-5.6-sol',
     history: [
@@ -89,15 +57,6 @@ test('budget bridge rejects oversized local context before native messaging', ()
   assert.throws(() => bridge.sanitizePrivateContextBudgetPayload({
     history: [{ text: 'x'.repeat((16 * 1024 * 1024) + 1) }],
   }), /exceeds local evaluation limit/);
-});
-
-test('private context result normalization clamps percentage', () => {
-  assert.deepEqual(
-    bridge.normalizePrivateContextResult({ percent: 125, source: 'private-test' }),
-    { percent: 100, source: 'private-test' },
-  );
-  assert.throws(() => bridge.normalizePrivateContextResult({ percent: Number.NaN, source: 'x' }));
-  assert.throws(() => bridge.normalizePrivateContextResult({ percent: 10, source: '' }));
 });
 
 test('private context budget result is whitelisted and bounded', () => {
@@ -129,7 +88,6 @@ test('private context budget result is whitelisted and bounded', () => {
   assert.equal(normalized.contextWindowSource, 'model-window');
   assert.equal(Object.hasOwn(normalized, 'chatText'), false);
 });
-
 
 test('private context profile bridge strips metadata and keeps numeric learning facts', () => {
   const payload = bridge.sanitizePrivateContextProfilePayload({
