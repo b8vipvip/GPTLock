@@ -62,23 +62,19 @@ test('normalizes the official site release feed into update metadata', () => {
   assert.equal(payload.assets[0].browser_download_url, 'https://release-assets.githubusercontent.com/example/signed-download');
 });
 
-test('parses a verified Windows installer from official release metadata', () => {
+test('parses a verified Windows installer from direct release metadata', () => {
   const digest = `sha256:${'a'.repeat(64)}`;
   const release = parseLatestRelease({
-    tag: 'v0.4.0',
-    name: 'GPTLock v0.4.0',
-    publishedAt: '2026-09-01T00:00:00Z',
-    assets: [{
-      name: WINDOWS_INSTALLER_NAME,
-      url: 'https://release-assets.githubusercontent.com/example/signed-download',
-      digest,
-      size: 1234,
-    }],
-    releases: undefined,
     tag_name: 'v0.4.0',
     html_url: RELEASES_URL,
     draft: false,
     prerelease: false,
+    assets: [{
+      name: WINDOWS_INSTALLER_NAME,
+      browser_download_url: 'https://release-assets.githubusercontent.com/example/signed-download',
+      digest,
+      size: 1234,
+    }],
   }, '0.3.9');
 
   assert.equal(release.latestVersion, '0.4.0');
