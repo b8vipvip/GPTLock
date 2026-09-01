@@ -493,8 +493,7 @@ fn select_candidate(candidates: &[Candidate]) -> Selection {
     }
     let best = candidates
         .iter()
-        .filter(|candidate| candidate.score == best_score)
-        .next_back();
+        .rfind(|candidate| candidate.score == best_score);
     Selection {
         value: values.iter().next().map(|value| (*value).to_string()),
         conflict: false,
