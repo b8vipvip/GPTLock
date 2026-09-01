@@ -16,8 +16,6 @@
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
-    "https://api.github.com/*",
-    "https://github.com/*",
     "https://gptlock.mv3.cn/*"
   ],
   "background": {
