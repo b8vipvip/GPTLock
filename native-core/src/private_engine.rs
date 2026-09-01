@@ -27,8 +27,14 @@ impl EngineProcess {
             .stderr(Stdio::null())
             .spawn()
             .with_context(|| format!("start private engine: {}", path.display()))?;
-        let stdin = child.stdin.take().context("private engine stdin unavailable")?;
-        let stdout = child.stdout.take().context("private engine stdout unavailable")?;
+        let stdin = child
+            .stdin
+            .take()
+            .context("private engine stdin unavailable")?;
+        let stdout = child
+            .stdout
+            .take()
+            .context("private engine stdout unavailable")?;
         Ok(Self {
             path,
             child,
@@ -110,11 +116,15 @@ pub fn configured_path() -> Result<PathBuf> {
 }
 
 fn usable_file(path: &Path) -> bool {
-    fs::metadata(path).map(|metadata| metadata.is_file()).unwrap_or(false)
+    fs::metadata(path)
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false)
 }
 
 pub fn available() -> bool {
-    configured_path().map(|path| usable_file(&path)).unwrap_or(false)
+    configured_path()
+        .map(|path| usable_file(&path))
+        .unwrap_or(false)
 }
 
 pub fn capability() -> Value {
@@ -186,7 +196,9 @@ pub fn request(message: Value) -> Result<Value> {
                 .as_mut()
                 .context("private engine process unavailable after restart")?
                 .request(&message)
-                .with_context(|| format!("private engine request failed after restart: {first_error}"))
+                .with_context(|| {
+                    format!("private engine request failed after restart: {first_error}")
+                })
         }
     }
 }
