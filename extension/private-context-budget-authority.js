@@ -66,6 +66,7 @@
       contextWindowSource: String(result.contextWindowSource || base.contextWindowSource || 'private-engine'),
       fullConversationTokens: Number(result.usedTokens) || 0,
       budgetAuthority: 'private-engine',
+      budgetAvailable: true,
       privateBudgetCoverage: meta.coverage || 'conversation-tree',
       privateBudgetEvaluatedAt: meta.evaluatedAt || new Date().toISOString(),
       estimateOnly: true,
