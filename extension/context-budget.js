@@ -32,6 +32,7 @@
   const PENDING_BYPASS_STORAGE_PREFIX = 'gptlock.context-pending-bypass.v1:';
   const CONTEXT_CHECKPOINT_PERSIST_DEBOUNCE_MS = 800;
   const AUTO_PROBE_PREFIX = 'GPTLock 自动验证';
+  const PRIVATE_CONTEXT_PROFILE_MESSAGE_TYPE = 'GPTLOCK_PRIVATE_CONTEXT_PROFILE';
   const COMPOSER_SELECTORS = [
     '#prompt-textarea',
     'textarea[data-testid*="prompt"]',
@@ -1459,6 +1460,18 @@
     return activeProfile;
   }
 
+  async function evaluatePrivateContextProfile(event, payload = {}) {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: PRIVATE_CONTEXT_PROFILE_MESSAGE_TYPE,
+        payload: { event, ...payload },
+      });
+      return response?.ok && response.data ? response.data : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function persistHardLimitObservation(snapshot, notice) {
     if (!snapshot || !notice || hardLimitLearningInFlight) return null;
     const model = normalizeModelId(snapshot.model) || detectModel();
@@ -1476,16 +1489,46 @@
       const stored = await chrome.storage.local.get(key);
       const previous = stored[key] ?? null;
       const measurementReliable = ['conversation-tree+dom-reconcile', 'checkpoint+dom-restore'].includes(snapshot.historyMeasurementSource);
-      const next = nextHardLimitProfile({
+      const observedCharacters = Math.max(snapshot.fullConversationCharacters || 0, snapshot.cumulativeConversationCharacters || 0);
+      const observedMessages = Math.max(snapshot.messageCount || 0, snapshot.cumulativeMessageCount || 0);
+      const measuredAt = new Date().toISOString();
+      const privateNumbers = await evaluatePrivateContextProfile('hard_limit', {
+        model,
+        previous,
+        observedConversationTokens: observedTokens,
+        measurementReliable,
+      });
+      const next = privateNumbers ? {
+        ...(previous && typeof previous === 'object' ? previous : {}),
+        schemaVersion: 1,
+        accountScope: currentAccountScope,
+        accountScopeSource: currentAccountScopeSource || 'unknown',
+        model,
+        hardLimitObserved: true,
+        hardLimitObservedCount: privateNumbers.hardLimitObservedCount,
+        hardLimitObservedTokens: observedTokens,
+        hardLimitObservedCharacters: Math.max(0, Math.ceil(Number(observedCharacters) || 0)),
+        hardLimitObservedMessages: Math.max(0, Math.ceil(Number(observedMessages) || 0)),
+        hardLimitUpperBoundTokens: privateNumbers.hardLimitUpperBoundTokens,
+        hardLimitTokenCapUsable: privateNumbers.hardLimitTokenCapUsable,
+        hardLimitConfidence: privateNumbers.hardLimitConfidence,
+        hardLimitMeasurementSource: String(snapshot.historyMeasurementSource || 'unknown').slice(0, 80),
+        hardLimitLastObservedAt: measuredAt,
+        hardLimitLastConversationKey: String(snapshot.conversationKey || 'unknown').slice(0, 256),
+        hardLimitLastText: String(notice.text || '').replace(/\s+/g, ' ').trim().slice(0, 500),
+        hardLimitActionText: String(notice.actionText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+        hardLimitEvidence: 'chatgpt-visible-conversation-length-limit',
+        numericDerivation: 'private-engine',
+      } : nextHardLimitProfile({
         previous,
         accountScope: currentAccountScope,
         accountScopeSource: currentAccountScopeSource || 'unknown',
         model,
         observedConversationTokens: observedTokens,
-        observedCharacters: Math.max(snapshot.fullConversationCharacters || 0, snapshot.cumulativeConversationCharacters || 0),
-        observedMessages: Math.max(snapshot.messageCount || 0, snapshot.cumulativeMessageCount || 0),
+        observedCharacters,
+        observedMessages,
         conversationKey: snapshot.conversationKey,
-        measuredAt: new Date().toISOString(),
+        measuredAt,
         measurementSource: snapshot.historyMeasurementSource,
         measurementReliable,
         noticeText: notice.text,
@@ -1603,22 +1646,50 @@
     }
     // A successful answer proves the input accepted at send time, not the answer-inclusive post state.
     const confirmedConversationTokens = Math.ceil(pendingBypass.preSnapshot?.usedTokens || 0);
-    const windowProfile = contextWindowForModel(model);
-    const baseSafeLimitTokens = Math.floor(windowProfile.tokens * SAFETY_BUDGET_RATIO);
+    const confirmedCharacters = pendingBypass.preSnapshot?.fullConversationCharacters || 0;
+    const measuredAt = new Date().toISOString();
     try {
       const stored = await chrome.storage.local.get(key);
       const previous = stored[key] ?? null;
-      const next = nextLearnedProfile({
-        previous,
-        accountScope,
-        accountScopeSource,
+      const privateNumbers = await evaluatePrivateContextProfile('successful_bypass', {
         model,
+        previous,
         confirmedConversationTokens,
-        confirmedCharacters: pendingBypass.preSnapshot?.fullConversationCharacters || 0,
-        conversationKey: postSnapshot.conversationKey,
-        measuredAt: new Date().toISOString(),
-        baseSafeLimitTokens,
+        confirmedCharacters,
       });
+      let next = null;
+      if (privateNumbers) {
+        next = {
+          ...(previous && typeof previous === 'object' ? previous : {}),
+          schemaVersion: 1,
+          accountScope,
+          accountScopeSource,
+          model,
+          confirmedConversationTokens: privateNumbers.confirmedConversationTokens,
+          confirmedCharacters: privateNumbers.confirmedCharacters,
+          adaptiveSafeLimitTokens: privateNumbers.adaptiveSafeLimitTokens,
+          successfulBypassCount: privateNumbers.successfulBypassCount,
+          firstConfirmedAt: previous?.firstConfirmedAt || measuredAt,
+          lastConfirmedAt: measuredAt,
+          lastConversationKey: String(postSnapshot.conversationKey || 'unknown').slice(0, 256),
+          evidence: 'explicit-over-limit-send+formal-request+settled-assistant-turn',
+          numericDerivation: 'private-engine',
+        };
+      } else {
+        const windowProfile = contextWindowForModel(model);
+        const baseSafeLimitTokens = Math.floor(windowProfile.tokens * SAFETY_BUDGET_RATIO);
+        next = nextLearnedProfile({
+          previous,
+          accountScope,
+          accountScopeSource,
+          model,
+          confirmedConversationTokens,
+          confirmedCharacters,
+          conversationKey: postSnapshot.conversationKey,
+          measuredAt,
+          baseSafeLimitTokens,
+        });
+      }
       if (!next) {
         await discardPendingBypass();
         return null;

@@ -2,6 +2,7 @@ import { privateCoreChannel } from './private-core-channel.js';
 
 const REMAINING_MESSAGE_TYPE = 'GPTLOCK_PRIVATE_CONTEXT_EVALUATE';
 const BUDGET_MESSAGE_TYPE = 'GPTLOCK_PRIVATE_CONTEXT_BUDGET';
+const PROFILE_MESSAGE_TYPE = 'GPTLOCK_PRIVATE_CONTEXT_PROFILE';
 const MAX_METRIC = Number.MAX_SAFE_INTEGER;
 const MAX_HISTORY_PARTS = 20_000;
 const MAX_TOTAL_TEXT_CHARS = 16 * 1024 * 1024;
@@ -51,6 +52,47 @@ export function sanitizePrivateContextPayload(value = {}) {
       hardLimitObservedCharacters: boundedMetric(profile.hardLimitObservedCharacters),
       hardLimitObservedMessages: boundedMetric(profile.hardLimitObservedMessages),
     },
+  };
+}
+
+export function sanitizePrivateContextProfilePayload(value = {}) {
+  const event = String(value?.event ?? '').trim();
+  if (!['successful_bypass', 'hard_limit'].includes(event)) {
+    throw new TypeError('private context profile event is invalid');
+  }
+  const previous = value?.previous && typeof value.previous === 'object' ? value.previous : {};
+  return {
+    event,
+    model: normalizeModel(value?.model),
+    previous: {
+      confirmedConversationTokens: boundedMetric(previous.confirmedConversationTokens),
+      confirmedCharacters: boundedMetric(previous.confirmedCharacters),
+      adaptiveSafeLimitTokens: boundedMetric(previous.adaptiveSafeLimitTokens),
+      successfulBypassCount: boundedMetric(previous.successfulBypassCount),
+      hardLimitUpperBoundTokens: boundedMetric(previous.hardLimitUpperBoundTokens),
+      hardLimitObservedCount: boundedMetric(previous.hardLimitObservedCount),
+    },
+    confirmedConversationTokens: boundedMetric(value?.confirmedConversationTokens),
+    confirmedCharacters: boundedMetric(value?.confirmedCharacters),
+    observedConversationTokens: boundedMetric(value?.observedConversationTokens),
+    measurementReliable: value?.measurementReliable === true,
+  };
+}
+
+export function normalizePrivateContextProfileResult(value) {
+  const confidence = String(value?.hardLimitConfidence ?? '').trim();
+  if (!['measured-upper-bound', 'ui-boundary-only'].includes(confidence)) {
+    throw new TypeError('private context profile confidence is invalid');
+  }
+  return {
+    confirmedConversationTokens: requiredMetric(value?.confirmedConversationTokens, 'confirmedConversationTokens'),
+    confirmedCharacters: requiredMetric(value?.confirmedCharacters, 'confirmedCharacters'),
+    adaptiveSafeLimitTokens: requiredMetric(value?.adaptiveSafeLimitTokens, 'adaptiveSafeLimitTokens'),
+    successfulBypassCount: requiredMetric(value?.successfulBypassCount, 'successfulBypassCount'),
+    hardLimitUpperBoundTokens: requiredMetric(value?.hardLimitUpperBoundTokens, 'hardLimitUpperBoundTokens'),
+    hardLimitObservedCount: requiredMetric(value?.hardLimitObservedCount, 'hardLimitObservedCount'),
+    hardLimitTokenCapUsable: value?.hardLimitTokenCapUsable === true,
+    hardLimitConfidence: confidence,
   };
 }
 
@@ -144,10 +186,24 @@ function safeErrorCode(error) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (![REMAINING_MESSAGE_TYPE, BUDGET_MESSAGE_TYPE].includes(message?.type)) return false;
+  if (![REMAINING_MESSAGE_TYPE, BUDGET_MESSAGE_TYPE, PROFILE_MESSAGE_TYPE].includes(message?.type)) return false;
 
   void (async () => {
     try {
+      if (message.type === PROFILE_MESSAGE_TYPE) {
+        if (!(await privateCoreChannel.supports('contextProfileEvaluation'))) {
+          sendResponse({ ok: false, error: 'private_context_profile_unsupported' });
+          return;
+        }
+        const profileEvaluation = sanitizePrivateContextProfilePayload(message.payload);
+        const raw = await privateCoreChannel.request(
+          'evaluate_context',
+          { mode: 'profile', profileEvaluation },
+          'context-profile',
+        );
+        sendResponse({ ok: true, data: normalizePrivateContextProfileResult(raw) });
+        return;
+      }
       if (message.type === BUDGET_MESSAGE_TYPE) {
         if (!(await privateCoreChannel.supports('contextBudgetEvaluation'))) {
           sendResponse({ ok: false, error: 'private_context_budget_unsupported' });
@@ -181,4 +237,5 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 export {
   REMAINING_MESSAGE_TYPE as PRIVATE_CONTEXT_MESSAGE_TYPE,
   BUDGET_MESSAGE_TYPE as PRIVATE_CONTEXT_BUDGET_MESSAGE_TYPE,
+  PROFILE_MESSAGE_TYPE as PRIVATE_CONTEXT_PROFILE_MESSAGE_TYPE,
 };

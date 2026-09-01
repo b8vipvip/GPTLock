@@ -13,6 +13,7 @@ test('capability normalization whitelists only supported compiled-engine feature
         protocolVersion: 2,
         capabilityProbe: true,
         contextBudgetEvaluation: true,
+        contextProfileEvaluation: true,
         contextEvaluation: true,
         privateRuleDump: true,
       },
@@ -20,6 +21,7 @@ test('capability normalization whitelists only supported compiled-engine feature
   });
   assert.equal(capability.available, true);
   assert.equal(capability.contextBudgetEvaluation, true);
+  assert.equal(capability.contextProfileEvaluation, true);
   assert.equal(capability.contextEvaluation, true);
   assert.equal(Object.hasOwn(capability, 'privateRuleDump'), false);
 });

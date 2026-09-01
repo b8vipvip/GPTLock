@@ -1,9 +1,11 @@
 mod context_budget;
+mod context_profile;
 
 use std::collections::BTreeSet;
 use std::io::{self, ErrorKind, Read, Write};
 
 use context_budget::{evaluate_context_budget, ContextBudgetInput};
+use context_profile::{evaluate_context_profile, ContextProfileEvaluationInput};
 use gptlock_private_engine::{
     context_remaining, evaluate_request, evaluate_response, ContextProfile, ContextSnapshot,
     RequestDecision, RequestEnvelope, ResponseEnvelope,
@@ -105,6 +107,16 @@ fn compact_request_decision(input: &RequestEnvelope, decision: RequestDecision) 
 }
 
 fn evaluate_context_payload(payload: Value) -> Result<Value, String> {
+    if payload.get("mode").and_then(Value::as_str) == Some("profile") {
+        let profile = payload
+            .get("profileEvaluation")
+            .cloned()
+            .unwrap_or(Value::Null);
+        return serde_json::from_value::<ContextProfileEvaluationInput>(profile)
+            .map_err(|error| error.to_string())
+            .and_then(|input| evaluate_context_profile(&input))
+            .and_then(|result| serde_json::to_value(result).map_err(|error| error.to_string()));
+    }
     if payload.get("mode").and_then(Value::as_str) == Some("budget") {
         let budget = payload.get("budget").cloned().unwrap_or(Value::Null);
         return serde_json::from_value::<ContextBudgetInput>(budget)
@@ -144,6 +156,7 @@ fn handle(message: Value) -> Value {
             "responseEvaluation": true,
             "contextEvaluation": true,
             "contextBudgetEvaluation": true,
+            "contextProfileEvaluation": true,
             "compactRequestPatches": true
         })),
         "evaluate_request" => serde_json::from_value::<RequestEnvelope>(payload)
@@ -209,6 +222,30 @@ mod tests {
         assert_eq!(response["data"]["compactRequestPatches"], true);
         assert_eq!(response["data"]["contextEvaluation"], true);
         assert_eq!(response["data"]["contextBudgetEvaluation"], true);
+        assert_eq!(response["data"]["contextProfileEvaluation"], true);
+    }
+
+    #[test]
+    fn profile_mode_returns_only_numeric_learning_decision() {
+        let response = handle(json!({
+            "id": "profile-1",
+            "type": "evaluate_context",
+            "protocolVersion": 2,
+            "payload": {
+                "mode": "profile",
+                "profileEvaluation": {
+                    "event": "successful_bypass",
+                    "model": "gpt-5.6-sol",
+                    "confirmedConversationTokens": 950000,
+                    "confirmedCharacters": 3000000,
+                    "noticeText": "must never be echoed"
+                }
+            }
+        }));
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["data"]["confirmedConversationTokens"], 950000);
+        assert_eq!(response["data"]["adaptiveSafeLimitTokens"], 1007000);
+        assert!(!response.to_string().contains("must never be echoed"));
     }
 
     #[test]

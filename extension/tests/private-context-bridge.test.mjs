@@ -129,3 +129,54 @@ test('private context budget result is whitelisted and bounded', () => {
   assert.equal(normalized.contextWindowSource, 'model-window');
   assert.equal(Object.hasOwn(normalized, 'chatText'), false);
 });
+
+
+test('private context profile bridge strips metadata and keeps numeric learning facts', () => {
+  const payload = bridge.sanitizePrivateContextProfilePayload({
+    event: 'successful_bypass',
+    model: 'GPT-5.6-SOL',
+    previous: {
+      confirmedConversationTokens: 900000,
+      adaptiveSafeLimitTokens: 950000,
+      successfulBypassCount: 2,
+      noticeText: 'secret',
+    },
+    confirmedConversationTokens: 960000,
+    confirmedCharacters: 3000000,
+    accountScope: 'must-not-cross',
+  });
+  assert.deepEqual(payload, {
+    event: 'successful_bypass',
+    model: 'gpt-5.6-sol',
+    previous: {
+      confirmedConversationTokens: 900000,
+      confirmedCharacters: null,
+      adaptiveSafeLimitTokens: 950000,
+      successfulBypassCount: 2,
+      hardLimitUpperBoundTokens: null,
+      hardLimitObservedCount: null,
+    },
+    confirmedConversationTokens: 960000,
+    confirmedCharacters: 3000000,
+    observedConversationTokens: null,
+    measurementReliable: false,
+  });
+  assert.doesNotMatch(JSON.stringify(payload), /accountScope|noticeText|secret|must-not-cross/);
+});
+
+test('private context profile result accepts only compact numeric decisions', () => {
+  const result = bridge.normalizePrivateContextProfileResult({
+    confirmedConversationTokens: 960000,
+    confirmedCharacters: 3000000,
+    adaptiveSafeLimitTokens: 1017600,
+    successfulBypassCount: 3,
+    hardLimitUpperBoundTokens: 0,
+    hardLimitObservedCount: 0,
+    hardLimitTokenCapUsable: false,
+    hardLimitConfidence: 'ui-boundary-only',
+    privateFormula: 'must-not-survive',
+  });
+  assert.equal(result.adaptiveSafeLimitTokens, 1017600);
+  assert.equal(result.successfulBypassCount, 3);
+  assert.equal(Object.hasOwn(result, 'privateFormula'), false);
+});
