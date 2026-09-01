@@ -1,0 +1,28 @@
+name: temp-rfind
+on:
+  push:
+    branches: [refactor/private-engine-monorepo-v1]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/private-engine-monorepo-v1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Fix and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -c "from pathlib import Path; p=Path('private-engine/src/lib.rs'); s=p.read_text(); old='.filter(|candidate| candidate.score == best_score)\\n        .next_back();'; new='.rfind(|candidate| candidate.score == best_score);'; assert old in s; p.write_text(s.replace(old,new,1))"
+          cargo fmt --manifest-path private-engine/Cargo.toml --all
+          rm .github/workflows/tmp-rfind.yml
+          git config user.name github-actions-bot
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add private-engine/src/lib.rs .github/workflows/tmp-rfind.yml
+          git commit -m "fix(private): use reverse candidate search"
+          git push origin HEAD:refactor/private-engine-monorepo-v1
