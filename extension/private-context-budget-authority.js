@@ -145,9 +145,9 @@
     return normalizePart({ text, ...mediaCounts(root) });
   }
 
-  function sourceIsFresh(source) {
+  function sourceIsFresh(source, maxAgeMs = MAX_SOURCE_AGE_MS) {
     const measuredAt = Date.parse(source?.measuredAt || '');
-    return Number.isFinite(measuredAt) && Date.now() - measuredAt <= MAX_SOURCE_AGE_MS;
+    return Number.isFinite(measuredAt) && Date.now() - measuredAt <= maxAgeMs;
   }
 
   async function evaluationSource(refreshHistory) {
@@ -156,7 +156,8 @@
     const source = refreshHistory && typeof legacy.refreshPrivateHistory === 'function'
       ? await legacy.refreshPrivateHistory()
       : legacy.privateHistorySnapshot?.();
-    if (!source || !sourceIsFresh(source) || !Array.isArray(source.history) || !source.history.length) return null;
+    const maxAgeMs = refreshHistory ? 5_000 : MAX_SOURCE_AGE_MS;
+    if (!source || !sourceIsFresh(source, maxAgeMs) || !Array.isArray(source.history) || !source.history.length) return null;
     return {
       source,
       payload: buildBudgetPayload({
@@ -190,12 +191,12 @@
     const now = Date.now();
     if (inFlight) return { ok: false, error: 'private_context_budget_busy' };
     if (!force && api.state?.retryAfter && now < api.state.retryAfter) return { ok: false, error: api.state.error || 'private_context_budget_backoff' };
-    const input = await evaluationSource(refreshHistory);
-    if (!input) return failure('full_history_unavailable', true);
 
     inFlight = true;
     lastAttemptAt = now;
     try {
+      const input = await evaluationSource(refreshHistory);
+      if (!input) return failure('full_history_unavailable', true);
       const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPE, payload: input.payload });
       if (!response?.ok || !response.data) return failure(response?.error || 'private_context_budget_unavailable');
       const evaluatedAt = new Date().toISOString();
