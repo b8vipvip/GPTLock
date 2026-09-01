@@ -1,37 +1,43 @@
-# GPTLock public/private boundary
+# GPTLock private-core distribution boundary
 
-GPTLock is moving to a split-source architecture.
+GPTLock now uses a **private monorepo**. Implementation-sensitive source may live in this repository, but it must not be shipped as readable source in client artifacts.
 
-## Public side
+## Private repository source
 
-The public repository is for distribution and interoperability. It can expose what users and integrators need to install, run, update, diagnose at a safe level, and interact with released builds:
+The repository may contain all product source needed to build GPTLock, including proprietary detection, decision, verification, learning, correlation and context-budget logic.
 
-- official website and account UI;
-- installers, packaging and release metadata;
-- browser extension UI and thin integration shell;
-- public configuration and compatibility contracts;
-- user-facing documentation;
-- non-sensitive operational tooling.
+Implementation-sensitive Rust source belongs under `private-engine/`. The browser extension and `native-core` act as integration/runtime shells and should continue moving sensitive decisions behind the versioned local engine bridge instead of duplicating them in JavaScript.
 
-## Private side
+## Distributable client surface
 
-Implementation-sensitive behavior is not part of the public source contract. It includes proprietary detection, decision, verification, learning, correlation, and privileged runtime behavior.
+Release artifacts may contain:
 
-The public repository must not document or duplicate those internal mechanisms. A public component may send data through a versioned contract and receive a bounded decision/result, but the implementation behind that contract stays private.
+- browser extension runtime files required by Chrome/Edge;
+- `gptlock-core` / `gptlock-core.exe`;
+- the **compiled** `gptlock-engine` / `gptlock-engine.exe`;
+- installers, update helpers and user-facing assets.
 
-## Legacy v0.5.x source
+Release artifacts must not contain:
 
-The current public tree still contains implementation code required by the existing v0.5.x build and release path. That code predates the split and is treated as a frozen migration baseline. It remains temporarily so released installations keep building and updating normally.
+- `private-engine/src/**`;
+- Rust source files from the private engine;
+- private-engine `Cargo.toml` / `Cargo.lock`;
+- development-only private source snapshots or overlays.
 
-The migration rule is simple:
+CI inspects the extension archive and platform packages for these source leaks.
 
-1. do not add new proprietary behavior to frozen public-core paths;
-2. develop new core behavior privately;
-3. expose only the minimum stable contract needed by the public shell;
-4. once a private-built artifact replaces a legacy component, delete the legacy public source instead of evolving it further.
+## Legacy v0.5.x browser source
 
-Deleting a frozen legacy file is allowed. Modifying it to add or replace proprietary implementation is not.
+The extension still contains implementation-sensitive JavaScript inherited from the earlier public v0.5.x architecture. Those paths remain a frozen compatibility baseline while the compiled private engine takes over their responsibilities.
 
-## Historical limitation
+Migration rules:
 
-This boundary protects future development. Source that was already published in earlier Git history must be considered disclosed. Removing a file from the current branch does not erase historical commits. A separate repository-history/visibility migration is required if historical source also needs to stop being publicly downloadable.
+1. new proprietary behavior goes into `private-engine/`;
+2. browser/native shells expose only bounded collection, transport, compatibility and UI behavior;
+3. use shadow/private-first migration before deleting a legacy component;
+4. once a compiled-engine path is proven in Windows and Linux packages, delete the replaced legacy implementation instead of extending it;
+5. keep a compatibility fallback only while a released installation can legitimately lack the new engine artifact.
+
+## Historical disclosure
+
+Changing repository visibility prevents unauthenticated access going forward, but source previously published while the repository was public must still be considered historically disclosed. The migration therefore focuses on protecting future implementation changes and preventing readable private-engine source from entering distributed client artifacts.

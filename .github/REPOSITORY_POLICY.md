@@ -1,12 +1,14 @@
 # GPTLock repository governance
 
-## Public repository role
+## Private monorepo role
 
-This repository is the public distribution surface for GPTLock. It may contain the official website, account-facing UI, installers and packaging, public release metadata, user documentation, compatibility contracts, and the minimum client/runtime shell required to operate released builds.
+This repository is the authoritative private source repository for GPTLock. It may contain website/server source, browser-extension source, installers, packaging, native host code and proprietary private-engine source.
 
-Implementation-sensitive behavior is developed outside the public repository. New proprietary detection, policy, verification, learning, routing, or privileged runtime logic must not be added here as readable source. The public side should depend on stable interfaces and produced artifacts instead of duplicating private implementation.
+Repository privacy is **not** treated as the only source-protection control. Client artifacts remain inspectable after installation, so implementation-sensitive behavior should continue moving from shipped JavaScript into the compiled `private-engine/` component. CI must prevent private-engine Rust source and build metadata from entering extension archives or installer/package payloads.
 
-Some implementation source remains in the current tree for compatibility with the v0.5.x build pipeline. Those paths are a **legacy frozen baseline**: they may be removed as the private-core migration advances, but they must not receive new proprietary behavior. See `PRIVATE_CORE_BOUNDARY.md` and the CI boundary check.
+The old split-repository handoff is being retired. New private-engine behavior should be developed in `private-engine/` in this repository so normal pull-request CI can test the exact engine source that will be packaged with the same commit.
+
+Some implementation-sensitive JavaScript remains for v0.5.x compatibility. Those files stay a frozen migration baseline: delete them after a compiled-engine replacement is proven, but do not evolve them with new proprietary behavior. See `PRIVATE_CORE_BOUNDARY.md`.
 
 ## main branch
 
@@ -20,9 +22,18 @@ GitHub-native branch protection/rulesets remain the preferred hard enforcement l
 
 - require changes to enter `main` through pull requests;
 - require the repository CI checks before merge;
-- require the private-core boundary check;
+- require the private-core/distribution-boundary check;
 - disallow force pushes and deletion of `main`;
 - keep administrators subject to the same normal merge path unless emergency recovery is required.
+
+## Distribution boundary
+
+Only built client/runtime artifacts may leave the private source repository. In particular:
+
+- extension archives contain only the browser runtime files selected by the packaging workflow;
+- Windows Setup and Linux deb packages include `gptlock-core` plus the compiled `gptlock-engine` artifact;
+- `private-engine/src/**`, Rust source, Cargo manifests/locks and private development snapshots must never be distributed;
+- release/update credentials remain server- or Actions-side secrets and are never embedded in the extension or installer.
 
 ## Development branch lifecycle
 

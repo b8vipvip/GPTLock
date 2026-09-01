@@ -10,14 +10,14 @@ permissions:
 
 jobs:
   boundary:
-    name: Prevent new proprietary logic in public source
+    name: Enforce private-engine distribution boundary
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Enforce frozen public-core paths
+      - name: Enforce frozen legacy browser-core paths
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -27,11 +27,9 @@ jobs:
           set -Eeuo pipefail
 
           override=false
-          if jq -e '.[] | select(. == "public-core-maintenance")' <<<"$LABELS_JSON" >/dev/null; then
+          if jq -e '.[] | select(. == "public-core-maintenance" or . == "legacy-core-maintenance")' <<<"$LABELS_JSON" >/dev/null; then
             override=true
-          elif grep -Fq '[public-core-maintenance]' <<<"$PR_BODY"; then
-            # The body marker exists so a narrowly scoped maintenance PR can pass
-            # on its first opened/synchronize event even before label propagation.
+          elif grep -Eq '\[(public|legacy)-core-maintenance\]' <<<"$PR_BODY"; then
             override=true
           fi
 
@@ -41,31 +39,43 @@ jobs:
           while IFS=$'\t' read -r status path rest; do
             [[ -n "${path:-}" ]] || continue
             if [[ "$path" =~ $frozen_regex ]]; then
-              # Deletion is how the migration removes a legacy public implementation.
+              # Deletion is how a compiled-engine migration removes a legacy implementation.
               if [[ "$status" == D* ]]; then
                 echo "allowed deletion of frozen legacy source: $path"
                 continue
               fi
               if [[ "$override" == true ]]; then
-                echo "explicit public-core-maintenance override: $status $path"
+                echo "explicit legacy-core maintenance override: $status $path"
                 continue
               fi
-              echo "::error file=$path::This is a frozen legacy public-core path. New implementation-sensitive behavior belongs in the private core. Delete the legacy file after replacement, or use the explicit public-core-maintenance label/body marker for a narrowly scoped compatibility or security fix."
+              echo "::error file=$path::This is a frozen legacy runtime path. New implementation-sensitive behavior belongs in private-engine/. Delete the legacy file after replacement, or use an explicit maintenance override for a narrowly scoped compatibility/security fix."
               violations=$((violations + 1))
             fi
           done < <(git diff --name-status "$BASE_SHA"...HEAD)
 
           if (( violations > 0 )); then
-            echo "$violations frozen public-core path(s) were modified." >&2
+            echo "$violations frozen legacy path(s) were modified." >&2
             exit 1
           fi
 
-      - name: Reject private source material in public tree
+      - name: Reject obsolete or ambiguous private-source locations
         shell: bash
         run: |
           set -Eeuo pipefail
           forbidden='(^|/)(private-core|private-source|private-overlays|private-artifacts)(/|$)|\.private\.'
           if git ls-files | grep -E "$forbidden"; then
-            echo "Private implementation material must not be committed to the public repository." >&2
+            echo "Implementation-sensitive source must use the designated private-engine/ tree; obsolete private source locations are not allowed." >&2
+            exit 1
+          fi
+
+      - name: Confirm private engine is outside browser runtime tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -f private-engine/Cargo.toml
+          test -f private-engine/src/main.rs
+          test -f private-engine/src/lib.rs
+          if find extension -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'Cargo.lock' \) -print -quit | grep -q .; then
+            echo "Rust/private-engine source must not live inside extension/." >&2
             exit 1
           fi

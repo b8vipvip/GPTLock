@@ -51,10 +51,50 @@ jobs:
           unzip -l ../dist/gptlock-extension.zip | grep -q 'account-client.js'
           unzip -l ../dist/gptlock-extension.zip | grep -q 'auth-gate.js'
           unzip -l ../dist/gptlock-extension.zip | grep -q 'account.html'
+      - name: Enforce extension distribution boundary
+        run: |
+          listing="$(unzip -Z1 dist/gptlock-extension.zip)"
+          if grep -E '(^|/)(private-engine|private-source|private-core)/|\.rs$|Cargo\.toml$|Cargo\.lock$' <<<"$listing"; then
+            echo 'Private implementation source leaked into the browser extension archive.' >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: gptlock-extension
           path: dist/gptlock-extension.zip
+          if-no-files-found: error
+
+  private-engine:
+    name: Private Engine (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            executable: gptlock-private-engine
+          - os: windows-latest
+            executable: gptlock-private-engine.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: private-engine
+      - name: Check formatting
+        run: cargo fmt --manifest-path private-engine/Cargo.toml --all -- --check
+      - name: Lint
+        run: cargo clippy --manifest-path private-engine/Cargo.toml --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --manifest-path private-engine/Cargo.toml --all-targets
+      - name: Build release
+        run: cargo build --release --manifest-path private-engine/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gptlock-private-engine-${{ matrix.os }}
+          path: private-engine/target/release/${{ matrix.executable }}
           if-no-files-found: error
 
   native-core:
@@ -123,15 +163,18 @@ jobs:
           }
       - name: Build Native Core
         run: cargo build --locked --release --manifest-path native-core/Cargo.toml
+      - name: Build Private Engine
+        run: cargo build --release --manifest-path private-engine/Cargo.toml
       - name: Compile Setup
         shell: pwsh
         run: |
           $version = (Get-Content 'extension\manifest.json' -Raw | ConvertFrom-Json).version
+          $privateEngine = (Resolve-Path 'private-engine\target\release\gptlock-private-engine.exe').Path
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path -LiteralPath $iscc)) {
             choco install innosetup --yes --no-progress
           }
-          & $iscc "/DMyAppVersion=$version" 'packaging\windows\GPTLock.iss'
+          & $iscc "/DMyAppVersion=$version" "/DPrivateEnginePath=$privateEngine" 'packaging\windows\GPTLock.iss'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install and verify Setup registration
         shell: pwsh
@@ -140,9 +183,11 @@ jobs:
           & 'dist\windows\GPTLockSetup-x64.exe' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/DIR=$root"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $binary = Join-Path $root 'bin\gptlock-core.exe'
+          $privateEngine = Join-Path $root 'bin\gptlock-engine.exe'
           $repair = Join-Path $root 'tools\Repair-GPTLock.ps1'
           foreach ($path in @(
             $binary,
+            $privateEngine,
             $repair,
             (Join-Path $root 'extension\manifest.json'),
             (Join-Path $root 'extension\page-model-evidence.js'),
@@ -152,6 +197,12 @@ jobs:
             (Join-Path $root 'extension\account.html')
           )) {
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing installed file: $path" }
+          }
+          $sourceLeaks = @(Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object {
+            $_.Extension -eq '.rs' -or $_.Name -in @('Cargo.toml', 'Cargo.lock')
+          })
+          if ($sourceLeaks.Count -gt 0) {
+            throw "Private Rust source leaked into Setup payload: $($sourceLeaks.FullName -join ', ')"
           }
           & $repair
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -204,17 +255,24 @@ jobs:
           workspaces: native-core
       - name: Build Native Core
         run: cargo build --locked --release --manifest-path native-core/Cargo.toml
+      - name: Build Private Engine
+        run: cargo build --release --manifest-path private-engine/Cargo.toml
       - name: Build and inspect deb
         run: |
-          chmod +x packaging/linux/build-deb.sh
-          package="$(packaging/linux/build-deb.sh dist/linux | tail -n 1)"
+          chmod +x packaging/linux/build-deb.sh private-engine/target/release/gptlock-private-engine
+          package="$(GPTLOCK_PRIVATE_ENGINE="$PWD/private-engine/target/release/gptlock-private-engine" GPTLOCK_REQUIRE_PRIVATE_ENGINE=1 packaging/linux/build-deb.sh dist/linux | tail -n 1)"
           dpkg-deb --info "$package"
           contents="$(dpkg-deb --contents "$package")"
           printf '%s\n' "$contents"
+          grep -q '/usr/bin/gptlock-engine' <<<"$contents"
           grep -q '/usr/share/gptlock/extension/account-client.js' <<<"$contents"
           grep -q '/usr/share/gptlock/extension/auth-gate.js' <<<"$contents"
           grep -q '/usr/share/gptlock/extension/account.html' <<<"$contents"
           grep -q '/usr/share/gptlock/extension/context-budget.js' <<<"$contents"
+          if grep -E '/private-engine/|\.rs$|Cargo\.toml$|Cargo\.lock$' <<<"$contents"; then
+            echo 'Private implementation source leaked into Linux package.' >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: gptlock-linux-deb

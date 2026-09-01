@@ -43,13 +43,16 @@ test('public documentation does not publish implementation-sensitive markers', a
   }
 });
 
-test('public repository declares the split-source migration boundary', async () => {
+test('private monorepo declares the client distribution boundary', async () => {
   const policy = await readFile(new URL('.github/REPOSITORY_POLICY.md', root), 'utf8');
   const boundary = await readFile(new URL('PRIVATE_CORE_BOUNDARY.md', root), 'utf8');
   const contract = JSON.parse(await readFile(new URL('contracts/core-bridge.schema.json', root), 'utf8'));
 
-  assert.match(policy, /legacy frozen baseline/i);
-  assert.match(boundary, /split-source/i);
+  assert.match(policy, /private monorepo/i);
+  assert.match(policy, /distribution boundary/i);
+  assert.match(boundary, /private repository source/i);
+  assert.match(boundary, /distribution boundary/i);
+  assert.match(boundary, /compiled/i);
   assert.equal(contract.$defs.request.properties.protocolVersion.const, 2);
   assert.deepEqual(contract.$defs.request.properties.type.enum, [
     'evaluate_request',
