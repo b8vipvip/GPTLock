@@ -220,8 +220,6 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
       tag,
       name: String(release.name || tag),
       publishedAt: release.published_at || release.created_at || null,
-      notes: String(release.body || '').slice(0, 20_000),
-      url: `${publicOrigin}/releases`,
       assets,
     };
   }
@@ -272,7 +270,7 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
   async function waitForChange(since, waitMs = MAX_NOTIFICATION_WAIT_MS) {
     const current = loadIndex();
     const normalizedSince = String(since || '');
-    if (!normalizedSince || normalizedSince !== current.generation) {
+    if ((normalizedSince && normalizedSince !== current.generation) || (!normalizedSince && current.releases.length)) {
       return { changed: true, feed: current };
     }
     const timeout = Math.max(0, Math.min(MAX_NOTIFICATION_WAIT_MS, Number(waitMs || 0)));
@@ -335,7 +333,7 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
     const latest = result.feed.releases[0] || null;
     return {
       ok: true,
-      changed: Boolean(result.changed),
+      changed: Boolean(result.changed && latest),
       generation: result.feed.generation,
       latestVersion: result.feed.latestVersion,
       publishedAt: latest?.publishedAt || null,
