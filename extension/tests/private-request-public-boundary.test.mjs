@@ -19,6 +19,9 @@ const forbiddenImplementationMarkers = [
   /gpt-5\.6-sol-wm/i,
   /x-openai-model/i,
   /thinking_effort/i,
+  /network-evidence\.js/i,
+  /extractResponseEvidence/i,
+  /streamPayloadMatches/i,
 ];
 
 test('public private-core routing contains transport only, not proprietary rules', async () => {
