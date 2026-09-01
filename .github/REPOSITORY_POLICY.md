@@ -1,5 +1,13 @@
 # GPTLock repository governance
 
+## Public repository role
+
+This repository is the public distribution surface for GPTLock. It may contain the official website, account-facing UI, installers and packaging, public release metadata, user documentation, compatibility contracts, and the minimum client/runtime shell required to operate released builds.
+
+Implementation-sensitive behavior is developed outside the public repository. New proprietary detection, policy, verification, learning, routing, or privileged runtime logic must not be added here as readable source. The public side should depend on stable interfaces and produced artifacts instead of duplicating private implementation.
+
+Some implementation source remains in the current tree for compatibility with the v0.5.x build pipeline. Those paths are a **legacy frozen baseline**: they may be removed as the private-core migration advances, but they must not receive new proprietary behavior. See `PRIVATE_CORE_BOUNDARY.md` and the CI boundary check.
+
 ## main branch
 
 `main` is the release branch. Changes should enter `main` only through a merged pull request after the repository CI checks have passed.
@@ -12,6 +20,7 @@ GitHub-native branch protection/rulesets remain the preferred hard enforcement l
 
 - require changes to enter `main` through pull requests;
 - require the repository CI checks before merge;
+- require the private-core boundary check;
 - disallow force pushes and deletion of `main`;
 - keep administrators subject to the same normal merge path unless emergency recovery is required.
 
