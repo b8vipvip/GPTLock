@@ -1,0 +1,66 @@
+name: Private Core Boundary
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  boundary:
+    name: Prevent new proprietary logic in public source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce frozen public-core paths
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -Eeuo pipefail
+
+          override=false
+          if jq -e '.[] | select(. == "public-core-maintenance")' <<<"$LABELS_JSON" >/dev/null; then
+            override=true
+          fi
+
+          frozen_regex='^(extension/(background|content|context-budget|context-remaining-indicator|guard|model-auto-lock|model-catalog|network-evidence|network-monitor|page-model-evidence|policy)\.js|native-core/src/(bridge|config|lib|verifier)\.rs)$'
+          violations=0
+
+          while IFS=$'\t' read -r status path rest; do
+            [[ -n "${path:-}" ]] || continue
+            if [[ "$path" =~ $frozen_regex ]]; then
+              # Deletion is how the migration removes a legacy public implementation.
+              if [[ "$status" == D* ]]; then
+                echo "allowed deletion of frozen legacy source: $path"
+                continue
+              fi
+              if [[ "$override" == true ]]; then
+                echo "explicit public-core-maintenance override: $status $path"
+                continue
+              fi
+              echo "::error file=$path::This is a frozen legacy public-core path. New implementation-sensitive behavior belongs in the private core. Delete the legacy file after replacement, or use the explicit public-core-maintenance label for a narrowly scoped compatibility/security fix."
+              violations=$((violations + 1))
+            fi
+          done < <(git diff --name-status "$BASE_SHA"...HEAD)
+
+          if (( violations > 0 )); then
+            echo "$violations frozen public-core path(s) were modified." >&2
+            exit 1
+          fi
+
+      - name: Reject private source material in public tree
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          forbidden='(^|/)(private-core|private-source|private-overlays|private-artifacts)(/|$)|\.private\.'
+          if git ls-files | grep -E "$forbidden"; then
+            echo "Private implementation material must not be committed to the public repository." >&2
+            exit 1
+          fi

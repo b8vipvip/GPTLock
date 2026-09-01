@@ -1,8 +1,10 @@
 # GPTLock v0.4.6
 
-- Keep popup Page selection synchronized with the same validated composer model evidence used by the floating page-model indicator.
-- Preserve visible composer text when a generic aria-label or title would otherwise hide the actual model family.
-- Recollect live page selection when the popup requests current state, instead of returning only a stale cached observation.
-- Preserve page model evidence source, labels, ambiguity state, and candidate families for diagnostics.
+用户可见改进：
 
-Chrome's `chrome.debugger` security infobar remains browser-controlled. GPTLock does not attempt to suppress or remove Chromium security UI while using the CDP/Fetch request-locking path.
+- 改进插件状态与页面当前模型显示的一致性；
+- 减少页面变化造成的状态显示滞后；
+- 增强诊断信息，便于定位配置或页面状态异常；
+- 保持浏览器自身的安全提示与权限提示不被产品隐藏。
+
+历史版本页面只保留用户需要理解的行为变化，不再记录可直接复刻内部实现的字段、接口、选择器或底层处理路径。

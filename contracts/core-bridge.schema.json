@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gptlock.mv3.cn/contracts/core-bridge.schema.json",
+  "title": "GPTLock Core Bridge Contract",
+  "description": "Public compatibility contract between the GPTLock client shell and a released core implementation. The contract intentionally does not describe internal decision algorithms.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/response" }
+  ],
+  "$defs": {
+    "request": {
+      "type": "object",
+      "required": ["id", "type", "protocolVersion", "payload"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "type": {
+          "enum": [
+            "evaluate_request",
+            "evaluate_response",
+            "evaluate_context",
+            "get_capabilities"
+          ]
+        },
+        "protocolVersion": { "const": 2 },
+        "payload": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "type": "object",
+      "required": ["id", "ok", "protocolVersion"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "ok": { "type": "boolean" },
+        "protocolVersion": { "const": 2 },
+        "data": { "type": "object" },
+        "error": {
+          "type": "object",
+          "required": ["code"],
+          "properties": {
+            "code": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "message": { "type": "string", "maxLength": 1000 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
