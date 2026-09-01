@@ -29,7 +29,7 @@ jobs:
       - name: Validate private engine
         run: |
           cargo fmt --manifest-path private-engine/Cargo.toml --all -- --check
-          cargo test --locked --manifest-path private-engine/Cargo.toml
+          cargo test --manifest-path private-engine/Cargo.toml
       - name: Commit release metadata
         run: |
           git config user.name 'github-actions[bot]'
