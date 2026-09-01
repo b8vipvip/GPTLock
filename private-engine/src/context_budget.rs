@@ -87,14 +87,25 @@ fn normalize_model(value: Option<&str>) -> Option<String> {
     })
 }
 
+fn matches_model_family(model: &str, family: &str) -> bool {
+    model == family
+        || model
+            .strip_prefix(family)
+            .map(|suffix| suffix.starts_with('-'))
+            .unwrap_or(false)
+}
+
 fn model_window(model: Option<&str>) -> (u64, &'static str) {
     let Some(model) = normalize_model(model) else {
         return (DEFAULT_CONTEXT_WINDOW_TOKENS, "conservative-fallback");
     };
-    if model.starts_with("gpt-5.4-mini") || model.starts_with("gpt-5.4-nano") {
+    if matches_model_family(&model, "gpt-5.4-mini") || matches_model_family(&model, "gpt-5.4-nano")
+    {
         return (400_000, "model-window");
     }
-    if model.starts_with("gpt-5.6") || model.starts_with("gpt-5.5") || model.starts_with("gpt-5.4")
+    if matches_model_family(&model, "gpt-5.6")
+        || matches_model_family(&model, "gpt-5.5")
+        || matches_model_family(&model, "gpt-5.4")
     {
         return (1_050_000, "model-window");
     }
@@ -259,6 +270,17 @@ mod tests {
         assert!(result.history_tokens > MESSAGE_OVERHEAD_TOKENS);
         assert!(result.draft_tokens > 0);
         assert!(result.remaining_percent > 90.0);
+    }
+
+    #[test]
+    fn model_family_matching_does_not_accept_lookalike_prefixes() {
+        let result = evaluate_context_budget(&ContextBudgetInput {
+            model: Some("gpt-5.4-minimum".to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(result.nominal_limit_tokens, DEFAULT_CONTEXT_WINDOW_TOKENS);
+        assert_eq!(result.context_window_source, "conservative-fallback");
     }
 
     #[test]

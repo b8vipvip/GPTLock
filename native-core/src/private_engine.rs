@@ -127,12 +127,65 @@ pub fn available() -> bool {
         .unwrap_or(false)
 }
 
-pub fn capability() -> Value {
-    let path = configured_path().ok();
-    serde_json::json!({
-        "available": path.as_deref().map(usable_file).unwrap_or(false),
+fn capability_from_probe(installed: bool, response: Option<&Value>) -> Value {
+    let mut capability = serde_json::json!({
+        "available": installed,
         "protocolVersion": PRIVATE_ENGINE_PROTOCOL,
-    })
+        "capabilityProbe": false,
+        "requestEvaluation": false,
+        "responseEvaluation": false,
+        "contextEvaluation": false,
+        "contextBudgetEvaluation": false,
+        "compactRequestPatches": false,
+    });
+    if !installed {
+        return capability;
+    }
+    let Some(response) = response else {
+        return capability;
+    };
+    if response.get("ok").and_then(Value::as_bool) != Some(true)
+        || response.get("protocolVersion").and_then(Value::as_u64) != Some(PRIVATE_ENGINE_PROTOCOL)
+    {
+        return capability;
+    }
+    let Some(data) = response.get("data").and_then(Value::as_object) else {
+        return capability;
+    };
+    let Some(object) = capability.as_object_mut() else {
+        return capability;
+    };
+    object.insert("capabilityProbe".to_string(), Value::Bool(true));
+    for feature in [
+        "requestEvaluation",
+        "responseEvaluation",
+        "contextEvaluation",
+        "contextBudgetEvaluation",
+        "compactRequestPatches",
+    ] {
+        object.insert(
+            feature.to_string(),
+            Value::Bool(data.get(feature).and_then(Value::as_bool) == Some(true)),
+        );
+    }
+    capability
+}
+
+pub fn capability() -> Value {
+    let installed = configured_path()
+        .map(|path| usable_file(&path))
+        .unwrap_or(false);
+    if !installed {
+        return capability_from_probe(false, None);
+    }
+    let probe = serde_json::json!({
+        "id": "native-capability-probe",
+        "type": "get_capabilities",
+        "protocolVersion": PRIVATE_ENGINE_PROTOCOL,
+        "payload": {},
+    });
+    let response = request(probe).ok();
+    capability_from_probe(true, response.as_ref())
 }
 
 fn ensure_process(engine: &mut EngineState, path: &Path) -> Result<()> {
@@ -230,6 +283,42 @@ mod tests {
             "payload": {}
         }))
         .is_err());
+    }
+
+    #[test]
+    fn capability_probe_exposes_only_declared_feature_flags() {
+        let response = serde_json::json!({
+            "id": "cap",
+            "ok": true,
+            "protocolVersion": 2,
+            "data": {
+                "requestEvaluation": true,
+                "responseEvaluation": true,
+                "contextEvaluation": true,
+                "contextBudgetEvaluation": true,
+                "compactRequestPatches": true,
+                "privateRuleDump": true
+            }
+        });
+        let capability = capability_from_probe(true, Some(&response));
+        assert_eq!(capability["available"], true);
+        assert_eq!(capability["capabilityProbe"], true);
+        assert_eq!(capability["contextBudgetEvaluation"], true);
+        assert!(capability.get("privateRuleDump").is_none());
+    }
+
+    #[test]
+    fn capability_probe_is_backward_compatible_with_an_older_engine() {
+        let response = serde_json::json!({
+            "id": "cap",
+            "ok": true,
+            "protocolVersion": 2,
+            "data": { "contextEvaluation": true }
+        });
+        let capability = capability_from_probe(true, Some(&response));
+        assert_eq!(capability["available"], true);
+        assert_eq!(capability["contextEvaluation"], true);
+        assert_eq!(capability["contextBudgetEvaluation"], false);
     }
 
     #[test]

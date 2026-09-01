@@ -148,11 +148,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   void (async () => {
     try {
-      if (!(await privateCoreChannel.isAvailable())) {
-        sendResponse({ ok: false, error: 'private_engine_unavailable' });
-        return;
-      }
       if (message.type === BUDGET_MESSAGE_TYPE) {
+        if (!(await privateCoreChannel.supports('contextBudgetEvaluation'))) {
+          sendResponse({ ok: false, error: 'private_context_budget_unsupported' });
+          return;
+        }
         const budget = sanitizePrivateContextBudgetPayload(message.payload);
         const raw = await privateCoreChannel.request(
           'evaluate_context',
@@ -160,6 +160,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           'context-budget',
         );
         sendResponse({ ok: true, data: normalizePrivateContextBudgetResult(raw) });
+        return;
+      }
+      if (!(await privateCoreChannel.isAvailable())) {
+        sendResponse({ ok: false, error: 'private_engine_unavailable' });
         return;
       }
       const payload = sanitizePrivateContextPayload(message.payload);
