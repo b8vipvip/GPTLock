@@ -1,0 +1,47 @@
+name: Temporary Private Engine Clippy Fix
+
+on:
+  push:
+    branches:
+      - refactor/private-engine-monorepo-v1
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/private-engine-monorepo-v1
+      - name: Apply Clippy recommendation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('private-engine/src/lib.rs')
+          text = path.read_text()
+          old = '''    let best = candidates
+        .iter()
+        .filter(|candidate| candidate.score == best_score)
+        .next_back();'''
+          new = '''    let best = candidates
+        .iter()
+        .rfind(|candidate| candidate.score == best_score);'''
+          if old not in text:
+              raise SystemExit('expected candidate selection block not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          cargo fmt --manifest-path private-engine/Cargo.toml --all
+          rm -f .github/workflows/tmp-fix-private-engine-rfind.yml
+      - name: Commit fix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add private-engine/src/lib.rs .github/workflows/tmp-fix-private-engine-rfind.yml
+          git commit -m 'fix(private): use reverse candidate search'
+          git push origin HEAD:refactor/private-engine-monorepo-v1
