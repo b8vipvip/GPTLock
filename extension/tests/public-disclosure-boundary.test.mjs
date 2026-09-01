@@ -13,6 +13,7 @@ const publicDocs = [
   'docs/SECURITY.md',
   'docs/UPDATE.md',
   'docs/USAGE.md',
+  'docs/changelog-v0.4.6.md',
   'extension/README.md',
   'native-core/README.md',
 ];
