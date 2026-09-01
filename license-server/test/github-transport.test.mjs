@@ -116,6 +116,74 @@ exec "$REAL_GIT" "$@"
   }
 });
 
+test('HTTPS private-repo authentication uses an environment-backed credential helper without logging the token', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gptlock-private-fetch-test-'));
+  const repo = join(dir, 'repo');
+  const bin = join(dir, 'bin');
+  const token = 'github_pat_DO_NOT_LEAK_private_repo_test_123456789';
+  try {
+    await mkdir(repo);
+    await mkdir(bin);
+    assert.equal(runGit(['init', repo]).status, 0);
+    assert.equal(runGit(['-C', repo, 'config', 'user.email', 'test@example.invalid']).status, 0);
+    assert.equal(runGit(['-C', repo, 'config', 'user.name', 'GPTLock Test']).status, 0);
+    await writeFile(join(repo, 'README.md'), 'private fetch test\n');
+    assert.equal(runGit(['-C', repo, 'add', 'README.md']).status, 0);
+    assert.equal(runGit(['-C', repo, 'commit', '-m', 'fixture']).status, 0);
+    assert.equal(runGit(['-C', repo, 'remote', 'add', 'origin', 'https://github.com/b8vipvip/GPTLock.git']).status, 0);
+
+    const realGit = spawnSync('bash', ['-lc', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+    assert.ok(realGit);
+    const fakeGit = join(bin, 'git');
+    await writeFile(fakeGit, `#!/usr/bin/env bash
+set -Eeuo pipefail
+REAL_GIT=${JSON.stringify(realGit)}
+repo_dir=""
+previous=""
+for arg in "$@"; do
+  if [[ "$previous" == "-C" ]]; then repo_dir="$arg"; fi
+  previous="$arg"
+done
+for arg in "$@"; do
+  if [[ "$arg" == "fetch" ]]; then
+    [[ -n "$repo_dir" ]]
+    [[ "\${GPTLOCK_GITHUB_TOKEN:-}" == ${JSON.stringify(token)} ]]
+    printf '%s\n' "$@" >"$repo_dir/fetch-args.txt"
+    git_dir="$($REAL_GIT -C "$repo_dir" rev-parse --absolute-git-dir)"
+    commit="$($REAL_GIT -C "$repo_dir" rev-parse HEAD)"
+    printf '%s\t\tbranch '\''main'\'' of https://github.com/b8vipvip/GPTLock\n' "$commit" >"$git_dir/FETCH_HEAD"
+    exit 0
+  fi
+done
+exec "$REAL_GIT" "$@"
+`);
+    await chmod(fakeGit, 0o755);
+
+    const result = spawnSync('bash', [helper.pathname, repo, 'main'], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        GPTLOCK_UPDATE_TRANSPORT: 'https',
+        GPTLOCK_UPDATE_FETCH_RETRIES: '1',
+        GPTLOCK_GITHUB_TOKEN: token,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), 'origin-https');
+    assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, new RegExp(token));
+
+    const args = await readFile(join(repo, 'fetch-args.txt'), 'utf8');
+    assert.match(args, /credential\.helper=/);
+    assert.match(args, /username=x-access-token/);
+    assert.match(args, /password=\$GPTLOCK_GITHUB_TOKEN/);
+    assert.doesNotMatch(args, new RegExp(token));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('GitHub host keys are pinned for SSH 22 and SSH 443', async () => {
   const content = await readFile(knownHosts, 'utf8');
   const key = 'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl';

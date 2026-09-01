@@ -17,6 +17,7 @@ SSH_KEEPALIVE="${GPTLOCK_UPDATE_SSH_KEEPALIVE_SECONDS:-10}"
 HTTPS_LOW_SPEED_TIME="${GPTLOCK_UPDATE_HTTPS_LOW_SPEED_TIME_SECONDS:-30}"
 HTTPS_LOW_SPEED_LIMIT="${GPTLOCK_UPDATE_HTTPS_LOW_SPEED_LIMIT_BYTES:-1024}"
 KNOWN_HOSTS="${GPTLOCK_UPDATE_SSH_KNOWN_HOSTS:-$DEFAULT_KNOWN_HOSTS}"
+HTTPS_TOKEN="${GPTLOCK_GITHUB_TOKEN:-${GH_TOKEN:-}}"
 
 validate_positive_int() {
   local name="$1" value="$2" minimum="${3:-1}" maximum="${4:-3600}"
@@ -128,13 +129,30 @@ fetch_once() {
       timeout --foreground --signal=TERM --kill-after=5 "${FETCH_TIMEOUT}s" \
       git -C "$repo_dir" fetch --no-tags --force "$url" "$ref"
   else
-    GIT_TERMINAL_PROMPT=0 \
-      timeout --foreground --signal=TERM --kill-after=5 "${FETCH_TIMEOUT}s" \
-      git -C "$repo_dir" \
-        -c http.version=HTTP/1.1 \
-        -c "http.lowSpeedTime=$HTTPS_LOW_SPEED_TIME" \
-        -c "http.lowSpeedLimit=$HTTPS_LOW_SPEED_LIMIT" \
-        fetch --no-tags --force "$url" "$ref"
+    if [[ -n "$HTTPS_TOKEN" ]]; then
+      # Keep credentials out of the remote URL, process arguments and updater logs.
+      # Git invokes this helper only when github.com requests HTTPS credentials; the
+      # helper reads the token from its inherited environment at execution time.
+      local credential_helper
+      credential_helper='!f() { printf "%s\n" "username=x-access-token" "password=$GPTLOCK_GITHUB_TOKEN"; }; f'
+      GPTLOCK_GITHUB_TOKEN="$HTTPS_TOKEN" GIT_TERMINAL_PROMPT=0 \
+        timeout --foreground --signal=TERM --kill-after=5 "${FETCH_TIMEOUT}s" \
+        git -C "$repo_dir" \
+          -c http.version=HTTP/1.1 \
+          -c "http.lowSpeedTime=$HTTPS_LOW_SPEED_TIME" \
+          -c "http.lowSpeedLimit=$HTTPS_LOW_SPEED_LIMIT" \
+          -c "credential.helper=$credential_helper" \
+          -c credential.useHttpPath=true \
+          fetch --no-tags --force "$url" "$ref"
+    else
+      GIT_TERMINAL_PROMPT=0 \
+        timeout --foreground --signal=TERM --kill-after=5 "${FETCH_TIMEOUT}s" \
+        git -C "$repo_dir" \
+          -c http.version=HTTP/1.1 \
+          -c "http.lowSpeedTime=$HTTPS_LOW_SPEED_TIME" \
+          -c "http.lowSpeedLimit=$HTTPS_LOW_SPEED_LIMIT" \
+          fetch --no-tags --force "$url" "$ref"
+    fi
   fi
 
   [[ -s "$fetch_head" ]] || return 1

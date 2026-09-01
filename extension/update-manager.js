@@ -1,7 +1,7 @@
 import { appendRuntimeLog } from './runtime-log.js';
 
-export const RELEASE_API_URL = 'https://api.github.com/repos/b8vipvip/GPTLock/releases/latest';
-export const RELEASES_URL = 'https://github.com/b8vipvip/GPTLock/releases/latest';
+export const RELEASE_API_URL = 'https://gptlock.mv3.cn/site/api/releases';
+export const RELEASES_URL = 'https://gptlock.mv3.cn/releases';
 export const WINDOWS_INSTALLER_NAME = 'GPTLockSetup-x64.exe';
 export const WINDOWS_DOWNLOAD_FILENAME = 'GPTLock/GPTLockSetup-x64.exe';
 export const UPDATE_STATUS_KEY = 'gptlockUiUpdateStatus';
@@ -42,14 +42,45 @@ function sha256FromDigest(value) {
   return match ? match[1].toLowerCase() : null;
 }
 
+function secureDownloadUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function logUpdate(level, event, details = {}) {
   if (!globalThis.chrome?.storage?.local) return;
   void appendRuntimeLog(level, 'update', event, details).catch(() => {});
 }
 
-export function parseLatestRelease(release, currentVersion) {
+export function normalizeLatestReleasePayload(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  if (!Array.isArray(payload.releases)) return payload;
+  const release = payload.releases[0] || null;
+  if (!release) return null;
+  return {
+    tag_name: String(release.tag || ''),
+    name: String(release.name || release.tag || ''),
+    html_url: RELEASES_URL,
+    draft: false,
+    prerelease: false,
+    published_at: release.publishedAt || null,
+    assets: Array.isArray(release.assets) ? release.assets.map((asset) => ({
+      name: String(asset?.name || ''),
+      browser_download_url: String(asset?.url || ''),
+      digest: String(asset?.digest || ''),
+      size: Number(asset?.size || 0),
+    })) : [],
+  };
+}
+
+export function parseLatestRelease(rawRelease, currentVersion) {
+  const release = normalizeLatestReleasePayload(rawRelease);
   if (!release || release.draft || release.prerelease) {
-    throw new Error('Latest GitHub release is unavailable / 最新正式版本不可用');
+    throw new Error('Latest GPTLock release is unavailable / 最新正式版本不可用');
   }
   const latestVersion = normalizeVersion(release.tag_name);
   const normalizedCurrent = normalizeVersion(currentVersion);
@@ -60,9 +91,7 @@ export function parseLatestRelease(release, currentVersion) {
     ? release.assets.find((asset) => asset?.name === WINDOWS_INSTALLER_NAME)
     : null;
   const installerSha256 = sha256FromDigest(installerAsset?.digest);
-  const installerUrl = typeof installerAsset?.browser_download_url === 'string'
-    ? installerAsset.browser_download_url
-    : null;
+  const installerUrl = secureDownloadUrl(installerAsset?.browser_download_url);
   if (!installerAsset || !installerUrl || !installerSha256) {
     throw new Error('Latest release is missing a verified Windows installer / 最新版本缺少可校验的 Windows 安装器');
   }
@@ -88,13 +117,10 @@ export async function fetchLatestRelease(currentVersion, fetchImpl = fetch) {
     const response = await fetchImpl(RELEASE_API_URL, {
       cache: 'no-store',
       credentials: 'omit',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
+      headers: { Accept: 'application/json' },
     });
     if (!response.ok) {
-      throw new Error(`GitHub update check failed (${response.status}) / GitHub 更新检查失败`);
+      throw new Error(`GPTLock update service failed (${response.status}) / GPTLock 更新服务不可用`);
     }
     const release = parseLatestRelease(await response.json(), currentVersion);
     logUpdate('info', 'update_check_completed', {
