@@ -147,7 +147,7 @@ done
 for arg in "$@"; do
   if [[ "$arg" == "fetch" ]]; then
     [[ -n "$repo_dir" ]]
-    [[ "${GPTLOCK_GITHUB_TOKEN:-}" == ${JSON.stringify(token)} ]]
+    [[ "\${GPTLOCK_GITHUB_TOKEN:-}" == ${JSON.stringify(token)} ]]
     printf '%s\n' "$@" >"$repo_dir/fetch-args.txt"
     git_dir="$($REAL_GIT -C "$repo_dir" rev-parse --absolute-git-dir)"
     commit="$($REAL_GIT -C "$repo_dir" rev-parse HEAD)"
