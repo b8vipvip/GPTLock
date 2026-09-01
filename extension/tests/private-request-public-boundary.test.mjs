@@ -4,6 +4,8 @@ import test from 'node:test';
 
 const files = [
   new URL('../private-core-channel.js', import.meta.url),
+  new URL('../private-context-bridge.js', import.meta.url),
+  new URL('../private-context-indicator.js', import.meta.url),
   new URL('../private-request-hook.js', import.meta.url),
   new URL('../private-request-routing.js', import.meta.url),
   new URL('../private-response-hook.js', import.meta.url),
@@ -22,6 +24,12 @@ const forbiddenImplementationMarkers = [
   /network-evidence\.js/i,
   /extractResponseEvidence/i,
   /streamPayloadMatches/i,
+  /MODEL_CONTEXT_WINDOWS/,
+  /SAFETY_BUDGET_RATIO/,
+  /CONVERSATION_LENGTH_LIMIT_PATTERNS/,
+  /LEARNING_HEADROOM_RATIO/,
+  /nextHardLimitProfile/,
+  /nextLearnedProfile/,
 ];
 
 test('public private-core routing contains transport only, not proprietary rules', async () => {
