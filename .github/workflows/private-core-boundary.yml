@@ -60,6 +60,44 @@ jobs:
             exit 1
           fi
 
+      - name: Reject proprietary markers in newly introduced public runtime code
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -Eeuo pipefail
+
+          frozen_regex='^(extension/(background|content|context-budget|context-remaining-indicator|guard|model-auto-lock|model-catalog|network-evidence|network-monitor|page-model-evidence|policy)\.js|native-core/src/(bridge|config|lib|verifier)\.rs)$'
+          runtime_regex='^(extension/.*\.js|native-core/src/.*\.rs)$'
+          sensitive_regex='backend-api/(f/)?conversation|resolved_model_slug|served_model_slug|stream_handoff|encoded_item|gpt-5\.6-sol-wm|x-openai-model|thinking_effort|MODEL_CONTEXT_WINDOWS|OFFICIAL_CONVERSATION_PATHS|MODEL_KEYS|REASONING_KEYS|SAFETY_BUDGET_RATIO|LEARNING_HEADROOM_RATIO|MESSAGE_OVERHEAD_TOKENS|IMAGE_TOKEN_ESTIMATE|ATTACHMENT_TOKEN_ESTIMATE|CONVERSATION_LENGTH_LIMIT_PATTERNS|extractResponseEvidence|streamPayloadMatches'
+          violations=0
+
+          while IFS=$'\t' read -r status path rest; do
+            [[ -n "${path:-}" ]] || continue
+            [[ "$status" == D* ]] && continue
+
+            candidate="$path"
+            if [[ "$status" == R* || "$status" == C* ]]; then
+              candidate="${rest:-$path}"
+            fi
+            [[ "$candidate" =~ $runtime_regex ]] || continue
+            [[ "$candidate" =~ $frozen_regex ]] && continue
+
+            added_lines="$(
+              git diff --unified=0 "$BASE_SHA"...HEAD -- "$candidate" \
+                | awk '/^\+\+\+ / { next } /^\+/ { sub(/^\+/, ""); print }'
+            )"
+            if [[ -n "$added_lines" ]] && grep -Eqi "$sensitive_regex" <<<"$added_lines"; then
+              echo "::error file=$candidate::New public runtime code contains an implementation-sensitive marker. Keep transport/UI adapters generic and move the rule, alias, endpoint or scoring logic into the private engine."
+              violations=$((violations + 1))
+            fi
+          done < <(git diff --name-status "$BASE_SHA"...HEAD)
+
+          if (( violations > 0 )); then
+            echo "$violations public runtime file(s) introduced proprietary implementation markers." >&2
+            exit 1
+          fi
+
       - name: Reject private source material in public tree
         shell: bash
         run: |
