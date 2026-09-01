@@ -1,0 +1,44 @@
+name: temp-context-shell-migration
+on:
+  push:
+    branches:
+      - refactor/context-budget-collector-shell-v1
+permissions:
+  contents: write
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/context-budget-collector-shell-v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply collector-shell migration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if ! grep -q 'MODEL_CONTEXT_WINDOWS' extension/context-budget.js; then
+            echo 'migration already applied'
+            exit 0
+          fi
+          python .github/scripts/tmp_context_shell_migration.py
+          node --check extension/context-budget.js
+          node --check extension/private-context-budget-authority.js
+          cd extension
+          npm test
+      - name: Commit collector shell
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name github-actions-bot
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            extension/context-budget.js \
+            extension/private-context-budget-authority.js \
+            extension/tests/context-budget.test.mjs \
+            extension/tests/private-context-profile-integration.test.mjs
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'refactor(context): reduce browser budget code to collector shell'
+          git push origin HEAD:refactor/context-budget-collector-shell-v1
