@@ -49,6 +49,7 @@ RUNTIME_USER="${RUNTIME_USER:-gptlock}"
 RUNTIME_GROUP="${RUNTIME_GROUP:-$RUNTIME_USER}"
 DB_PATH="${GPTLOCK_LICENSE_DB:-$SERVER_DIR/data/gptlock-license.sqlite3}"
 DATA_DIR="${GPTLOCK_UPDATE_DATA_DIR:-$(dirname "$DB_PATH")}"
+RELEASE_MIRROR_DIR="${GPTLOCK_RELEASE_MIRROR_DIR:-$DATA_DIR/releases}"
 REQUEST_FILE="$DATA_DIR/update-request.json"
 UPDATE_SCRIPT="$SERVER_DIR/scripts/update-server.sh"
 FETCH_HELPER="$SERVER_DIR/scripts/github-fetch.sh"
@@ -69,8 +70,9 @@ GPTLOCK_UPDATE_TRANSPORT="$TRANSPORT" bash "$FETCH_HELPER" --validate-url "$REMO
   exit 1
 }
 
-mkdir -p "$DATA_DIR"
-chown "$RUNTIME_USER:$RUNTIME_GROUP" "$DATA_DIR" || true
+mkdir -p "$DATA_DIR" "$RELEASE_MIRROR_DIR"
+chown "$RUNTIME_USER:$RUNTIME_GROUP" "$DATA_DIR" "$RELEASE_MIRROR_DIR" || true
+chmod 750 "$RELEASE_MIRROR_DIR" || true
 rm -f "$REQUEST_FILE"
 chmod 750 "$SERVER_DIR/scripts" || true
 # Keep tracked shell files non-executable so installing the updater does not dirty the Git checkout.
@@ -123,6 +125,7 @@ echo "  transport: $TRANSPORT (SSH 22 -> SSH 443 -> HTTPS in auto mode)"
 echo "  runtime user: $RUNTIME_USER:$RUNTIME_GROUP"
 echo "  env file: $ENV_FILE"
 echo "  data dir: $DATA_DIR"
+echo "  release mirror: $RELEASE_MIRROR_DIR"
 echo "  request: $REQUEST_FILE"
 echo "  watcher: gptlock-license-update.path"
 echo "  trusted origin: $REMOTE_URL"

@@ -33,7 +33,10 @@ LOG_FILE="$DATA_DIR/update.log"
 DEPLOYMENT_FILE="$DATA_DIR/deployment.json"
 LOCK_FILE="$DATA_DIR/update.lock"
 BACKUP_DIR="$DATA_DIR/update-backups"
-mkdir -p "$DATA_DIR" "$BACKUP_DIR"
+RELEASE_MIRROR_DIR="${GPTLOCK_RELEASE_MIRROR_DIR:-$DATA_DIR/releases}"
+mkdir -p "$DATA_DIR" "$BACKUP_DIR" "$RELEASE_MIRROR_DIR"
+chown "$RUNTIME_USER:$RUNTIME_GROUP" "$RELEASE_MIRROR_DIR" 2>/dev/null || true
+chmod 750 "$RELEASE_MIRROR_DIR" 2>/dev/null || true
 touch "$LOG_FILE"
 chmod 600 "$LOG_FILE" || true
 chown "$RUNTIME_USER:$RUNTIME_GROUP" "$LOG_FILE" 2>/dev/null || true
@@ -180,7 +183,12 @@ for _ in $(seq 1 30); do
   if curl --fail --silent --show-error --max-time 2 "$HEALTH_URL" >/dev/null 2>&1; then HEALTH_OK=1; break; fi
   sleep 1
 done
-[[ "$HEALTH_OK" == "1" ]] || fail "新版本启动后健康检查失败"
+if [[ "$HEALTH_OK" != "1" ]]; then
+  log "Health check failed for $HEALTH_URL; collecting service diagnostics before rollback"
+  systemctl status "$SERVICE" --no-pager -l >>"$LOG_FILE" 2>&1 || true
+  journalctl -u "$SERVICE" -n 100 --no-pager >>"$LOG_FILE" 2>&1 || true
+  fail "新版本启动后健康检查失败"
+fi
 
 VERSION="$($NODE_BIN -e "const p=require(process.argv[1]);process.stdout.write(String(p.version||''))" "$REPO_DIR/license-server/package.json")"
 VERSION="$VERSION" DEPLOYED_COMMIT="$DEPLOYED_COMMIT" REF="$REF" FETCH_ROUTE="$FETCH_ROUTE" "$NODE_BIN" -e '
