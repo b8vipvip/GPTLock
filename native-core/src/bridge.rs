@@ -5,11 +5,14 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
 use crate::config::Policy;
+use crate::private_engine;
 use crate::updater::{prepare_update, PrepareUpdateRequest};
 use crate::verifier::VerificationRequest;
 use crate::{AppState, PROTOCOL_VERSION};
 
-const MAX_NATIVE_MESSAGE_BYTES: usize = 1024 * 1024;
+const MAX_NATIVE_REQUEST_BYTES: usize = 32 * 1024 * 1024;
+const MAX_NATIVE_RESPONSE_BYTES: usize = 1024 * 1024;
+const PRIVATE_ENGINE_PROTOCOL_VERSION: u64 = 2;
 
 pub fn run_native_host(state: Arc<AppState>) -> Result<()> {
     let stdin = io::stdin();
@@ -39,7 +42,7 @@ fn read_message<R: Read>(reader: &mut R) -> Result<Option<Value>> {
         Err(error) => return Err(error).context("read native message length"),
     }
     let length = u32::from_le_bytes(length_bytes) as usize;
-    if length == 0 || length > MAX_NATIVE_MESSAGE_BYTES {
+    if length == 0 || length > MAX_NATIVE_REQUEST_BYTES {
         anyhow::bail!("invalid native message length: {length}");
     }
     let mut payload = vec![0_u8; length];
@@ -53,7 +56,7 @@ fn read_message<R: Read>(reader: &mut R) -> Result<Option<Value>> {
 
 fn write_message<W: Write>(writer: &mut W, message: &Value) -> Result<()> {
     let payload = serde_json::to_vec(message).context("serialize native response")?;
-    if payload.len() > MAX_NATIVE_MESSAGE_BYTES {
+    if payload.len() > MAX_NATIVE_RESPONSE_BYTES {
         anyhow::bail!("native response is too large");
     }
     writer
@@ -66,9 +69,20 @@ fn write_message<W: Write>(writer: &mut W, message: &Value) -> Result<()> {
     Ok(())
 }
 
+fn is_private_engine_message(message_type: &str) -> bool {
+    matches!(
+        message_type,
+        "evaluate_request" | "evaluate_response" | "evaluate_context"
+    )
+}
+
 fn handle_message(state: &Arc<AppState>, message: Value) -> Value {
     let id = message.get("id").cloned().unwrap_or(Value::Null);
-    let Some(message_type) = message.get("type").and_then(Value::as_str) else {
+    let Some(message_type) = message
+        .get("type")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
         return error_response(
             id,
             "invalid_message",
@@ -77,7 +91,14 @@ fn handle_message(state: &Arc<AppState>, message: Value) -> Value {
         );
     };
 
-    let result = match message_type {
+    if is_private_engine_message(&message_type) {
+        return match private_engine::request(message) {
+            Ok(response) => response,
+            Err(error) => private_engine_error(id, error.to_string()),
+        };
+    }
+
+    let result = match message_type.as_str() {
         "ping" => Ok(json!({
             "type": "pong",
             "version": env!("CARGO_PKG_VERSION"),
@@ -90,6 +111,7 @@ fn handle_message(state: &Arc<AppState>, message: Value) -> Value {
             "auditLog": true,
             "diagnosticExport": true,
             "oneClickWindowsUpdate": cfg!(windows),
+            "privateEngine": private_engine::capability(),
             "sufficientEvidenceSources": [
                 "network_response_metadata",
                 "conversation_response_metadata"
@@ -175,6 +197,20 @@ fn handle_message(state: &Arc<AppState>, message: Value) -> Value {
     }
 }
 
+fn private_engine_error(id: Value, detail: String) -> Value {
+    json!({
+        "id": id,
+        "ok": false,
+        "protocolVersion": PRIVATE_ENGINE_PROTOCOL_VERSION,
+        "error": {
+            "code": "private_engine_unavailable",
+            "message": detail,
+            "messageZhCn": "私有核心组件当前不可用",
+            "messageEn": "Private core component is unavailable",
+        }
+    })
+}
+
 fn error_response(
     id: Value,
     code: &str,
@@ -209,6 +245,37 @@ mod tests {
         let response = handle_message(&state, parsed);
         assert_eq!(response["ok"], true);
         assert_eq!(response["data"]["type"], "pong");
+    }
+
+    #[test]
+    fn capabilities_report_private_engine_protocol_without_requiring_artifact() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = AppState::initialize(ConfigStore::at(directory.path().to_path_buf())).unwrap();
+        let response = handle_message(&state, json!({ "id": "cap", "type": "get_capabilities" }));
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["data"]["privateEngine"]["protocolVersion"], 2);
+        assert!(response["data"]["privateEngine"]["available"].is_boolean());
+    }
+
+    #[test]
+    fn private_engine_messages_keep_protocol_v2_error_shape_when_artifact_is_absent() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = AppState::initialize(ConfigStore::at(directory.path().to_path_buf())).unwrap();
+        if private_engine::available() {
+            return;
+        }
+        let response = handle_message(
+            &state,
+            json!({
+                "id": "private-1",
+                "type": "evaluate_request",
+                "protocolVersion": 2,
+                "payload": {}
+            }),
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["protocolVersion"], 2);
+        assert_eq!(response["error"]["code"], "private_engine_unavailable");
     }
 
     #[test]
