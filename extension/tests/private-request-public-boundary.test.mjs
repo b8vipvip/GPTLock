@@ -3,8 +3,11 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const files = [
+  new URL('../private-core-channel.js', import.meta.url),
   new URL('../private-request-hook.js', import.meta.url),
   new URL('../private-request-routing.js', import.meta.url),
+  new URL('../private-response-hook.js', import.meta.url),
+  new URL('../private-response-routing.js', import.meta.url),
 ];
 const forbiddenImplementationMarkers = [
   /backend-api\/conversation/i,
@@ -18,7 +21,7 @@ const forbiddenImplementationMarkers = [
   /thinking_effort/i,
 ];
 
-test('public private-request routing contains transport only, not proprietary rules', async () => {
+test('public private-core routing contains transport only, not proprietary rules', async () => {
   for (const file of files) {
     const source = await readFile(file, 'utf8');
     for (const marker of forbiddenImplementationMarkers) {
