@@ -136,6 +136,7 @@ fn capability_from_probe(installed: bool, response: Option<&Value>) -> Value {
         "responseEvaluation": false,
         "contextEvaluation": false,
         "contextBudgetEvaluation": false,
+        "contextProfileEvaluation": false,
         "compactRequestPatches": false,
     });
     if !installed {
@@ -161,6 +162,7 @@ fn capability_from_probe(installed: bool, response: Option<&Value>) -> Value {
         "responseEvaluation",
         "contextEvaluation",
         "contextBudgetEvaluation",
+        "contextProfileEvaluation",
         "compactRequestPatches",
     ] {
         object.insert(

@@ -112,6 +112,11 @@ fn model_window(model: Option<&str>) -> (u64, &'static str) {
     (DEFAULT_CONTEXT_WINDOW_TOKENS, "conservative-fallback")
 }
 
+pub(crate) fn base_safe_limit_for_model(model: Option<&str>) -> u64 {
+    let (nominal, _) = model_window(model);
+    (nominal.max(16_000) as f64 * SAFETY_BUDGET_RATIO).floor() as u64
+}
+
 fn estimate_text_tokens(value: &str) -> u64 {
     if value.is_empty() {
         return 0;
@@ -187,7 +192,7 @@ pub fn evaluate_context_budget(input: &ContextBudgetInput) -> Result<ContextBudg
     validate_input(input)?;
     let (nominal_limit_tokens, context_window_source) = model_window(input.model.as_deref());
     let nominal_limit_tokens = nominal_limit_tokens.max(16_000);
-    let base_safe_limit_tokens = (nominal_limit_tokens as f64 * SAFETY_BUDGET_RATIO).floor() as u64;
+    let base_safe_limit_tokens = base_safe_limit_for_model(input.model.as_deref());
     let adaptive_safe_limit_tokens = clamp_metric(input.profile.adaptive_safe_limit_tokens);
     let confirmed_lower_bound_tokens = clamp_metric(input.profile.confirmed_conversation_tokens);
     let hard_limit_upper_bound_tokens = clamp_metric(input.profile.hard_limit_upper_bound_tokens);

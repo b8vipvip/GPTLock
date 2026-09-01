@@ -8,6 +8,7 @@ const PRIVATE_ENGINE_FEATURES = Object.freeze([
   'responseEvaluation',
   'contextEvaluation',
   'contextBudgetEvaluation',
+  'contextProfileEvaluation',
   'compactRequestPatches',
 ]);
 
