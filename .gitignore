@@ -3,6 +3,11 @@
 /.gptlock/
 /license-server/data/
 /license-server/.env
+/private-core/
+/private-overlays/
+/private-artifacts/
+/private-source/
+*.private.*
 *.log
 *.tmp
 .DS_Store
