@@ -35,7 +35,7 @@
         "content.js",
         "model-catalog.js",
         "model-auto-lock.js",
-        "context-remaining-indicator.js"
+        "private-context-indicator.js"
       ],
       "run_at": "document_idle"
     }
