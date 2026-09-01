@@ -1,0 +1,51 @@
+name: temp-context-shell-hardlimit-guard
+on:
+  push:
+    branches:
+      - refactor/context-budget-collector-shell-v1
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/context-budget-collector-shell-v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Guard numeric hard-limit observation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('extension/context-budget.js')
+          s = p.read_text()
+          old = """    const observedTokens = Math.max(\n      Math.ceil(Number(snapshot.fullConversationTokens) || 0),\n      Math.ceil(Number(snapshot.cumulativeConversationTokens) || 0),\n    );\n"""
+          new = """    const privateBudgetAvailable = snapshot.budgetAuthority === 'private-engine';\n    const observedTokens = privateBudgetAvailable ? Math.max(\n      Math.ceil(Number(snapshot.fullConversationTokens) || 0),\n      Math.ceil(Number(snapshot.cumulativeConversationTokens) || 0),\n    ) : 0;\n"""
+          if s.count(old) != 1: raise SystemExit('observedTokens target mismatch')
+          s = s.replace(old, new, 1)
+          old = "      const measurementReliable = ['conversation-tree+dom-reconcile', 'checkpoint+dom-restore'].includes(snapshot.historyMeasurementSource);\n"
+          new = "      const measurementReliable = privateBudgetAvailable && ['conversation-tree+dom-reconcile', 'checkpoint+dom-restore'].includes(snapshot.historyMeasurementSource);\n"
+          if s.count(old) != 1: raise SystemExit('measurementReliable target mismatch')
+          s = s.replace(old, new, 1)
+          old = """      const privateNumbers = await evaluatePrivateContextProfile('hard_limit', {\n        model,\n        previous,\n        observedConversationTokens: observedTokens,\n        measurementReliable,\n      });\n"""
+          new = """      const privateNumbers = privateBudgetAvailable\n        ? await evaluatePrivateContextProfile('hard_limit', {\n          model,\n          previous,\n          observedConversationTokens: observedTokens,\n          measurementReliable,\n        })\n        : null;\n"""
+          if s.count(old) != 1: raise SystemExit('privateNumbers target mismatch')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          node --check extension/context-budget.js
+          cd extension
+          npm test
+      - name: Commit hard-limit guard
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name github-actions-bot
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add extension/context-budget.js
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'fix(context): require private budget for numeric hard-limit learning'
+          git push origin HEAD:refactor/context-budget-collector-shell-v1
