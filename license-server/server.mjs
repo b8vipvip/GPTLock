@@ -243,8 +243,9 @@ const accountSystem = createAccountSystem({
 const siteAccounts = createSiteAccountSystem({
   db, env, publicOrigin: PUBLIC_ORIGIN, json, bodyJson, clientIp, accountSummary: accountSystem.accountSummary,
 });
-const siteReleases = createSiteReleaseFeed({ serverRoot: ROOT });
+const siteReleases = createSiteReleaseFeed({ serverRoot: ROOT, env });
 const clientRuntimeLogs = createClientRuntimeLogManager({ db, env, json });
+siteReleases.start();
 
 async function handleApi(req, res, url) {
   const cors = corsHeaders(req);
@@ -264,6 +265,11 @@ async function handleApi(req, res, url) {
 
 async function handleSiteApi(req, res, url) {
   if (url.pathname === '/site/api/releases' && req.method === 'GET') return json(res, 200, await siteReleases.load());
+  if (url.pathname === '/site/api/releases/notifications' && req.method === 'GET') {
+    const waitMs = clampInt(url.searchParams.get('wait'), 0, 25_000, 20_000);
+    const result = await siteReleases.waitForChange(url.searchParams.get('since'), waitMs);
+    return json(res, 200, siteReleases.notificationPayload(result));
+  }
   const handled = await siteAccounts.handle(req, res, url);
   if (handled) return;
   return apiError(res, 404, 'NOT_FOUND', 'Not found');
@@ -300,6 +306,8 @@ async function handleAdmin(req, res, url) {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     return download(res, runtimeLogger.exportText(), `gptlock-server-runtime-${stamp}.jsonl`);
   }
+  if (url.pathname === '/admin/api/releases' && req.method === 'GET') return json(res, 200, await siteReleases.load());
+  if (url.pathname === '/admin/api/releases/sync' && req.method === 'POST') return json(res, 200, await siteReleases.sync());
   if (url.pathname === '/admin/api/update' && req.method === 'GET') return json(res, 200, updateManager.info());
   if (url.pathname === '/admin/api/update' && req.method === 'POST') return json(res, 202, updateManager.request());
   return apiError(res, 404, 'NOT_FOUND', 'Not found');
@@ -335,6 +343,10 @@ const server = createServer(async (req, res) => {
     origin: String(req.headers.origin || '').slice(0, 200) || null, userAgent: String(req.headers['user-agent'] || '').slice(0, 300) || null,
   }));
   try {
+    if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname.startsWith('/downloads/releases/')) {
+      if (siteReleases.serveAsset(req, res, url.pathname)) return;
+      return res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('Release asset not found');
+    }
     if (url.pathname.startsWith('/site/api/')) return await handleSiteApi(req, res, url);
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (url.pathname.startsWith('/admin/api/')) return await handleAdmin(req, res, url);
@@ -353,9 +365,11 @@ const server = createServer(async (req, res) => {
   }
 });
 
+server.on('close', () => siteReleases.stop());
+
 server.listen(PORT, HOST, () => {
   runtimeLogger.log('info', 'server_started', { pid: process.pid, host: HOST, port: PORT, publicOrigin: PUBLIC_ORIGIN,
-    database: DB_PATH, runtimeLog: runtimeLogger.path, windowLeaseTtlSeconds: WINDOW_TTL_SECONDS });
+    database: DB_PATH, runtimeLog: runtimeLogger.path, releaseMirror: siteReleases.mirrorRoot, windowLeaseTtlSeconds: WINDOW_TTL_SECONDS });
   console.log(`GPTLock server listening on http://${HOST}:${PORT}`);
   console.log(`Public origin: ${PUBLIC_ORIGIN}`);
 });

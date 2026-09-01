@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repository="b8vipvip/GPTLock"
-api_url="https://api.github.com/repos/$repository/releases/latest"
+feed_url="https://gptlock.mv3.cn/site/api/releases"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf -- "$temp_dir"' EXIT
 
-curl_github() {
+curl_official() {
   curl -fsSL --proto '=https' --tlsv1.2 \
     --retry 6 --retry-all-errors --retry-delay 2 --retry-max-time 180 \
     --connect-timeout 15 --max-time 300 \
@@ -14,47 +13,79 @@ curl_github() {
     "$@"
 }
 
-echo "正在检查 GPTLock 更新 / Checking for GPTLock updates…"
-release_json="$temp_dir/release.json"
-curl_github \
-  -H 'Accept: application/vnd.github+json' \
-  -H 'User-Agent: GPTLock-Updater' \
-  "$api_url" -o "$release_json"
+echo "正在从 GPTLock 官网检查更新 / Checking the GPTLock official update service…"
+feed_json="$temp_dir/releases.json"
+curl_official -H 'Accept: application/json' "$feed_url" -o "$feed_json"
 
-readarray -t release_data < <(python3 - "$release_json" <<'PY'
+readarray -t release_data < <(python3 - "$feed_json" <<'PY'
 import json
+import re
 import sys
+from urllib.parse import urlparse
 
 with open(sys.argv[1], encoding="utf-8") as handle:
-    release = json.load(handle)
-assets = {asset["name"]: asset["browser_download_url"] for asset in release.get("assets", [])}
-debs = sorted(name for name in assets if name.startswith("gptlock_") and name.endswith("_amd64.deb"))
-if not debs or "SHA256SUMS.txt" not in assets:
-    raise SystemExit("latest release does not contain the required Linux assets")
-name = debs[-1]
-print(release.get("tag_name", "unknown"))
+    feed = json.load(handle)
+releases = feed.get("releases") or []
+if not releases:
+    raise SystemExit("official GPTLock server does not currently expose a mirrored release")
+release = releases[0]
+tag = str(release.get("tag") or "")
+if not re.fullmatch(r"v\d+(?:\.\d+){1,3}", tag):
+    raise SystemExit("official release tag is invalid")
+version = tag[1:]
+assets = {str(item.get("name") or ""): item for item in release.get("assets") or []}
+preferred = f"gptlock_{version}_amd64.deb"
+if preferred in assets:
+    name = preferred
+else:
+    candidates = sorted(name for name in assets if name.startswith("gptlock_") and name.endswith("_amd64.deb"))
+    if not candidates:
+        raise SystemExit("official mirrored release does not contain a Linux amd64 package")
+    name = candidates[-1]
+if "SHA256SUMS.txt" not in assets:
+    raise SystemExit("official mirrored release does not contain SHA256SUMS.txt")
+
+def trusted_url(item):
+    value = str(item.get("url") or "")
+    parsed = urlparse(value)
+    prefix = f"/downloads/releases/{tag}/"
+    if parsed.scheme != "https" or parsed.hostname != "gptlock.mv3.cn" or not parsed.path.startswith(prefix):
+        raise SystemExit(f"untrusted mirrored release URL for {item.get('name')}")
+    return value
+
+def digest(item):
+    value = str(item.get("digest") or "")
+    match = re.fullmatch(r"sha256:([0-9a-fA-F]{64})", value)
+    if not match:
+        raise SystemExit(f"missing SHA-256 digest for {item.get('name')}")
+    return match.group(1).lower()
+
+print(tag)
 print(name)
-print(assets[name])
-print(assets["SHA256SUMS.txt"])
+print(trusted_url(assets[name]))
+print(digest(assets[name]))
+print(trusted_url(assets["SHA256SUMS.txt"]))
 PY
 )
 
 tag="${release_data[0]}"
 asset="${release_data[1]}"
 asset_url="${release_data[2]}"
-checksums_url="${release_data[3]}"
-echo "正在下载 $asset；网络失败会自动重试 / Downloading $asset with automatic retries…"
-curl_github "$asset_url" -o "$temp_dir/$asset"
-curl_github "$checksums_url" -o "$temp_dir/SHA256SUMS.txt"
+feed_digest="${release_data[3]}"
+checksums_url="${release_data[4]}"
 
-expected="$(awk -v name="$asset" '$2 == name || $2 == "*" name {print $1; exit}' "$temp_dir/SHA256SUMS.txt")"
-actual="$(sha256sum "$temp_dir/$asset" | awk '{print $1}')"
-if [[ -z "$expected" || "$expected" != "$actual" ]]; then
-  echo "校验和验证失败，已停止更新 / Checksum verification failed; update aborted." >&2
+echo "正在从 GPTLock 服务端镜像下载 $asset / Downloading $asset from the GPTLock server mirror…"
+curl_official "$asset_url" -o "$temp_dir/$asset"
+curl_official "$checksums_url" -o "$temp_dir/SHA256SUMS.txt"
+
+sum_digest="$(awk -v name="$asset" '$2 == name || $2 == "*" name {print tolower($1); exit}' "$temp_dir/SHA256SUMS.txt")"
+actual="$(sha256sum "$temp_dir/$asset" | awk '{print tolower($1)}')"
+if [[ -z "$sum_digest" || "$actual" != "$feed_digest" || "$actual" != "$sum_digest" ]]; then
+  echo "服务端镜像校验失败，已停止更新 / Server mirror checksum verification failed; update aborted." >&2
   exit 1
 fi
 
-echo "正在安装 $tag / Installing $tag…"
+echo "校验通过，正在安装 $tag / Verification passed; installing $tag…"
 sudo dpkg -i "$temp_dir/$asset"
 systemctl --user daemon-reload 2>/dev/null || true
 systemctl --user try-restart gptlock-core.service 2>/dev/null || true

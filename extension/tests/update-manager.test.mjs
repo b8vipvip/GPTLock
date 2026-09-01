@@ -11,10 +11,13 @@ import {
   RELEASE_API_URL,
   RELEASES_URL,
   RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION,
+  secureServerDownloadUrl,
   supportsReliableWindowsOneClickUpdate,
   updateStatusEventName,
   WINDOWS_INSTALLER_NAME,
 } from '../update-manager.js';
+
+const mirroredInstaller = (tag = 'v0.5.30') => `https://gptlock.mv3.cn/downloads/releases/${tag}/GPTLockSetup-x64.exe`;
 
 test('normalizes and compares release versions', () => {
   assert.equal(normalizeVersion('v0.4.0'), '0.4.0');
@@ -24,9 +27,12 @@ test('normalizes and compares release versions', () => {
   assert.equal(compareVersions('bad', '0.4.0'), null);
 });
 
-test('private repository update checks use the official GPTLock site instead of unauthenticated GitHub API', () => {
+test('private repository update checks use only the official GPTLock service', () => {
   assert.equal(RELEASE_API_URL, 'https://gptlock.mv3.cn/site/api/releases');
   assert.equal(RELEASES_URL, 'https://gptlock.mv3.cn/releases');
+  assert.equal(secureServerDownloadUrl(mirroredInstaller()), mirroredInstaller());
+  assert.equal(secureServerDownloadUrl('https://release-assets.githubusercontent.com/private/signed'), null);
+  assert.equal(secureServerDownloadUrl('https://github.com/b8vipvip/GPTLock/releases/download/v0.5.30/GPTLockSetup-x64.exe'), null);
 });
 
 test('requires the hardened updater core baseline for Windows one-click installs', () => {
@@ -40,66 +46,68 @@ test('requires the hardened updater core baseline for Windows one-click installs
   assert.equal(supportsReliableWindowsOneClickUpdate(null), false);
 });
 
-test('normalizes the official site release feed into update metadata', () => {
+test('normalizes the server mirror feed into update metadata', () => {
   const digest = `sha256:${'a'.repeat(64)}`;
   const payload = normalizeLatestReleasePayload({
     ok: true,
-    source: 'github-private',
+    source: 'server-mirror',
     releases: [{
-      tag: 'v0.4.0',
-      name: 'GPTLock v0.4.0',
+      tag: 'v0.5.30',
+      name: 'GPTLock v0.5.30',
       publishedAt: '2026-09-01T00:00:00Z',
       assets: [{
         name: WINDOWS_INSTALLER_NAME,
-        url: 'https://release-assets.githubusercontent.com/example/signed-download',
+        url: mirroredInstaller('v0.5.30'),
         digest,
         size: 1234,
       }],
     }],
   });
-  assert.equal(payload.tag_name, 'v0.4.0');
+  assert.equal(payload.tag_name, 'v0.5.30');
   assert.equal(payload.html_url, RELEASES_URL);
-  assert.equal(payload.assets[0].browser_download_url, 'https://release-assets.githubusercontent.com/example/signed-download');
+  assert.equal(payload.assets[0].browser_download_url, mirroredInstaller('v0.5.30'));
 });
 
-test('parses a verified Windows installer from direct release metadata', () => {
+test('parses a verified Windows installer only from the official mirror', () => {
   const digest = `sha256:${'a'.repeat(64)}`;
   const release = parseLatestRelease({
-    tag_name: 'v0.4.0',
+    tag_name: 'v0.5.30',
     html_url: RELEASES_URL,
     draft: false,
     prerelease: false,
     assets: [{
       name: WINDOWS_INSTALLER_NAME,
-      browser_download_url: 'https://release-assets.githubusercontent.com/example/signed-download',
+      browser_download_url: mirroredInstaller('v0.5.30'),
       digest,
       size: 1234,
     }],
-  }, '0.3.9');
+  }, '0.5.29');
 
-  assert.equal(release.latestVersion, '0.4.0');
+  assert.equal(release.latestVersion, '0.5.30');
   assert.equal(release.updateAvailable, true);
   assert.equal(release.installer.sha256, 'a'.repeat(64));
   assert.equal(release.installer.size, 1234);
+  assert.equal(release.installer.url, mirroredInstaller('v0.5.30'));
 });
 
-test('parses the official site feed directly', () => {
+test('parses the official site mirror feed directly', () => {
   const digest = `sha256:${'b'.repeat(64)}`;
   const release = parseLatestRelease({
     ok: true,
+    source: 'server-mirror',
     releases: [{
-      tag: 'v0.5.28',
-      name: 'GPTLock v0.5.28',
+      tag: 'v0.5.30',
+      name: 'GPTLock v0.5.30',
       publishedAt: '2026-09-01T00:00:00Z',
       assets: [{
         name: WINDOWS_INSTALLER_NAME,
-        url: 'https://release-assets.githubusercontent.com/example/private-signed-url',
+        url: mirroredInstaller('v0.5.30'),
         digest,
         size: 5678,
       }],
     }],
-  }, '0.5.27');
-  assert.equal(release.latestVersion, '0.5.28');
+  }, '0.5.29');
+  assert.equal(release.latestVersion, '0.5.30');
   assert.equal(release.updateAvailable, true);
   assert.equal(release.releaseUrl, RELEASES_URL);
   assert.equal(release.installer.sha256, 'b'.repeat(64));
@@ -107,28 +115,28 @@ test('parses the official site feed directly', () => {
 
 test('rejects release metadata without a SHA-256 installer digest', () => {
   assert.throws(() => parseLatestRelease({
-    tag_name: 'v0.4.0',
+    tag_name: 'v0.5.30',
     draft: false,
     prerelease: false,
     assets: [{
       name: WINDOWS_INSTALLER_NAME,
-      browser_download_url: 'https://example.invalid/GPTLockSetup-x64.exe',
+      browser_download_url: mirroredInstaller('v0.5.30'),
       digest: null,
     }],
-  }, '0.3.9'), /verified Windows installer/);
+  }, '0.5.29'), /server-mirrored Windows installer/);
 });
 
-test('rejects non-HTTPS installer URLs', () => {
+test('rejects non-server installer URLs even when HTTPS', () => {
   assert.throws(() => parseLatestRelease({
-    tag_name: 'v0.4.0',
+    tag_name: 'v0.5.30',
     draft: false,
     prerelease: false,
     assets: [{
       name: WINDOWS_INSTALLER_NAME,
-      browser_download_url: 'http://example.invalid/GPTLockSetup-x64.exe',
+      browser_download_url: 'https://release-assets.githubusercontent.com/example/private-signed-url',
       digest: `sha256:${'c'.repeat(64)}`,
     }],
-  }, '0.3.9'), /verified Windows installer/);
+  }, '0.5.29'), /server-mirrored Windows installer/);
 });
 
 test('automatic install waits for the install action to become ready and clicks once', () => {
