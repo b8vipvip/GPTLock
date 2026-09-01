@@ -22,6 +22,14 @@ jobs:
             exit 0
           fi
           python .github/scripts/tmp_context_profile_migration.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('extension/tests/private-context-bridge.test.mjs')
+          source = path.read_text()
+          source = source.replace('const payload = sanitizePrivateContextProfilePayload({', 'const payload = bridge.sanitizePrivateContextProfilePayload({')
+          source = source.replace('const result = normalizePrivateContextProfileResult({', 'const result = bridge.normalizePrivateContextProfileResult({')
+          path.write_text(source)
+          PY
           cargo fmt --manifest-path native-core/Cargo.toml --all
           cargo fmt --manifest-path private-engine/Cargo.toml --all
           cargo test --manifest-path private-engine/Cargo.toml --all-targets
