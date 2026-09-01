@@ -1233,10 +1233,11 @@
   async function persistHardLimitObservation(snapshot, notice) {
     if (!snapshot || !notice || hardLimitLearningInFlight) return null;
     const model = normalizeModelId(snapshot.model) || detectModel();
-    const observedTokens = Math.max(
+    const privateBudgetAvailable = snapshot.budgetAuthority === 'private-engine';
+    const observedTokens = privateBudgetAvailable ? Math.max(
       Math.ceil(Number(snapshot.fullConversationTokens) || 0),
       Math.ceil(Number(snapshot.cumulativeConversationTokens) || 0),
-    );
+    ) : 0;
     const fingerprint = `${snapshot.conversationKey}:${model}:${snapshot.historyMeasurementSource}:${observedTokens}`;
     if (lastHardLimitFingerprint === fingerprint) return activeProfile;
     hardLimitLearningInFlight = true;
@@ -1246,16 +1247,18 @@
       if (!key) return null;
       const stored = await chrome.storage.local.get(key);
       const previous = stored[key] ?? null;
-      const measurementReliable = ['conversation-tree+dom-reconcile', 'checkpoint+dom-restore'].includes(snapshot.historyMeasurementSource);
+      const measurementReliable = privateBudgetAvailable && ['conversation-tree+dom-reconcile', 'checkpoint+dom-restore'].includes(snapshot.historyMeasurementSource);
       const observedCharacters = Math.max(snapshot.fullConversationCharacters || 0, snapshot.cumulativeConversationCharacters || 0);
       const observedMessages = Math.max(snapshot.messageCount || 0, snapshot.cumulativeMessageCount || 0);
       const measuredAt = new Date().toISOString();
-      const privateNumbers = await evaluatePrivateContextProfile('hard_limit', {
-        model,
-        previous,
-        observedConversationTokens: observedTokens,
-        measurementReliable,
-      });
+      const privateNumbers = privateBudgetAvailable
+        ? await evaluatePrivateContextProfile('hard_limit', {
+          model,
+          previous,
+          observedConversationTokens: observedTokens,
+          measurementReliable,
+        })
+        : null;
       let next;
       if (privateNumbers) {
         next = {
