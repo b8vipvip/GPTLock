@@ -1,0 +1,40 @@
+name: temp-private-context-authority-followup
+on:
+  push:
+    branches:
+      - refactor/private-context-budget-authority-v1
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/private-context-budget-authority-v1
+      - name: Apply followup
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if grep -q 'sourceIsFresh(source, maxAgeMs' extension/private-context-budget-authority.js; then
+            echo 'followup already applied'
+            exit 0
+          fi
+          python .github/scripts/tmp_private_context_authority_followup.py
+          node --check extension/private-context-budget-authority.js
+          node --test \
+            extension/tests/private-context-budget-authority.test.mjs \
+            extension/tests/private-context-authority-integration.test.mjs
+      - name: Commit followup
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name github-actions-bot
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add extension/private-context-budget-authority.js
+          if git diff --cached --quiet; then
+            echo 'no followup changes to commit'
+            exit 0
+          fi
+          git commit -m 'fix(context): serialize private budget refresh'
+          git push origin HEAD:refactor/private-context-budget-authority-v1
