@@ -29,17 +29,73 @@ async function responseBody(monitor, tabId, requestId) {
   return decodePrivateResponseBody(result?.body ?? '', Boolean(result?.base64Encoded));
 }
 
+async function evaluateResponse(body, headers, mimeType, prefix) {
+  const rawEvidence = await privateCoreChannel.request(
+    'evaluate_response',
+    buildPrivateResponsePayload({ body, headers, mimeType }),
+    prefix,
+  );
+  return normalizePrivateResponseEvidence(rawEvidence);
+}
+
+function matchingHandoff(monitor, record) {
+  if (!record?.downstream || !record.handoffId) return null;
+  return monitor.handoffs.get(record.handoffId) ?? null;
+}
+
+function emitHttpEvidence(monitor, tabId, params, record, evidence, body, handoff) {
+  const bodyFormat = String(evidence.diagnostics?.bodyFormat || '');
+  const keepRawForExplicitDiagnostics = /event-stream/i.test(record.mimeType || '') || bodyFormat.includes('sse');
+  const streamContext = handoff
+    ? monitor.streamContext(handoff, {
+      isDownstream: true,
+      transport: 'sse',
+      direction: 'received',
+      stage: 'downstream_http',
+      matchBasis: record.matchBasis ?? 'handoff_marker',
+    })
+    : null;
+  monitor.onEvidence(tabId, {
+    requestId: record.requestId,
+    capturedAt: new Date().toISOString(),
+    status: record.status,
+    model: evidence.model,
+    reasoning: evidence.reasoning,
+    conflicts: evidence.conflicts,
+    fields: evidence.fields,
+    bodyError: null,
+    rawResponseBody: keepRawForExplicitDiagnostics ? body : null,
+    streamContext,
+    diagnostics: {
+      endpoint: record.endpoint,
+      httpStatus: record.status,
+      encodedDataLength: Number.isFinite(params.encodedDataLength) ? params.encodedDataLength : null,
+      transport: 'sse',
+      direction: 'received',
+      stage: record.downstream ? 'downstream_http' : 'initial_conversation',
+      streamHandoff: null,
+      privateEngine: true,
+      ...evidence.diagnostics,
+    },
+  });
+}
+
 export function installPrivateResponseRoutingHook() {
   const prototype = ChatGptNetworkMonitor.prototype;
   if (prototype[PATCH_MARKER]) return false;
   const legacyHandleFinished = prototype.handleFinished;
-  if (typeof legacyHandleFinished !== 'function') return false;
+  const legacyHandleWebSocketFrame = prototype.handleWebSocketFrame;
+  if (typeof legacyHandleFinished !== 'function' || typeof legacyHandleWebSocketFrame !== 'function') return false;
 
   Object.defineProperty(prototype, PATCH_MARKER, { value: true, configurable: false });
   prototype.handleFinished = async function privateHandleFinished(tabId, params = {}) {
     const key = this.key(tabId, String(params.requestId));
     const record = this.requests.get(key);
-    if (!record || record.downstream || !record.responseVerificationEnabled) {
+    if (!record || !record.responseVerificationEnabled) {
+      return legacyHandleFinished.call(this, tabId, params);
+    }
+    const handoff = matchingHandoff(this, record);
+    if (record.downstream && !handoff) {
       return legacyHandleFinished.call(this, tabId, params);
     }
     if (!(await privateCoreChannel.isAvailable())) {
@@ -50,16 +106,12 @@ export function installPrivateResponseRoutingHook() {
     let evidence;
     try {
       body = await responseBody(this, tabId, record.requestId);
-      const rawEvidence = await privateCoreChannel.request(
-        'evaluate_response',
-        buildPrivateResponsePayload({
-          body,
-          headers: record.responseHeaders,
-          mimeType: record.mimeType,
-        }),
-        'response',
+      evidence = await evaluateResponse(
+        body,
+        record.responseHeaders,
+        record.mimeType,
+        record.downstream ? 'downstream-http' : 'response',
       );
-      evidence = normalizePrivateResponseEvidence(rawEvidence);
     } catch {
       privateCoreChannel.invalidate();
       body = '';
@@ -72,32 +124,81 @@ export function installPrivateResponseRoutingHook() {
     }
 
     this.requests.delete(key);
-    const bodyFormat = String(evidence.diagnostics?.bodyFormat || '');
-    const keepRawForExplicitDiagnostics = /event-stream/i.test(record.mimeType || '') || bodyFormat.includes('sse');
+    emitHttpEvidence(this, tabId, params, record, evidence, body, handoff);
+    body = '';
+  };
+
+  prototype.handleWebSocketFrame = async function privateHandleWebSocketFrame(tabId, params = {}, direction) {
+    const payload = typeof params.response?.payloadData === 'string' ? params.response.payloadData : '';
+    const handoff = this.matchHandoff(tabId, payload);
+    if (!handoff) return legacyHandleWebSocketFrame.call(this, tabId, params, direction);
+
+    const requestId = String(params.requestId);
+    const key = this.key(tabId, requestId);
+    let socket = this.webSockets.get(key);
+    if (!socket) {
+      socket = {
+        tabId,
+        requestId,
+        url: '',
+        endpoint: 'websocket',
+        startedAt: Date.now(),
+        lastActivityAt: Date.now(),
+        handoffId: null,
+        matchedAt: null,
+        matchBasis: null,
+      };
+      this.webSockets.set(key, socket);
+    }
+    socket.lastActivityAt = Date.now();
+    socket.handoffId = handoff.id;
+    socket.matchedAt = Date.now();
+    socket.matchBasis = direction === 'sent' ? 'subscription_frame_marker' : 'received_frame_marker';
+    if (direction === 'sent') return;
+
+    if (!(await privateCoreChannel.isAvailable())) {
+      return legacyHandleWebSocketFrame.call(this, tabId, params, direction);
+    }
+
+    let evidence;
+    try {
+      evidence = await evaluateResponse(payload, {}, 'application/json', 'websocket');
+    } catch {
+      privateCoreChannel.invalidate();
+      return legacyHandleWebSocketFrame.call(this, tabId, params, direction);
+    }
+    if (!hasCompletePrivateResponseEvidence(evidence)) {
+      return legacyHandleWebSocketFrame.call(this, tabId, params, direction);
+    }
+
+    const frameId = `ws-${requestId}-${++this.webSocketSequence}`;
+    const streamContext = this.streamContext(handoff, {
+      transport: 'websocket',
+      direction,
+      stage: 'downstream_websocket',
+      matchBasis: socket.matchBasis,
+    });
     this.onEvidence(tabId, {
-      requestId: record.requestId,
+      requestId: frameId,
       capturedAt: new Date().toISOString(),
-      status: record.status,
+      status: 101,
       model: evidence.model,
       reasoning: evidence.reasoning,
       conflicts: evidence.conflicts,
       fields: evidence.fields,
       bodyError: null,
-      rawResponseBody: keepRawForExplicitDiagnostics ? body : null,
-      streamContext: null,
+      rawResponseBody: payload,
+      streamContext,
       diagnostics: {
-        endpoint: record.endpoint,
-        httpStatus: record.status,
-        encodedDataLength: Number.isFinite(params.encodedDataLength) ? params.encodedDataLength : null,
-        transport: 'sse',
-        direction: 'received',
-        stage: 'initial_conversation',
-        streamHandoff: null,
+        endpoint: socket.endpoint,
+        httpStatus: 101,
+        transport: 'websocket',
+        direction,
+        stage: 'downstream_websocket',
         privateEngine: true,
         ...evidence.diagnostics,
       },
     });
-    body = '';
   };
   return true;
 }
