@@ -62,6 +62,7 @@
 
   let inFlight = false;
   let backoffUntil = 0;
+  let lastAttemptAt = 0;
 
   function visible(element) {
     const rect = element?.getBoundingClientRect?.();
@@ -123,7 +124,13 @@
   }
 
   async function refresh() {
-    if (inFlight || Date.now() < backoffUntil || document.visibilityState === 'hidden') return;
+    const now = Date.now();
+    if (
+      inFlight
+      || now < backoffUntil
+      || (lastAttemptAt > 0 && now - lastAttemptAt < REFRESH_MS)
+      || document.visibilityState === 'hidden'
+    ) return;
     const legacy = globalThis.__GPTLOCK_CONTEXT_BUDGET__;
     const snapshot = legacy?.snapshot?.();
     if (!snapshot) return;
@@ -134,6 +141,7 @@
       profile: legacy?.learningProfile?.() || null,
     });
 
+    lastAttemptAt = now;
     inFlight = true;
     try {
       const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPE, payload });
