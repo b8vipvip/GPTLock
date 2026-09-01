@@ -50,7 +50,7 @@ test('private monorepo declares the client distribution boundary', async () => {
 
   assert.match(policy, /private monorepo/i);
   assert.match(policy, /distribution boundary/i);
-  assert.match(boundary, /private source repository/i);
+  assert.match(boundary, /private repository source/i);
   assert.match(boundary, /distribution boundary/i);
   assert.match(boundary, /compiled/i);
   assert.equal(contract.$defs.request.properties.protocolVersion.const, 2);

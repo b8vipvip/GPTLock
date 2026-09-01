@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 const MAX_WALK_DEPTH: usize = 14;
 const MAX_BODY_CHARS: usize = 16 * 1024 * 1024;
@@ -494,7 +494,7 @@ fn select_candidate(candidates: &[Candidate]) -> Selection {
     let best = candidates
         .iter()
         .filter(|candidate| candidate.score == best_score)
-        .last();
+        .next_back();
     Selection {
         value: values.iter().next().map(|value| (*value).to_string()),
         conflict: false,
