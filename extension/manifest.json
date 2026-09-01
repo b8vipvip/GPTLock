@@ -32,6 +32,7 @@
       "js": [
         "page-model-evidence.js",
         "context-budget.js",
+        "private-context-budget-shadow.js",
         "content.js",
         "model-catalog.js",
         "model-auto-lock.js",
