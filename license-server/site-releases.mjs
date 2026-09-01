@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 const RELEASES_API = 'https://api.github.com/repos/b8vipvip/GPTLock/releases?per_page=12';
 const DEFAULT_ORIGIN = 'https://gptlock.mv3.cn';
@@ -93,10 +93,16 @@ function safeReleaseRows(rows) {
     .slice(0, 12);
 }
 
+function defaultMirrorRoot(serverRoot, env) {
+  const dbPath = String(env.GPTLOCK_LICENSE_DB || '').trim();
+  if (dbPath) return join(dirname(resolve(dbPath)), 'releases');
+  return join(serverRoot, 'data', 'releases');
+}
+
 export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = process.env }) {
   const token = String(env.GPTLOCK_GITHUB_TOKEN || env.GH_TOKEN || '').trim();
   const publicOrigin = normalizeOrigin(env.GPTLOCK_LICENSE_PUBLIC_ORIGIN);
-  const mirrorRoot = resolve(env.GPTLOCK_RELEASE_MIRROR_DIR || join(serverRoot, 'data', 'releases'));
+  const mirrorRoot = resolve(env.GPTLOCK_RELEASE_MIRROR_DIR || defaultMirrorRoot(serverRoot, env));
   const indexPath = join(mirrorRoot, 'index.json');
   const syncIntervalMs = Math.max(30_000, Number(env.GPTLOCK_RELEASE_SYNC_INTERVAL_MS || DEFAULT_SYNC_MS));
   const currentProductVersion = currentVersion(serverRoot);
@@ -104,8 +110,22 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
   let timer = null;
   let syncing = null;
   let cache = null;
+  let storageError = null;
 
-  mkdirSync(mirrorRoot, { recursive: true, mode: 0o700 });
+  function ensureStorage() {
+    try {
+      mkdirSync(mirrorRoot, { recursive: true, mode: 0o700 });
+      storageError = null;
+      return true;
+    } catch (error) {
+      storageError = error instanceof Error ? error : new Error(String(error));
+      return false;
+    }
+  }
+
+  // Release mirroring is an auxiliary update channel. A bad or temporarily unavailable
+  // mirror directory must not prevent the account/license service from starting.
+  ensureStorage();
 
   function githubHeaders(accept = 'application/vnd.github+json') {
     const headers = {
@@ -135,6 +155,11 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
     if (cache) return cache;
     cache = normalizedIndex(readJson(indexPath, {}));
     return cache;
+  }
+
+  function withStorageState(feed) {
+    if (!storageError) return feed;
+    return { ...feed, warning: 'release_mirror_storage_unavailable' };
   }
 
   function notifyWaiters(next) {
@@ -225,6 +250,7 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
   }
 
   async function syncOnce() {
+    if (!ensureStorage()) throw storageError;
     if (!token) {
       const current = loadIndex();
       return { ...current, warning: 'private_release_token_required' };
@@ -245,9 +271,12 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
     syncing = syncOnce()
       .catch((error) => {
         const current = loadIndex();
+        const storageUnavailable = Boolean(storageError);
         return {
           ...current,
-          warning: current.releases.length ? 'release_mirror_sync_failed' : 'release_feed_unavailable',
+          warning: storageUnavailable
+            ? 'release_mirror_storage_unavailable'
+            : current.releases.length ? 'release_mirror_sync_failed' : 'release_feed_unavailable',
           syncError: error instanceof Error ? error.message : String(error),
         };
       })
@@ -326,7 +355,8 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
   }
 
   async function load() {
-    return loadIndex();
+    ensureStorage();
+    return withStorageState(loadIndex());
   }
 
   function notificationPayload(result) {
