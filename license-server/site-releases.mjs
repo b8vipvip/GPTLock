@@ -214,12 +214,7 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
     if (!SAFE_TAG.test(tag)) throw new Error(`Unsafe release tag: ${tag}`);
     const assets = [];
     for (const asset of Array.isArray(release.assets) ? release.assets : []) {
-      try {
-        assets.push(await downloadAsset(tag, asset));
-      } catch (error) {
-        const required = ['GPTLockSetup-x64.exe', 'SHA256SUMS.txt'].includes(String(asset?.name || ''));
-        if (required) throw error;
-      }
+      assets.push(await downloadAsset(tag, asset));
     }
     return {
       tag,
