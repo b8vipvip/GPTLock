@@ -2,6 +2,9 @@
 #ifndef MyAppVersion
   #define MyAppVersion "0.4.4"
 #endif
+#ifndef PrivateEnginePath
+  #define PrivateEnginePath ""
+#endif
 #define MyAppPublisher "GPTLock Maintainers"
 #define MyAppURL "https://github.com/b8vipvip/GPTLock"
 #define ExtensionId "bhchcpeodphgjfjoookncemnamdbfcof"
@@ -41,6 +44,9 @@ Type: filesandordirs; Name: "{app}\extension"
 
 [Files]
 Source: "..\..\native-core\target\release\gptlock-core.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
+#if PrivateEnginePath != ""
+Source: "{#PrivateEnginePath}"; DestDir: "{app}\bin"; DestName: "gptlock-engine.exe"; Flags: ignoreversion
+#endif
 Source: "..\..\extension\*"; DestDir: "{app}\extension"; Excludes: "tests\*,README.md,package.json"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "Update-GPTLock.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "Repair-GPTLock.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
@@ -78,23 +84,25 @@ end;
 function StopInstalledCoreProcesses(): Boolean;
 var
   CorePath: String;
+  EnginePath: String;
   Script: String;
   Params: String;
   ResultCode: Integer;
 begin
   CorePath := PowerShellSingleQuote(ExpandConstant('{app}\bin\gptlock-core.exe'));
+  EnginePath := PowerShellSingleQuote(ExpandConstant('{app}\bin\gptlock-engine.exe'));
   Script :=
     '$ErrorActionPreference=''Stop''; ' +
-    '$target=[IO.Path]::GetFullPath(''' + CorePath + '''); ' +
+    '$targets=@([IO.Path]::GetFullPath(''' + CorePath + '''),[IO.Path]::GetFullPath(''' + EnginePath + ''')); ' +
     '$deadline=(Get-Date).AddSeconds(8); ' +
     'do { ' +
-    '$matches=@(Get-Process -Name ''gptlock-core'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $target) } catch { $false } }); ' +
+    '$matches=@(Get-Process -Name ''gptlock-core'',''gptlock-engine'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ($targets -contains [IO.Path]::GetFullPath($_.Path)) } catch { $false } }); ' +
     'foreach ($p in $matches) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }; ' +
     'Start-Sleep -Milliseconds 150; ' +
-    '$remaining=@(Get-Process -Name ''gptlock-core'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $target) } catch { $false } }); ' +
+    '$remaining=@(Get-Process -Name ''gptlock-core'',''gptlock-engine'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ($targets -contains [IO.Path]::GetFullPath($_.Path)) } catch { $false } }); ' +
     'if ($remaining.Count -eq 0) { exit 0 } ' +
     '} while ((Get-Date) -lt $deadline); ' +
-    'throw ''GPTLock core still running after retry window''';
+    'throw ''GPTLock core processes still running after retry window''';
   Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + Script + '"';
   Result := Exec(
     ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
@@ -109,7 +117,8 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
-  if FileExists(ExpandConstant('{app}\bin\gptlock-core.exe')) then
+  if FileExists(ExpandConstant('{app}\bin\gptlock-core.exe')) or
+     FileExists(ExpandConstant('{app}\bin\gptlock-engine.exe')) then
   begin
     if not StopInstalledCoreProcesses() then
       Result := '无法停止正在运行的 GPTLock 本地核心，请完全退出浏览器后重试 / Could not stop the running GPTLock core; fully exit the browser and retry.';

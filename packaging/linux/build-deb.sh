@@ -5,6 +5,8 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/../.." && pwd)"
 output_dir="${1:-$repo_root/dist/linux}"
 binary_path="${GPTLOCK_BINARY:-$repo_root/native-core/target/release/gptlock-core}"
+private_engine_path="${GPTLOCK_PRIVATE_ENGINE:-}"
+require_private_engine="${GPTLOCK_REQUIRE_PRIVATE_ENGINE:-0}"
 version="${GPTLOCK_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_root/native-core/Cargo.toml" | head -n 1)}"
 architecture="${GPTLOCK_DEB_ARCH:-amd64}"
 extension_id="$(tr -d '\r\n' < "$repo_root/packaging/EXTENSION_ID")"
@@ -15,6 +17,14 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.+~-][A-Za-z0-9.-]+)?$ ]]; then
 fi
 if [[ ! -x "$binary_path" ]]; then
   echo "找不到可执行文件 / Executable not found: $binary_path" >&2
+  exit 1
+fi
+if [[ "$require_private_engine" == "1" && -z "$private_engine_path" ]]; then
+  echo "缺少私有核心制品 / Private engine artifact is required but not staged." >&2
+  exit 1
+fi
+if [[ -n "$private_engine_path" && ! -x "$private_engine_path" ]]; then
+  echo "私有核心制品不可执行 / Private engine artifact is not executable: $private_engine_path" >&2
   exit 1
 fi
 if [[ ! "$extension_id" =~ ^[a-p]{32}$ ]]; then
@@ -39,6 +49,9 @@ mkdir -p \
   "$package_root/etc/opt/edge/native-messaging-hosts"
 
 install -m 0755 "$binary_path" "$package_root/usr/bin/gptlock-core"
+if [[ -n "$private_engine_path" ]]; then
+  install -m 0755 "$private_engine_path" "$package_root/usr/bin/gptlock-engine"
+fi
 install -m 0755 "$script_dir/update.sh" "$package_root/usr/bin/gptlock-update"
 install -m 0644 "$script_dir/gptlock-core.deb.service" "$package_root/usr/lib/systemd/user/gptlock-core.service"
 while IFS= read -r file; do

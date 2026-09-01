@@ -145,6 +145,50 @@ jobs:
           manifest_version="$(python -c 'import json; print(json.load(open("extension/manifest.json"))["version"])')"
           test "$RELEASE_VERSION" = "$cargo_version"
           test "$RELEASE_VERSION" = "$manifest_version"
+      - name: Stage private engine when configured
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+          PRIVATE_REPO: ${{ vars.GPTLOCK_PRIVATE_CORE_REPOSITORY }}
+          PRIVATE_TOKEN: ${{ secrets.GPTLOCK_PRIVATE_CORE_TOKEN }}
+          REQUIRE_PRIVATE: ${{ vars.GPTLOCK_REQUIRE_PRIVATE_ENGINE }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          required=false
+          case "${REQUIRE_PRIVATE:-}" in
+            1|true|TRUE|yes|YES) required=true ;;
+          esac
+          if [[ -z "${PRIVATE_REPO:-}" || -z "${PRIVATE_TOKEN:-}" ]]; then
+            if [[ "$required" == true ]]; then
+              echo "Private engine is required, but GPTLOCK_PRIVATE_CORE_REPOSITORY/TOKEN are not configured." >&2
+              exit 1
+            fi
+            echo "Private engine handoff is not configured; building the compatibility package."
+            echo "GPTLOCK_REQUIRE_PRIVATE_ENGINE=0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          bundle="$RUNNER_TEMP/gptlock-private-engine-linux"
+          rm -rf "$bundle"
+          mkdir -p "$bundle"
+          GH_TOKEN="$PRIVATE_TOKEN" gh release download "product-v$RELEASE_VERSION" \
+            --repo "$PRIVATE_REPO" \
+            --pattern 'gptlock-engine-linux-x64*' \
+            --dir "$bundle"
+          test -f "$bundle/gptlock-engine-linux-x64"
+          test -f "$bundle/gptlock-engine-linux-x64.json"
+          cp "$bundle/gptlock-engine-linux-x64" "$bundle/gptlock-engine"
+          chmod 0755 "$bundle/gptlock-engine"
+          node scripts/verify-private-engine-bundle.mjs \
+            --manifest "$bundle/gptlock-engine-linux-x64.json" \
+            --binary "$bundle/gptlock-engine" \
+            --version "$RELEASE_VERSION" \
+            --platform linux
+          echo "GPTLOCK_PRIVATE_ENGINE=$bundle/gptlock-engine" >> "$GITHUB_ENV"
+          if [[ "$required" == true ]]; then
+            echo "GPTLOCK_REQUIRE_PRIVATE_ENGINE=1" >> "$GITHUB_ENV"
+          else
+            echo "GPTLOCK_REQUIRE_PRIVATE_ENGINE=0" >> "$GITHUB_ENV"
+          fi
       - name: Build assets
         env:
           RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
@@ -152,7 +196,13 @@ jobs:
           cargo build --locked --release --manifest-path native-core/Cargo.toml
           chmod +x packaging/linux/build-deb.sh
           GPTLOCK_VERSION="$RELEASE_VERSION" packaging/linux/build-deb.sh dist
-          tar -C native-core/target/release -czf "dist/gptlock-core-${RELEASE_VERSION}-linux-x64.tar.gz" gptlock-core
+          tar_files=(gptlock-core)
+          if [[ -n "${GPTLOCK_PRIVATE_ENGINE:-}" ]]; then
+            cp "$GPTLOCK_PRIVATE_ENGINE" native-core/target/release/gptlock-engine
+            chmod 0755 native-core/target/release/gptlock-engine
+            tar_files+=(gptlock-engine)
+          fi
+          tar -C native-core/target/release -czf "dist/gptlock-core-${RELEASE_VERSION}-linux-x64.tar.gz" "${tar_files[@]}"
           cd extension
           zip -9 "../dist/gptlock-extension-${RELEASE_VERSION}.zip" *.js *.css *.html manifest.json
           unzip -l "../dist/gptlock-extension-${RELEASE_VERSION}.zip" | grep -q 'account-client.js'
@@ -175,6 +225,39 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: native-core
+      - name: Stage private engine when configured
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+          PRIVATE_REPO: ${{ vars.GPTLOCK_PRIVATE_CORE_REPOSITORY }}
+          PRIVATE_TOKEN: ${{ secrets.GPTLOCK_PRIVATE_CORE_TOKEN }}
+          REQUIRE_PRIVATE: ${{ vars.GPTLOCK_REQUIRE_PRIVATE_ENGINE }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $required = @('1', 'true', 'TRUE', 'yes', 'YES') -contains $env:REQUIRE_PRIVATE
+          if ([string]::IsNullOrWhiteSpace($env:PRIVATE_REPO) -or [string]::IsNullOrWhiteSpace($env:PRIVATE_TOKEN)) {
+            if ($required) { throw 'Private engine is required, but GPTLOCK_PRIVATE_CORE_REPOSITORY/TOKEN are not configured.' }
+            Write-Host 'Private engine handoff is not configured; building the compatibility package.'
+            Add-Content -LiteralPath $env:GITHUB_ENV -Value 'GPTLOCK_REQUIRE_PRIVATE_ENGINE=0'
+            exit 0
+          }
+          $bundle = Join-Path $env:RUNNER_TEMP 'gptlock-private-engine-windows'
+          Remove-Item -LiteralPath $bundle -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $bundle | Out-Null
+          $env:GH_TOKEN = $env:PRIVATE_TOKEN
+          gh release download "product-v$($env:RELEASE_VERSION)" --repo $env:PRIVATE_REPO --pattern 'gptlock-engine-windows-x64*' --dir $bundle
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $downloaded = Join-Path $bundle 'gptlock-engine-windows-x64.exe'
+          $manifest = Join-Path $bundle 'gptlock-engine-windows-x64.json'
+          $binary = Join-Path $bundle 'gptlock-engine.exe'
+          if (-not (Test-Path -LiteralPath $downloaded) -or -not (Test-Path -LiteralPath $manifest)) {
+            throw 'Private Windows engine bundle is incomplete.'
+          }
+          Copy-Item -LiteralPath $downloaded -Destination $binary -Force
+          node scripts\verify-private-engine-bundle.mjs --manifest $manifest --binary $binary --version $env:RELEASE_VERSION --platform windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "GPTLOCK_PRIVATE_ENGINE=$binary"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value (if ($required) { 'GPTLOCK_REQUIRE_PRIVATE_ENGINE=1' } else { 'GPTLOCK_REQUIRE_PRIVATE_ENGINE=0' })
       - name: Build Setup
         shell: pwsh
         env:
@@ -234,13 +317,22 @@ jobs:
 
             if ($signingEnabled) {
               Sign-GPTLockFile 'native-core\target\release\gptlock-core.exe' $signTool
+              if (-not [string]::IsNullOrWhiteSpace($env:GPTLOCK_PRIVATE_ENGINE) -and (Test-Path -LiteralPath $env:GPTLOCK_PRIVATE_ENGINE)) {
+                Sign-GPTLockFile $env:GPTLOCK_PRIVATE_ENGINE $signTool
+              }
             }
 
             $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
             if (-not (Test-Path -LiteralPath $iscc)) {
               choco install innosetup --yes --no-progress
             }
-            & $iscc "/DMyAppVersion=$version" 'packaging\windows\GPTLock.iss'
+            $isccArgs = @("/DMyAppVersion=$version")
+            if (-not [string]::IsNullOrWhiteSpace($env:GPTLOCK_PRIVATE_ENGINE)) {
+              if (-not (Test-Path -LiteralPath $env:GPTLOCK_PRIVATE_ENGINE)) { throw 'Configured private engine path does not exist.' }
+              $isccArgs += "/DPrivateEnginePath=$($env:GPTLOCK_PRIVATE_ENGINE)"
+            }
+            $isccArgs += 'packaging\windows\GPTLock.iss'
+            & $iscc @isccArgs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
             if ($signingEnabled) {
