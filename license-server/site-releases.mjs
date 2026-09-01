@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const RELEASES_API = 'https://api.github.com/repos/b8vipvip/GPTLock/releases?per_page=12';
-const RELEASES_PAGE = 'https://github.com/b8vipvip/GPTLock/releases';
 const CACHE_MS = 5 * 60 * 1000;
 
 function currentVersion(serverRoot) {
@@ -17,8 +16,6 @@ function publicRelease(release) {
     tag: String(release.tag_name || ''),
     name: String(release.name || release.tag_name || ''),
     publishedAt: release.published_at || release.created_at || null,
-    url: String(release.html_url || RELEASES_PAGE),
-    notes: String(release.body || '').slice(0, 12000),
     assets: Array.isArray(release.assets) ? release.assets.map((asset) => ({
       name: String(asset.name || ''),
       url: String(asset.browser_download_url || ''),
@@ -33,7 +30,7 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch }) {
 
   async function load() {
     if (cache && cache.expiresAt > Date.now()) return cache.value;
-    const fallback = { ok: true, currentVersion: currentVersion(serverRoot), source: 'local', githubUrl: RELEASES_PAGE, releases: [] };
+    const fallback = { ok: true, currentVersion: currentVersion(serverRoot), source: 'local', releases: [] };
     try {
       const response = await fetchImpl(RELEASES_API, {
         headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'GPTLock-site/1.0', 'X-GitHub-Api-Version': '2022-11-28' },
@@ -42,11 +39,11 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch }) {
       if (!response.ok) throw new Error(`GitHub release feed returned ${response.status}`);
       const rows = await response.json();
       const releases = (Array.isArray(rows) ? rows : []).filter((row) => !row.draft && !row.prerelease).map(publicRelease);
-      const value = { ok: true, currentVersion: currentVersion(serverRoot), source: 'github', githubUrl: RELEASES_PAGE, releases };
+      const value = { ok: true, currentVersion: currentVersion(serverRoot), source: 'github', releases };
       cache = { expiresAt: Date.now() + CACHE_MS, value };
       return value;
     } catch (error) {
-      return { ...fallback, warning: String(error?.message || error).slice(0, 240) };
+      return { ...fallback, warning: 'release_feed_unavailable' };
     }
   }
 
