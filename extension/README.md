@@ -1,34 +1,30 @@
 # 浏览器扩展 / Browser Extension
 
-> 默认中文，English follows.
+GPTLock 浏览器扩展面向官方 `chatgpt.com` 网页，支持 Chrome、Chromium 和 Edge Manifest V3。
 
-GPTLock `0.3.3` 扩展只匹配 `https://chatgpt.com/*`，支持 Chrome、Chromium 和 Edge Manifest V3。
+## 用户侧职责
 
-已实现：
+扩展提供：
 
-- 多模型、多推理强度、严格/提醒模式；
-- 首选推理强度和保守的页面菜单自动对齐；
-- `chrome.debugger` + CDP Network 响应关联；
-- JSON、SSE 和白名单响应头的模型/推理元数据提取；
-- 冲突/缺失元数据安全降级；
-- 首次探测、等待、Verified、Mismatch、Unverified 状态机；
-- 发送按钮、Enter 与表单提交的同步守卫；
-- 双语弹窗、设置页、页面小型状态指示器与每标签页徽章；
-- Native Messaging 策略同步和验证。
-- 总启用开关、一键自动验证准备、响应缺失诊断和隐私安全的运行日志/JSON 导出。
+- GPTLock 开关和状态显示；
+- 模型与推理偏好设置入口；
+- 账户登录与权益状态；
+- 自动验证和诊断入口；
+- 与已安装 GPTLock 本地组件的兼容通信；
+- 更新与版本入口。
 
-运行文件测试：
+## public/private split
 
-```bash
-node --test extension/tests/*.test.mjs
-```
+此目录正在逐步收敛为**薄客户端壳层**。新的实现敏感判断、验证、学习和决策能力不应继续写入公开 JavaScript 源码，而由私有核心实现并通过稳定合同返回结果。
 
-开发加载：在扩展管理页开启开发者模式，加载本目录。**这一步只安装扩展，不会安装 Native Core。** 还必须先运行 Windows Setup/源码安装脚本或安装 Linux deb；否则 Chrome 会返回 `Specified native messaging host not found`。manifest 公钥使官方目录的 ID 固定为 `bhchcpeodphgjfjoookncemnamdbfcof`，本地核心清单必须允许该 ID。
+v0.5.x 仍保留一部分旧实现文件来维持现有发行版兼容。这些文件已经冻结，不代表未来公共扩展架构，也不应继续添加新的专有逻辑。
 
-扩展不会持久化聊天正文、请求体或响应体。DOM、自动点击和请求元数据只用于预检，不能产生 `verified`。详见 [使用方法](../docs/USAGE.md) 与 [安全边界](../docs/SECURITY.md)。
+公共兼容边界见 `../contracts/core-bridge.schema.json`。
+
+## 开发
+
+公开扩展开发应优先集中在 UI、账户体验、安装状态、非敏感诊断和兼容桥接。涉及核心策略或判断规则的变更应在私有实现中完成。
 
 ## English
 
-The v0.3.3 MV3 extension targets only official `chatgpt.com` pages. It provides policy settings, conservative UI alignment, CDP Network correlation, whitelisted JSON/SSE response-metadata extraction, strict send interception, a one-probe state machine, a global enable switch, one-click verification preparation, privacy-safe runtime diagnostics/export, popup/status UI, Native Messaging, and actionable Local Core installation diagnostics. It distinguishes a missing host from a host that starts but fails the protocol handshake. Loading this directory installs only the extension; Setup, a platform package, or a source installer must separately register the Native Core.
-
-Chat bodies and complete network payloads are never persisted. DOM labels, automatic selection, and request metadata are preflight-only and cannot produce `verified`. The committed public manifest key gives official unpacked builds the stable ID shown above.
+The GPTLock browser extension is being reduced to a thin public client shell for UI, account state, diagnostics, updates, and compatibility bridging. New proprietary decision, verification, detection, and learning logic belongs to the private core rather than readable public JavaScript. Legacy v0.5.x implementation files remain temporarily for release compatibility and are frozen during migration.
