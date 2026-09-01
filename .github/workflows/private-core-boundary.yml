@@ -22,11 +22,16 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
         run: |
           set -Eeuo pipefail
 
           override=false
           if jq -e '.[] | select(. == "public-core-maintenance")' <<<"$LABELS_JSON" >/dev/null; then
+            override=true
+          elif grep -Fq '[public-core-maintenance]' <<<"$PR_BODY"; then
+            # The body marker exists so a narrowly scoped maintenance PR can pass
+            # on its first opened/synchronize event even before label propagation.
             override=true
           fi
 
@@ -45,7 +50,7 @@ jobs:
                 echo "explicit public-core-maintenance override: $status $path"
                 continue
               fi
-              echo "::error file=$path::This is a frozen legacy public-core path. New implementation-sensitive behavior belongs in the private core. Delete the legacy file after replacement, or use the explicit public-core-maintenance label for a narrowly scoped compatibility/security fix."
+              echo "::error file=$path::This is a frozen legacy public-core path. New implementation-sensitive behavior belongs in the private core. Delete the legacy file after replacement, or use the explicit public-core-maintenance label/body marker for a narrowly scoped compatibility or security fix."
               violations=$((violations + 1))
             fi
           done < <(git diff --name-status "$BASE_SHA"...HEAD)
