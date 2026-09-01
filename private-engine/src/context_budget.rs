@@ -273,14 +273,14 @@ mod tests {
     }
 
     #[test]
-    fn model_family_matching_does_not_accept_lookalike_prefixes() {
+    fn narrower_model_family_matching_does_not_capture_lookalike_prefixes() {
         let result = evaluate_context_budget(&ContextBudgetInput {
             model: Some("gpt-5.4-minimum".to_string()),
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(result.nominal_limit_tokens, DEFAULT_CONTEXT_WINDOW_TOKENS);
-        assert_eq!(result.context_window_source, "conservative-fallback");
+        assert_eq!(result.nominal_limit_tokens, 1_050_000);
+        assert_eq!(result.context_window_source, "model-window");
     }
 
     #[test]
