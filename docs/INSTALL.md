@@ -1,161 +1,40 @@
-# 安装方法 / Installation
+# 安装 GPTLock / Installation
 
-> 默认中文，English follows. 当前发布目标为 Windows x64 与 Debian/Ubuntu amd64。
+GPTLock 支持 Windows 与 Linux，推荐始终从 GPTLock 官网或 GitHub 正式 Release 获取安装文件。
 
-## 从 GitHub Release 安装（推荐）
+## Windows
 
-发布页：<https://github.com/b8vipvip/GPTLock/releases>
+1. 下载最新 `GPTLockSetup-x64.exe`；
+2. 运行安装程序完成安装；
+3. 按安装提示启用 GPTLock 浏览器扩展；
+4. 完全重启 Chrome / Edge；
+5. 打开 GPTLock，确认状态正常后登录账户并完成设置。
 
-每个正式版本应包含：
+如果升级后出现旧界面、组件离线或版本不一致，优先重新运行最新安装器或使用产品内修复/更新入口。
 
-| 文件 | 用途 |
-|---|---|
-| `GPTLockSetup-x64.exe` | Windows x64 安装器 |
-| `gptlock_<版本>_amd64.deb` | Debian/Ubuntu amd64 安装包 |
-| `gptlock-extension-<版本>.zip` | 仅扩展运行文件 |
-| `gptlock-core-<版本>-linux-x64.tar.gz` | 独立 Linux 本地核心 |
-| `SHA256SUMS.txt` | 所有发布制品的 SHA-256 |
+## Linux
 
-若版本尚未创建 Release，可在对应 Pull Request 的绿色 CI Run 页面下载同名 Actions artifacts 进行测试。
+1. 下载与你的平台对应的正式 `.deb`；
+2. 使用系统包管理器安装；
+3. 按安装提示启用浏览器扩展；
+4. 完全重启浏览器；
+5. 登录 GPTLock 并完成设置。
 
-## Windows 10/11 x64
+## 浏览器
 
-> 只在 `chrome://extensions` 加载源码目录不会安装 Native Core。若弹窗显示 `Specified native messaging host not found`，必须先运行 Windows Setup；弹窗会直接提供安装入口。0.3.5 的安装/修复流程会验证真实 Native Messaging 协议往返。
+当前面向 Chrome、Chromium 与 Edge。若浏览器提示扩展需要重新加载，完成操作后建议完全退出并重新打开浏览器。
 
-1. 下载 `GPTLockSetup-x64.exe` 和 `SHA256SUMS.txt`。可选地验证哈希：
+## 下载来源
 
-   ```powershell
-   (Get-FileHash .\GPTLockSetup-x64.exe -Algorithm SHA256).Hash.ToLower()
-   ```
+- 官网版本页：`https://gptlock.mv3.cn/releases`
+- GitHub Releases：`https://github.com/b8vipvip/GPTLock/releases`
 
-   将结果与 `SHA256SUMS.txt` 对应行比较。
+不要从无法确认来源的第三方站点下载 GPTLock 安装包。
 
-2. 运行安装器。默认以当前用户身份安装到 `%LOCALAPPDATA%\GPTLock`。安装向导允许修改目录；若希望插件放在 D 盘，请选择 `D:\AI\GPTLock`。目录结构为：
+## 校验
 
-   ```text
-   <所选安装目录>\
-   ├── bin\gptlock-core.exe
-   ├── extension\
-   ├── native-messaging\
-   └── tools\Update-GPTLock.ps1
-   ```
-
-   安装器同时为当前用户登记 Chrome 与 Edge Native Messaging 主机，不需要管理员权限。
-
-3. 打开 `chrome://extensions` 或 `edge://extensions`，开启“开发者模式”，点击“加载已解压的扩展程序”，选择安装目录下的 `extension`。默认路径与 D 盘示例如下：
-
-   ```text
-   %LOCALAPPDATA%\GPTLock\extension
-   D:\AI\GPTLock\extension
-   ```
-
-4. 确认浏览器显示的扩展 ID 为：
-
-   ```text
-   bhchcpeodphgjfjoookncemnamdbfcof
-   ```
-
-5. 完全退出所有 Chrome/Edge 进程，再重新启动。打开 `chatgpt.com`，点击 GPTLock 图标，确认“本地核心已连接”和“请求锁定器已连接”。
-
-若仍显示本地核心离线，可从开始菜单运行“修复 GPTLock 浏览器连接”，或执行：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\GPTLock\tools\Repair-GPTLock.ps1"
-```
-
-修复脚本会重新生成 Native Messaging 清单、登记 Chrome/Edge 当前用户注册表项，并验证核心、路径、扩展 ID、清单内容和一次真实的 Native Messaging 消息往返。自定义路径安装时，应运行该目录中的脚本，例如：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "D:\AI\GPTLock\tools\Repair-GPTLock.ps1"
-```
-
-若要把已有默认安装迁移到 `D:\AI\GPTLock`，完全退出浏览器后直接运行 0.3.5 或更新版本的 Setup，在安装目录页选择新路径；然后从扩展管理页移除旧的 unpacked 实例，加载 `D:\AI\GPTLock\extension`，确认固定 ID 后重启浏览器。
-
-浏览器不会允许普通本地安装器静默安装未上架商店的扩展，因此仍需手动执行一次“加载已解压”。这是预期行为，不应通过篡改浏览器策略绕过。
-
-## Debian/Ubuntu amd64
-
-1. 下载 `.deb` 和 `SHA256SUMS.txt`，验证并安装：
-
-   ```bash
-   sha256sum gptlock_<版本>_amd64.deb
-   sudo apt install ./gptlock_<版本>_amd64.deb
-   ```
-
-2. 可选地启用本机 HTTP API 的 systemd 用户服务：
-
-   ```bash
-   systemctl --user daemon-reload
-   systemctl --user enable --now gptlock-core.service
-   curl http://127.0.0.1:17856/health
-   ```
-
-   Native Messaging 会按需启动本地核心，因此即使不启用此服务，扩展与核心通信仍可工作。
-
-3. 在 `chrome://extensions`、`edge://extensions` 或 Chromium 扩展页开启开发者模式，加载：
-
-   ```text
-   /usr/share/gptlock/extension
-   ```
-
-4. 确认固定扩展 ID，然后完全重启浏览器。
-
-`.deb` 会安装系统级 Native Messaging 清单到 Chrome、Chromium 和 Edge 的标准目录。如果某个发行版使用非标准浏览器目录，可改用下方的用户级源码安装脚本。
-
-## 从源码安装
-
-```bash
-git clone https://github.com/b8vipvip/GPTLock.git
-cd GPTLock
-cargo build --locked --release --manifest-path native-core/Cargo.toml
-```
-
-Linux 用户级安装：
-
-```bash
-./packaging/linux/install.sh
-```
-
-扩展会复制到 `~/.local/share/gptlock/extension`。Windows PowerShell 用户级安装。已配置 GitHub SSH 且希望运行文件位于 `D:\AI` 时，建议把源码与安装目录分开：
-
-```powershell
-Set-Location D:\AI
-git clone git@github.com:b8vipvip/GPTLock.git GPTLock-source
-Set-Location .\GPTLock-source
-cargo build --locked --release --manifest-path native-core/Cargo.toml
-powershell -NoProfile -ExecutionPolicy Bypass -File .\packaging\windows\Install-GPTLock.ps1 -InstallRoot 'D:\AI\GPTLock'
-```
-
-未传 `-InstallRoot` 时，扩展会复制到 `%LOCALAPPDATA%\GPTLock\extension`。上述命令则复制到 `D:\AI\GPTLock\extension`，并立即做协议往返自检。两种脚本默认使用固定扩展 ID；只有维护自定义 manifest key 时才需要传入 `--extension-id` 或 `-ExtensionId`。
-
-## 安装诊断
-
-```bash
-gptlock-core doctor
-```
-
-Windows：
-
-```powershell
-& "$env:LOCALAPPDATA\GPTLock\bin\gptlock-core.exe" doctor
-```
-
-诊断输出不包含 API 令牌或聊天正文。用户数据位于 Linux `~/.gptlock` 或 Windows `%USERPROFILE%\.gptlock`。
-
-## 安装后的 0.3.5 使用要点
-
-安装完成后不需要先“验证成功”才能聊天。GPTLock 0.3.5 的主功能是正式 conversation POST 的发送前请求锁定；Native Core 的响应验证是附加确认。
-
-如果弹窗显示 Native Core 离线，但“请求锁定器”仍在线，浏览器侧会继续尝试锁定正式请求，同时对响应审计能力给出告警。若请求锁定器也离线，通常是同一 ChatGPT 标签页被 DevTools 或其他调试器占用；关闭冲突调试器后点击“重新连接”。
-
-“自动验证”会在当前 ChatGPT 对话自动发送一条可见测试消息，不需要人工再点击发送。
+正式发布会提供 SHA-256 校验信息。对下载来源有疑问时，可以在安装前比对文件校验值。
 
 ## English
 
-Download the Windows x64 Setup or Debian/Ubuntu amd64 package from GitHub Releases and verify it against `SHA256SUMS.txt`. Windows defaults to `%LOCALAPPDATA%\GPTLock`, but the Setup directory page may be changed to a custom root such as `D:\AI\GPTLock`; Linux installs the core to `/usr/bin` and the extension to `/usr/share/gptlock/extension`.
-
-In the browser, enable Developer mode and use **Load unpacked** on the selected install root's `extension` directory. Verify the stable ID `bhchcpeodphgjfjoookncemnamdbfcof`, then fully restart the browser. Loading the extension directory alone does not install the Native Core. If Chromium reports a missing host or a native-host communication failure, run Setup or the installed `Repair-GPTLock.ps1`; v0.3.5 verifies a real framed protocol round trip. A normal local installer cannot silently install an unpacked, non-store Chromium extension, so this one manual browser step is intentional.
-
-GPTLock 0.3.5 does not require a successful response verification before normal chat. The browser-side formal-request lock is the primary control; Native Core response verification is supplementary. If DevTools detaches the request interceptor, close DevTools and click Reconnect. Auto verify sends its visible test message automatically.
-
-The Linux systemd user unit is optional because Native Messaging launches the core on demand. Enable it only when the loopback HTTP API should stay available. Source installation scripts are also provided for per-user development installs.
+Download GPTLock only from the official product site or GitHub Releases. Install the Windows Setup or Linux package, enable the browser extension when prompted, restart the browser completely, then sign in and configure GPTLock. Internal host registration and implementation details are intentionally not part of the public installation guide.
