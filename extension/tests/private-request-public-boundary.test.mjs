@@ -6,6 +6,7 @@ const files = [
   new URL('../private-core-channel.js', import.meta.url),
   new URL('../private-context-bridge.js', import.meta.url),
   new URL('../private-context-indicator.js', import.meta.url),
+  new URL('../private-context-budget-shadow.js', import.meta.url),
   new URL('../private-request-hook.js', import.meta.url),
   new URL('../private-request-routing.js', import.meta.url),
   new URL('../private-response-hook.js', import.meta.url),
@@ -28,8 +29,13 @@ const forbiddenImplementationMarkers = [
   /SAFETY_BUDGET_RATIO/,
   /CONVERSATION_LENGTH_LIMIT_PATTERNS/,
   /LEARNING_HEADROOM_RATIO/,
+  /MESSAGE_OVERHEAD_TOKENS/,
+  /IMAGE_TOKEN_ESTIMATE/,
+  /ATTACHMENT_TOKEN_ESTIMATE/,
   /nextHardLimitProfile/,
   /nextLearnedProfile/,
+  /1_050_000/,
+  /924_000/,
 ];
 
 test('public private-core routing contains transport only, not proprietary rules', async () => {
