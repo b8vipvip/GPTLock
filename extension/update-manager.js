@@ -6,6 +6,7 @@ export const WINDOWS_INSTALLER_NAME = 'GPTLockSetup-x64.exe';
 export const WINDOWS_DOWNLOAD_FILENAME = 'GPTLock/GPTLockSetup-x64.exe';
 export const UPDATE_STATUS_KEY = 'gptlockUiUpdateStatus';
 export const RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION = '0.5.24';
+const RELEASE_DOWNLOAD_PREFIX = '/downloads/releases/';
 
 function numericParts(value) {
   const normalized = String(value || '').trim().replace(/^v/i, '');
@@ -42,10 +43,12 @@ function sha256FromDigest(value) {
   return match ? match[1].toLowerCase() : null;
 }
 
-function secureDownloadUrl(value) {
+export function secureServerDownloadUrl(value) {
   try {
     const url = new URL(String(value || ''));
-    return url.protocol === 'https:' ? url.toString() : null;
+    if (url.protocol !== 'https:' || url.hostname !== 'gptlock.mv3.cn') return null;
+    if (!url.pathname.startsWith(RELEASE_DOWNLOAD_PREFIX)) return null;
+    return url.toString();
   } catch {
     return null;
   }
@@ -91,16 +94,16 @@ export function parseLatestRelease(rawRelease, currentVersion) {
     ? release.assets.find((asset) => asset?.name === WINDOWS_INSTALLER_NAME)
     : null;
   const installerSha256 = sha256FromDigest(installerAsset?.digest);
-  const installerUrl = secureDownloadUrl(installerAsset?.browser_download_url);
+  const installerUrl = secureServerDownloadUrl(installerAsset?.browser_download_url);
   if (!installerAsset || !installerUrl || !installerSha256) {
-    throw new Error('Latest release is missing a verified Windows installer / 最新版本缺少可校验的 Windows 安装器');
+    throw new Error('Latest release is missing a verified server-mirrored Windows installer / 最新版本缺少服务端已校验的 Windows 安装器');
   }
   const comparison = compareVersions(latestVersion, normalizedCurrent);
   return {
     currentVersion: normalizedCurrent,
     latestVersion,
     tag: String(release.tag_name || `v${latestVersion}`),
-    releaseUrl: typeof release.html_url === 'string' ? release.html_url : RELEASES_URL,
+    releaseUrl: RELEASES_URL,
     updateAvailable: comparison === 1,
     installer: {
       name: WINDOWS_INSTALLER_NAME,
@@ -127,6 +130,7 @@ export async function fetchLatestRelease(currentVersion, fetchImpl = fetch) {
       currentVersion: release.currentVersion,
       latestVersion: release.latestVersion,
       updateAvailable: release.updateAvailable,
+      source: 'server_mirror',
     });
     return release;
   } catch (error) {
