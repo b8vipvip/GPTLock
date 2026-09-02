@@ -87,3 +87,44 @@ test('historical evidence is hidden after the lock policy changes to another mod
   assert.equal(selected.request.id, null);
   assert.equal(selected.response.id, null);
 });
+
+test('repeated delivery of identical evidence does not churn the persisted history timestamp', () => {
+  const state = {
+    lastRequest: { model: 'gpt-5.6-sol', capturedAt: '2026-09-02T03:00:00.000Z' },
+    lastVerification: {
+      model: 'gpt-5.6-sol',
+      evidenceSource: 'network_response_metadata',
+      verifiedAt: '2026-09-02T03:00:02.000Z',
+      reasons: [],
+    },
+  };
+  const first = history.mergeTrustedEvidence(null, state, '2026-09-02T03:00:03.000Z');
+  const second = history.mergeTrustedEvidence(first, state, '2026-09-02T03:05:00.000Z');
+  assert.deepEqual(second, first);
+});
+
+test('an older tab state cannot overwrite newer trusted evidence from another window', () => {
+  const newer = history.mergeTrustedEvidence(null, {
+    lastRequest: { model: 'gpt-5.6-sol', capturedAt: '2026-09-02T03:10:00.000Z' },
+    lastVerification: {
+      model: 'gpt-5.6-sol',
+      evidenceSource: 'network_response_metadata',
+      verifiedAt: '2026-09-02T03:10:02.000Z',
+      reasons: [],
+    },
+  }, '2026-09-02T03:10:03.000Z');
+
+  const merged = history.mergeTrustedEvidence(newer, {
+    lastRequest: { model: 'gpt-5.5', capturedAt: '2026-09-02T03:00:00.000Z' },
+    lastVerification: {
+      model: 'gpt-5.5',
+      evidenceSource: 'network_response_metadata',
+      verifiedAt: '2026-09-02T03:00:02.000Z',
+      reasons: [],
+    },
+  }, '2026-09-02T03:20:00.000Z');
+
+  assert.equal(merged.request.model, 'gpt-5.6-sol');
+  assert.equal(merged.response.model, 'gpt-5.6-sol');
+  assert.equal(merged.updatedAt, newer.updatedAt);
+});
