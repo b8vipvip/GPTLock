@@ -16,3 +16,15 @@ test('model status DOM writes are idempotent and rendering yields to the page ev
   assert.match(source, /window\.setTimeout\(render, 0\)/);
   assert.doesNotMatch(source, /queueMicrotask\(render\)/);
 });
+
+test('continuity rendering is event-driven and does not race the base indicator refresh loop', () => {
+  assert.doesNotMatch(source, /setInterval\(render/);
+  assert.doesNotMatch(source, /REFRESH_MS\s*=\s*750/);
+  assert.match(source, /GPTLOCK_GUARD_STATE/);
+  assert.match(source, /storage\.onChanged/);
+});
+
+test('historical response keeps the model label without a recent-confirmed suffix', () => {
+  assert.doesNotMatch(source, /最近已确认/);
+  assert.match(source, /const label = modelLabel\(response\.id\)/);
+});
