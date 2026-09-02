@@ -134,6 +134,21 @@ async function initAccount() {
       await refresh();
     } catch (error) { notice(out, error.message, 'error'); }
   });
+  document.getElementById('deleteAccountForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const out = document.getElementById('deleteAccountNotice');
+    const confirmText = String(form.get('confirmText') || '');
+    if (confirmText !== 'DELETE') return notice(out, '请输入 DELETE 确认永久删除账户。', 'error');
+    if (!window.confirm('永久删除 GPTLock 账户与关联数据？此操作不可撤销。')) return;
+    notice(out, '正在永久删除账户与关联数据…');
+    try {
+      await api('/site/api/account/delete', { method: 'POST', body: JSON.stringify({ currentPassword: form.get('currentPassword'), confirmText }) });
+      event.currentTarget.reset();
+      window.alert('GPTLock 账户与关联数据已删除。');
+      location.href = '/data-deletion';
+    } catch (error) { notice(out, error.message, 'error'); }
+  });
   document.getElementById('revokeAllExtensionSessions')?.addEventListener('click', async () => {
     await api('/site/api/account/sessions/revoke-all', { method: 'POST', body: '{}' });
     await refresh();
