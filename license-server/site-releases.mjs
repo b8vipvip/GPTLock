@@ -16,6 +16,7 @@ const RELEASES_API = 'https://api.github.com/repos/b8vipvip/GPTLock/releases?per
 const DEFAULT_ORIGIN = 'https://gptlock.mv3.cn';
 const DEFAULT_SYNC_MS = 60 * 1000;
 const DEFAULT_FETCH_RETRIES = 2;
+const DEFAULT_ASSET_TIMEOUT_MS = 60 * 1000;
 const MAX_NOTIFICATION_WAIT_MS = 25 * 1000;
 const SAFE_TAG = /^v\d+(?:\.\d+){1,3}$/i;
 const SAFE_ASSET = /^[A-Za-z0-9][A-Za-z0-9._+()-]{0,159}$/;
@@ -114,6 +115,12 @@ function transportPolicy(value) {
   return ['auto', 'fetch', 'curl'].includes(normalized) ? normalized : 'auto';
 }
 
+function boundedNumber(value, min, max, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
 export function createSiteReleaseFeed({
   serverRoot,
   fetchImpl = fetch,
@@ -126,6 +133,7 @@ export function createSiteReleaseFeed({
   const indexPath = join(mirrorRoot, 'index.json');
   const syncIntervalMs = Math.max(30_000, Number(env.GPTLOCK_RELEASE_SYNC_INTERVAL_MS || DEFAULT_SYNC_MS));
   const fetchRetries = Math.max(1, Math.min(5, Number(env.GPTLOCK_RELEASE_FETCH_RETRIES || DEFAULT_FETCH_RETRIES)));
+  const assetTimeoutMs = boundedNumber(env.GPTLOCK_RELEASE_ASSET_TIMEOUT_MS, 10_000, 180_000, DEFAULT_ASSET_TIMEOUT_MS);
   const policy = transportPolicy(env.GPTLOCK_RELEASE_TRANSPORT);
   const currentProductVersion = currentVersion(serverRoot);
   const productionFetch = fetchImpl === globalThis.fetch;
@@ -145,6 +153,19 @@ export function createSiteReleaseFeed({
   let historyFailures = [];
   let lastLoggedError = null;
   let lastLoggedPublishedVersion = null;
+  let progress = {
+    stage: 'idle',
+    startedAt: null,
+    updatedAt: null,
+    finishedAt: null,
+    releaseTag: null,
+    currentAsset: null,
+    activeAssets: [],
+    completedAssets: 0,
+    totalAssets: 0,
+    historyIndex: 0,
+    historyTotal: 0,
+  };
 
   function ensureStorage() {
     try {
@@ -158,6 +179,42 @@ export function createSiteReleaseFeed({
   }
 
   ensureStorage();
+
+  function updateProgress(stage, patch = {}) {
+    progress = {
+      ...progress,
+      ...patch,
+      stage,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  function resetProgress(stage = 'idle') {
+    const now = new Date().toISOString();
+    progress = {
+      stage,
+      startedAt: stage === 'idle' ? null : now,
+      updatedAt: now,
+      finishedAt: null,
+      releaseTag: null,
+      currentAsset: null,
+      activeAssets: [],
+      completedAssets: 0,
+      totalAssets: 0,
+      historyIndex: 0,
+      historyTotal: 0,
+    };
+  }
+
+  function publicProgress() {
+    const started = progress.startedAt ? Date.parse(progress.startedAt) : NaN;
+    return {
+      ...progress,
+      inProgress: Boolean(syncing) || !['idle', 'completed', 'failed'].includes(progress.stage),
+      transport: lastTransport,
+      elapsedMs: Number.isFinite(started) ? Math.max(0, Date.now() - started) : 0,
+    };
+  }
 
   function githubHeaders(accept = 'application/vnd.github+json') {
     const headers = {
@@ -255,7 +312,8 @@ export function createSiteReleaseFeed({
   function publicView(feed = loadIndex()) {
     let warning = lastWarning;
     if (storageError) warning = 'release_mirror_storage_unavailable';
-    return warning ? { ...feed, warning } : { ...feed };
+    const view = { ...feed, sync: publicProgress() };
+    return warning ? { ...view, warning } : view;
   }
 
   function notifyWaiters(next) {
@@ -323,7 +381,7 @@ export function createSiteReleaseFeed({
     const response = await githubFetch(apiUrl, {
       headers: githubHeaders('application/octet-stream'),
       redirect: 'follow',
-    }, 120_000);
+    }, assetTimeoutMs);
     if (!response.ok) throw new Error(`GitHub asset download failed (${response.status}): ${name}`);
     const bytes = Buffer.from(await response.arrayBuffer());
     if (expectedSize && bytes.length !== expectedSize) throw new Error(`Release asset size mismatch: ${name}`);
@@ -341,13 +399,46 @@ export function createSiteReleaseFeed({
     };
   }
 
-  async function mirrorRelease(release) {
+  async function mirrorRelease(release, stage = 'downloading_latest') {
     const tag = String(release.tag_name || '');
     if (!SAFE_TAG.test(tag)) throw new Error(`Unsafe release tag: ${tag}`);
-    const assets = [];
-    for (const asset of Array.isArray(release.assets) ? release.assets : []) {
-      assets.push(await downloadAsset(tag, asset));
-    }
+    const sourceAssets = Array.isArray(release.assets) ? release.assets : [];
+    const active = new Set();
+    let completed = 0;
+
+    updateProgress(stage, {
+      releaseTag: tag,
+      currentAsset: null,
+      activeAssets: [],
+      completedAssets: 0,
+      totalAssets: sourceAssets.length,
+    });
+
+    const assets = await Promise.all(sourceAssets.map(async (asset) => {
+      const name = String(asset?.name || '');
+      active.add(name);
+      updateProgress(stage, {
+        releaseTag: tag,
+        currentAsset: name,
+        activeAssets: [...active],
+        completedAssets: completed,
+        totalAssets: sourceAssets.length,
+      });
+      try {
+        return await downloadAsset(tag, asset);
+      } finally {
+        active.delete(name);
+        completed += 1;
+        updateProgress(stage, {
+          releaseTag: tag,
+          currentAsset: active.size ? [...active][0] : null,
+          activeAssets: [...active],
+          completedAssets: completed,
+          totalAssets: sourceAssets.length,
+        });
+      }
+    }));
+
     return {
       tag,
       name: String(release.name || tag),
@@ -364,13 +455,23 @@ export function createSiteReleaseFeed({
     }
   }
 
+  function warningForError(message, current) {
+    if (/release feed returned 401/i.test(message)) return 'release_token_invalid';
+    if (/release feed returned 403/i.test(message)) return 'release_token_forbidden';
+    if (storageError) return 'release_mirror_storage_unavailable';
+    return current.releases.length ? 'release_mirror_sync_failed' : 'release_feed_unavailable';
+  }
+
   function markFatalSyncError(error) {
     const current = loadIndex();
     lastSyncErrorAt = new Date().toISOString();
     lastSyncError = errorText(error);
-    lastWarning = storageError
-      ? 'release_mirror_storage_unavailable'
-      : current.releases.length ? 'release_mirror_sync_failed' : 'release_feed_unavailable';
+    lastWarning = warningForError(lastSyncError, current);
+    updateProgress('failed', {
+      finishedAt: lastSyncErrorAt,
+      activeAssets: [],
+      currentAsset: null,
+    });
     logFatal(error);
     return publicView(current);
   }
@@ -379,12 +480,14 @@ export function createSiteReleaseFeed({
     lastSyncAttemptAt = new Date().toISOString();
     historyFailures = [];
     lastTransport = null;
+    resetProgress('fetching_release_feed');
 
     if (!ensureStorage()) throw storageError;
     if (!token) {
       lastWarning = 'private_release_token_required';
       lastSyncErrorAt = lastSyncAttemptAt;
       lastSyncError = 'GPTLOCK_GITHUB_TOKEN or GH_TOKEN is not configured in the running service';
+      updateProgress('failed', { finishedAt: lastSyncErrorAt });
       logFatal(new Error(lastSyncError));
       return;
     }
@@ -398,15 +501,29 @@ export function createSiteReleaseFeed({
     const rowTags = new Set(rows.map((row) => String(row.tag_name || '')));
     const reusablePrevious = previous.releases.filter((release) => rowTags.has(release.tag) && releaseAssetsAvailable(release));
 
-    const latest = await mirrorRelease(rows[0]);
+    const latest = await mirrorRelease(rows[0], 'downloading_latest');
+    updateProgress('publishing_latest', {
+      releaseTag: latest.tag,
+      activeAssets: [],
+      currentAsset: null,
+      completedAssets: latest.assets.length,
+      totalAssets: latest.assets.length,
+    });
     const bootstrap = [latest, ...reusablePrevious.filter((release) => release.tag !== latest.tag)].slice(0, 12);
     publishIndex(bootstrap);
 
     const releases = [latest];
-    for (const row of rows.slice(1)) {
+    const historyRows = rows.slice(1);
+    for (let index = 0; index < historyRows.length; index += 1) {
+      const row = historyRows[index];
       const tag = String(row.tag_name || '');
+      updateProgress('backfilling_history', {
+        releaseTag: tag,
+        historyIndex: index + 1,
+        historyTotal: historyRows.length,
+      });
       try {
-        releases.push(await mirrorRelease(row));
+        releases.push(await mirrorRelease(row, 'backfilling_history'));
       } catch (error) {
         const reusable = reusablePrevious.find((release) => release.tag === tag);
         if (reusable) releases.push(reusable);
@@ -420,6 +537,14 @@ export function createSiteReleaseFeed({
     lastSyncError = null;
     lastWarning = historyFailures.length ? 'release_history_partial' : null;
     lastLoggedError = null;
+    updateProgress('completed', {
+      finishedAt: lastSyncSuccessAt,
+      releaseTag: final.releases[0]?.tag || latest.tag,
+      activeAssets: [],
+      currentAsset: null,
+      completedAssets: final.releases[0]?.assets?.length || latest.assets.length,
+      totalAssets: final.releases[0]?.assets?.length || latest.assets.length,
+    });
     if (final.latestVersion && final.latestVersion !== lastLoggedPublishedVersion) {
       console.log(`[release-mirror] published v${final.latestVersion} transport=${lastTransport || 'unknown'} assets=${final.releases[0]?.assets?.length || 0}`);
       lastLoggedPublishedVersion = final.latestVersion;
@@ -437,6 +562,7 @@ export function createSiteReleaseFeed({
         syncInProgress: Boolean(syncing),
         syncIntervalMs,
         fetchRetries,
+        assetTimeoutMs,
         transportPolicy: policy,
         lastTransport,
         proxyConfigured: Boolean(curlTransport?.proxyConfigured),
@@ -446,6 +572,7 @@ export function createSiteReleaseFeed({
         lastErrorAt: lastSyncErrorAt,
         lastError: lastSyncError,
         historyFailures,
+        progress: publicProgress(),
       },
     };
   }
