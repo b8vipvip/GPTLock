@@ -29,11 +29,11 @@ function releaseRow({ tag = 'v0.5.30', assets }) {
   }];
 }
 
-function asset(name, id, bytes) {
+function asset(name, id, bytes, tag = 'v0.5.30') {
   return {
     name,
     url: `https://api.github.com/repos/b8vipvip/GPTLock/releases/assets/${id}`,
-    browser_download_url: `https://github.com/b8vipvip/GPTLock/releases/download/v0.5.30/${name}`,
+    browser_download_url: `https://github.com/b8vipvip/GPTLock/releases/download/${tag}/${name}`,
     size: bytes.length,
     digest: `sha256:${sha256(bytes)}`,
   };
@@ -49,9 +49,11 @@ function testFeed({ mirrorRoot, currentRelease }) {
         headers: { 'content-type': 'application/json' },
       });
     }
-    const found = currentRelease()[0]?.assets?.find((item) => item.url === String(url));
+    const rows = currentRelease();
+    const found = rows.flatMap((row) => row?.assets || []).find((item) => item.url === String(url));
     if (!found) throw new Error(`Unexpected URL: ${url}`);
-    const bytes = currentRelease().bytesByName[found.name];
+    const bytes = rows.bytesByUrl?.[found.url] ?? rows.bytesByName?.[found.name];
+    if (!bytes) throw new Error(`Missing fixture bytes: ${found.name}`);
     return new Response(bytes, {
       status: 200,
       headers: { 'content-type': 'application/octet-stream' },
@@ -65,21 +67,22 @@ function testFeed({ mirrorRoot, currentRelease }) {
       GPTLOCK_LICENSE_PUBLIC_ORIGIN: ORIGIN,
       GPTLOCK_RELEASE_MIRROR_DIR: mirrorRoot,
       GPTLOCK_RELEASE_SYNC_INTERVAL_MS: '60000',
+      GPTLOCK_RELEASE_FETCH_RETRIES: '1',
     },
   });
   return { feed, calls };
 }
 
-function fixture(tag = 'v0.5.30') {
+function fixture(tag = 'v0.5.30', idBase = 100) {
   const installer = Buffer.from(`installer-${tag}`);
   const extension = Buffer.from(`extension-${tag}`);
   const sums = Buffer.from(`${sha256(installer)}  ${INSTALLER}\n${sha256(extension)}  gptlock-extension-${tag.slice(1)}.zip\n`);
   const rows = releaseRow({
     tag,
     assets: [
-      asset(INSTALLER, 101, installer),
-      asset(`gptlock-extension-${tag.slice(1)}.zip`, 102, extension),
-      asset('SHA256SUMS.txt', 103, sums),
+      asset(INSTALLER, idBase + 1, installer, tag),
+      asset(`gptlock-extension-${tag.slice(1)}.zip`, idBase + 2, extension, tag),
+      asset('SHA256SUMS.txt', idBase + 3, sums, tag),
     ],
   });
   rows.bytesByName = {
@@ -87,6 +90,14 @@ function fixture(tag = 'v0.5.30') {
     [`gptlock-extension-${tag.slice(1)}.zip`]: extension,
     'SHA256SUMS.txt': sums,
   };
+  rows.bytesByUrl = Object.fromEntries(rows[0].assets.map((item) => [item.url, rows.bytesByName[item.name]]));
+  return rows;
+}
+
+function combineFixtures(...fixtures) {
+  const rows = fixtures.flatMap((item) => item);
+  rows.bytesByUrl = Object.assign({}, ...fixtures.map((item) => item.bytesByUrl || {}));
+  rows.bytesByName = Object.assign({}, ...fixtures.map((item) => item.bytesByName || {}));
   return rows;
 }
 
@@ -135,7 +146,7 @@ test('a second sync reuses already verified local assets instead of downloading 
   assert.equal(secondAssetCalls, 3);
 });
 
-test('mirror publication is atomic when any release asset fails verification', async (t) => {
+test('latest release publication is atomic when one of its assets fails verification', async (t) => {
   const mirrorRoot = mkdtempSync(join(tmpdir(), 'gptlock-release-atomic-'));
   t.after(() => rmSync(mirrorRoot, { recursive: true, force: true }));
   const rows = fixture();
@@ -149,15 +160,34 @@ test('mirror publication is atomic when any release asset fails verification', a
   assert.equal(existsSync(join(mirrorRoot, 'index.json')), false);
 });
 
+test('a broken historical release never blocks a fully verified newest release', async (t) => {
+  const mirrorRoot = mkdtempSync(join(tmpdir(), 'gptlock-release-latest-first-'));
+  t.after(() => rmSync(mirrorRoot, { recursive: true, force: true }));
+  const latest = fixture('v0.5.31', 200);
+  const historical = fixture('v0.5.30', 300);
+  historical[0].assets[1].digest = `sha256:${'0'.repeat(64)}`;
+  const rows = combineFixtures(latest, historical);
+  const { feed } = testFeed({ mirrorRoot, currentRelease: () => rows });
+
+  const result = await feed.sync();
+  assert.equal(result.source, 'server-mirror');
+  assert.equal(result.latestVersion, '0.5.31');
+  assert.equal(result.releases[0].tag, 'v0.5.31');
+  assert.equal(result.releases[0].assets.length, 3);
+  assert.equal(result.warning, 'release_history_partial');
+  assert.equal(existsSync(join(mirrorRoot, 'index.json')), true);
+  assert.equal(existsSync(join(mirrorRoot, 'v0.5.31', INSTALLER)), true);
+});
+
 test('notification wait resolves when a newly mirrored release changes the generation', async (t) => {
   const mirrorRoot = mkdtempSync(join(tmpdir(), 'gptlock-release-notify-'));
   t.after(() => rmSync(mirrorRoot, { recursive: true, force: true }));
-  let rows = fixture('v0.5.30');
+  let rows = fixture('v0.5.30', 400);
   const { feed } = testFeed({ mirrorRoot, currentRelease: () => rows });
   const first = await feed.sync();
 
   const pending = feed.waitForChange(first.generation, 2_000);
-  rows = fixture('v0.5.31');
+  rows = fixture('v0.5.31', 500);
   await feed.sync();
   const notification = await pending;
   const payload = feed.notificationPayload(notification);
@@ -189,4 +219,7 @@ test('private repository without a server token never contacts GitHub and safely
   assert.equal(result.source, 'local');
   assert.equal(result.warning, 'private_release_token_required');
   assert.deepEqual(result.releases, []);
+
+  const loaded = await feed.load();
+  assert.equal(loaded.warning, 'private_release_token_required');
 });
