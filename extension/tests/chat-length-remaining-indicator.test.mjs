@@ -39,6 +39,8 @@ test('indicator renders private remaining percentage without reimplementing toke
   assert.equal(state.status, 'ready');
   assert.equal(state.percent, 37.4);
   assert.equal(indicator.formatPercent(state.percent), '37%');
+  assert.match(source, /聊天长度剩余/);
+  assert.doesNotMatch(source, /等待私有核心/);
   assert.doesNotMatch(source, /remainingTokens\s*\/|safeLimitTokens|nominalLimitTokens|tokenWeight|mediaWeight/);
 });
 
