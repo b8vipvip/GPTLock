@@ -47,10 +47,11 @@ jobs:
         run: |
           mkdir -p dist
           cd extension
-          zip -9 ../dist/gptlock-extension.zip *.js *.css *.html manifest.json
+          zip -9 ../dist/gptlock-extension.zip *.js *.css *.html manifest.json icons/*.png
           unzip -l ../dist/gptlock-extension.zip | grep -q 'account-client.js'
           unzip -l ../dist/gptlock-extension.zip | grep -q 'auth-gate.js'
           unzip -l ../dist/gptlock-extension.zip | grep -q 'account.html'
+          unzip -l ../dist/gptlock-extension.zip | grep -q 'icons/icon128.png'
       - name: Enforce extension distribution boundary
         run: |
           listing="$(unzip -Z1 dist/gptlock-extension.zip)"
