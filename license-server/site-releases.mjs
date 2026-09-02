@@ -4,7 +4,9 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -18,6 +20,7 @@ const DEFAULT_SYNC_MS = 60 * 1000;
 const DEFAULT_FETCH_RETRIES = 2;
 const DEFAULT_ASSET_TIMEOUT_MS = 60 * 1000;
 const MAX_NOTIFICATION_WAIT_MS = 25 * 1000;
+const MIN_PUBLIC_RELEASE_TAG = 'v0.5.30';
 const SAFE_TAG = /^v\d+(?:\.\d+){1,3}$/i;
 const SAFE_ASSET = /^[A-Za-z0-9][A-Za-z0-9._+()-]{0,159}$/;
 const CONTENT_TYPES = new Map([
@@ -92,7 +95,7 @@ function generationFor(releases) {
 
 function safeReleaseRows(rows) {
   return (Array.isArray(rows) ? rows : [])
-    .filter((row) => !row?.draft && !row?.prerelease && SAFE_TAG.test(String(row?.tag_name || '')))
+    .filter((row) => !row?.draft && !row?.prerelease && SAFE_TAG.test(String(row?.tag_name || '')) && isPublicReleaseTag(row?.tag_name))
     .slice(0, 12);
 }
 
@@ -119,6 +122,29 @@ function boundedNumber(value, min, max, fallback) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(min, Math.min(max, parsed));
+}
+
+function releaseVersionParts(tag) {
+  const match = String(tag || '').trim().match(/^v(\d+(?:\.\d+){1,3})$/i);
+  if (!match) return null;
+  const parts = match[1].split('.').map((part) => Number(part));
+  while (parts.length < 4) parts.push(0);
+  return parts;
+}
+
+function compareReleaseTags(left, right) {
+  const a = releaseVersionParts(left);
+  const b = releaseVersionParts(right);
+  if (!a || !b) return null;
+  for (let index = 0; index < 4; index += 1) {
+    if (a[index] !== b[index]) return a[index] > b[index] ? 1 : -1;
+  }
+  return 0;
+}
+
+function isPublicReleaseTag(tag) {
+  const compared = compareReleaseTags(tag, MIN_PUBLIC_RELEASE_TAG);
+  return compared !== null && compared >= 0;
 }
 
 export function createSiteReleaseFeed({
@@ -153,6 +179,7 @@ export function createSiteReleaseFeed({
   let historyFailures = [];
   let lastLoggedError = null;
   let lastLoggedPublishedVersion = null;
+  let privacyCleanupError = null;
   let progress = {
     stage: 'idle',
     startedAt: null,
@@ -167,9 +194,24 @@ export function createSiteReleaseFeed({
     historyTotal: 0,
   };
 
+  function prunePrivateHistoricalMirrors() {
+    privacyCleanupError = null;
+    try {
+      for (const entry of readdirSync(mirrorRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !SAFE_TAG.test(entry.name) || isPublicReleaseTag(entry.name)) continue;
+        rmSync(join(mirrorRoot, entry.name), { recursive: true, force: true });
+        console.warn(`[release-mirror] removed non-public historical mirror ${entry.name}`);
+      }
+    } catch (error) {
+      privacyCleanupError = error instanceof Error ? error : new Error(String(error));
+      console.warn(`[release-mirror] historical privacy cleanup failed: ${errorText(privacyCleanupError)}`);
+    }
+  }
+
   function ensureStorage() {
     try {
       mkdirSync(mirrorRoot, { recursive: true, mode: 0o700 });
+      prunePrivateHistoricalMirrors();
       storageError = null;
       return true;
     } catch (error) {
@@ -291,12 +333,15 @@ export function createSiteReleaseFeed({
   }
 
   function normalizedIndex(raw = {}) {
-    const releases = Array.isArray(raw.releases) ? raw.releases : [];
+    const rawReleases = Array.isArray(raw.releases) ? raw.releases : [];
+    const releases = rawReleases.filter((release) => isPublicReleaseTag(release?.tag));
+    const removedPrivateHistory = releases.length !== rawReleases.length;
     return {
       ok: true,
       currentVersion: currentProductVersion,
+      minimumPublicVersion: MIN_PUBLIC_RELEASE_TAG.replace(/^v/i, ''),
       source: releases.length ? 'server-mirror' : 'local',
-      generation: String(raw.generation || generationFor(releases)),
+      generation: removedPrivateHistory ? generationFor(releases) : String(raw.generation || generationFor(releases)),
       mirroredAt: raw.mirroredAt || null,
       latestVersion: releases[0]?.tag?.replace(/^v/i, '') || null,
       releases,
@@ -305,7 +350,9 @@ export function createSiteReleaseFeed({
 
   function loadIndex() {
     if (cache) return cache;
-    cache = normalizedIndex(readJson(indexPath, {}));
+    const raw = readJson(indexPath, {});
+    cache = normalizedIndex(raw);
+    if (Array.isArray(raw.releases) && raw.releases.length !== cache.releases.length) atomicJson(indexPath, cache);
     return cache;
   }
 
@@ -323,11 +370,12 @@ export function createSiteReleaseFeed({
 
   function publishIndex(releases) {
     const previous = loadIndex();
-    const generation = generationFor(releases);
+    const publishable = releases.filter((release) => isPublicReleaseTag(release?.tag));
+    const generation = generationFor(publishable);
     const next = normalizedIndex({
       generation,
       mirroredAt: new Date().toISOString(),
-      releases,
+      releases: publishable,
     });
     atomicJson(indexPath, next);
     cache = next;
@@ -336,7 +384,7 @@ export function createSiteReleaseFeed({
   }
 
   function releaseAssetsAvailable(release) {
-    if (!release || !SAFE_TAG.test(String(release.tag || '')) || !Array.isArray(release.assets)) return false;
+    if (!release || !SAFE_TAG.test(String(release.tag || '')) || !isPublicReleaseTag(release.tag) || !Array.isArray(release.assets)) return false;
     return release.assets.every((asset) => {
       const name = String(asset?.name || '');
       if (!SAFE_ASSET.test(name) || basename(name) !== name) return false;
@@ -350,6 +398,7 @@ export function createSiteReleaseFeed({
   }
 
   async function downloadAsset(releaseTag, asset) {
+    if (!isPublicReleaseTag(releaseTag)) throw new Error(`Release ${releaseTag} is below the public release floor`);
     const name = basename(String(asset?.name || ''));
     if (!SAFE_ASSET.test(name) || name !== String(asset?.name || '')) {
       throw new Error(`Unsafe release asset name: ${asset?.name || ''}`);
@@ -402,6 +451,7 @@ export function createSiteReleaseFeed({
   async function mirrorRelease(release, stage = 'downloading_latest') {
     const tag = String(release.tag_name || '');
     if (!SAFE_TAG.test(tag)) throw new Error(`Unsafe release tag: ${tag}`);
+    if (!isPublicReleaseTag(tag)) throw new Error(`Release ${tag} is below the public release floor`);
     const sourceAssets = Array.isArray(release.assets) ? release.assets : [];
     const active = new Set();
     let completed = 0;
@@ -563,6 +613,8 @@ export function createSiteReleaseFeed({
         syncIntervalMs,
         fetchRetries,
         assetTimeoutMs,
+        minimumPublicRelease: MIN_PUBLIC_RELEASE_TAG,
+        privacyCleanupError: privacyCleanupError ? errorText(privacyCleanupError) : null,
         transportPolicy: policy,
         lastTransport,
         proxyConfigured: Boolean(curlTransport?.proxyConfigured),
@@ -639,7 +691,7 @@ export function createSiteReleaseFeed({
     } catch {
       return false;
     }
-    if (!SAFE_TAG.test(tag) || !SAFE_ASSET.test(name) || basename(name) !== name) return false;
+    if (!SAFE_TAG.test(tag) || !isPublicReleaseTag(tag) || !SAFE_ASSET.test(name) || basename(name) !== name) return false;
     const feed = loadIndex();
     const release = feed.releases.find((item) => item.tag === tag);
     const asset = release?.assets?.find((item) => item.name === name);
