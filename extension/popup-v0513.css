@@ -26,10 +26,10 @@ article:has(input[placeholder^="GPTL-" i]) {
   overflow: hidden !important;
 }
 
-/* Re-declare the compact toolbar in the cache-proof resource as well. */
+/* Cache-proof compact toolbar: verify, update, local help, settings. */
 .actions {
   display: grid !important;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
   align-items: stretch !important;
   gap: 6px !important;
 }

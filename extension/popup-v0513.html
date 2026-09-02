@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="gptlock-popup-revision" content="v0513-license-ui-purge-1">
+  <meta name="gptlock-popup-revision" content="v0533-popup-help-cleanup-1">
   <title>GPTLock</title>
   <link rel="stylesheet" href="popup-v0513.css">
 </head>
-<body data-popup-revision="v0513-license-ui-purge-1">
+<body data-popup-revision="v0533-popup-help-cleanup-1">
   <section id="authShell" class="auth-shell" aria-live="polite">
     <div class="auth-brand">
       <span class="auth-logo">G</span>
@@ -92,11 +92,6 @@
       </div>
     </section>
 
-    <section class="summary" aria-live="polite">
-      <strong id="guardTitle">正在读取状态…</strong>
-      <p id="guardDetail">Checking the active ChatGPT tab…</p>
-    </section>
-
     <section class="enable-row">
       <span><strong>启用 GPTLock</strong><small>Enable request locking</small></span>
       <label class="switch" title="启用或关闭 GPTLock / Enable or disable GPTLock">
@@ -118,11 +113,13 @@
       <div><dt>响应确认 <small>Response evidence</small></dt><dd id="responseState">—</dd></div>
     </dl>
 
-    <p class="boundary">GPTLock 会在正式聊天 POST 发出前尝试锁定顶层模型/已有推理字段；响应元数据只用于附加确认。缺字段或验证异常不会中断聊天，只有已确认的模型不匹配才会在强制模式下阻断后续发送。本地核心会在扩展启动时自动连接，断线后自动重试，无需手动重连。<br><span>Formal chat POSTs are locked before send; response metadata is supplementary confirmation. Core connection and retry are automatic.</span></p>
+    <span id="guardTitle" hidden aria-hidden="true"></span>
+    <span id="guardDetail" hidden aria-hidden="true"></span>
 
     <div class="actions" aria-label="GPTLock 快捷操作">
       <button id="autoVerify" type="button" class="primary auto" title="自动验证 / Auto verify">自动验证</button>
       <button id="checkUpdate" type="button" title="打开设置中的版本更新中心">检查更新</button>
+      <button id="help" type="button" title="使用帮助 / Help">使用帮助</button>
       <button id="options" type="button" title="设置 / Settings">设置</button>
     </div>
     <span id="reconnect" hidden aria-hidden="true"></span>
@@ -135,6 +132,7 @@
   </main>
   <script type="module" src="popup-v0513-shell.js"></script>
   <script type="module" src="auth-gate.js"></script>
+  <script type="module" src="popup-help.js"></script>
   <script type="module" src="popup.js"></script>
 </body>
 </html>

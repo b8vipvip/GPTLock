@@ -58,5 +58,5 @@ test('default popup and settings use cache-proof entrypoints with no legacy lice
 
   assert.match(css, /input\[placeholder\^="GPTL-" i\]/);
   assert.match(css, /section:has\(input\[placeholder\^="GPTL-" i\]\)/);
-  assert.match(css, /grid-template-columns:\s*repeat\(3,/);
+  assert.match(css, /grid-template-columns:\s*repeat\(4,/);
 });

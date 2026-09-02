@@ -1,0 +1,42 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  color: #172033;
+  background: #f6f8fc;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: #f6f8fc; }
+main { width: min(920px, calc(100% - 32px)); margin: 0 auto; padding: 36px 0 54px; }
+.hero { padding: 28px; border: 1px solid #dbe3ef; border-radius: 22px; background: #fff; box-shadow: 0 14px 40px rgba(30,64,175,.07); }
+.eyebrow { margin: 0 0 6px; color: #2563eb; font-size: 11px; font-weight: 900; letter-spacing: .14em; }
+h1 { margin: 0; font-size: 30px; }
+h1 small, h2 small { color: #64748b; font-size: .55em; font-weight: 650; }
+.hero > p:last-child { margin: 10px 0 0; color: #64748b; line-height: 1.65; }
+.quick-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.quick-nav a { padding: 8px 12px; border-radius: 999px; color: #1d4ed8; background: #e8efff; font-size: 13px; font-weight: 750; text-decoration: none; }
+.card { margin-top: 14px; padding: 22px 24px; border: 1px solid #dbe3ef; border-radius: 18px; background: #fff; }
+.card.compact { padding-bottom: 18px; }
+h2 { margin: 0 0 12px; font-size: 19px; }
+p, li { color: #475569; font-size: 14px; line-height: 1.72; }
+ol, ul { margin: 8px 0 0; padding-left: 22px; }
+li + li { margin-top: 7px; }
+strong { color: #172033; }
+.tip { margin-top: 14px; padding: 12px 14px; border-left: 3px solid #2563eb; border-radius: 8px; background: #eff6ff; color: #475569; font-size: 13px; line-height: 1.65; }
+.status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.status-grid > div { padding: 14px; border: 1px solid #e2e8f0; border-radius: 13px; background: #f8fafc; }
+.status-grid p { margin: 6px 0 0; font-size: 13px; }
+.muted { color: #64748b; font-size: 13px; }
+details { border-top: 1px solid #e2e8f0; padding: 12px 0; }
+details:first-of-type { border-top: 0; }
+summary { cursor: pointer; color: #172033; font-size: 14px; font-weight: 750; }
+details p { margin: 8px 0 0; font-size: 13px; }
+footer { padding: 22px 4px 0; color: #94a3b8; font-size: 12px; text-align: center; }
+
+@media (max-width: 680px) {
+  main { width: min(100% - 20px, 920px); padding-top: 16px; }
+  .hero, .card { padding: 18px; border-radius: 15px; }
+  h1 { font-size: 25px; }
+  .status-grid { grid-template-columns: 1fr; }
+}

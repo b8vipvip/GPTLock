@@ -7,16 +7,17 @@ const popupCss = new URL('../popup-v0513.css', import.meta.url);
 const optionsUpdate = new URL('../options-update.js', import.meta.url);
 const installer = new URL('../../packaging/windows/GPTLock.iss', import.meta.url);
 
-test('popup exposes only the three user-facing actions and keeps reconnect/log controls hidden', async () => {
+test('popup exposes only the four user-facing actions and keeps reconnect/log controls hidden', async () => {
   const manifest = JSON.parse(await readFile(manifestUrl, 'utf8'));
   const popupHtml = new URL(`../${manifest.action.default_popup}`, import.meta.url);
   const [html, css] = await Promise.all([readFile(popupHtml, 'utf8'), readFile(popupCss, 'utf8')]);
-  for (const id of ['autoVerify', 'checkUpdate', 'options']) assert.match(html, new RegExp(`<button id="${id}"`));
+  for (const id of ['autoVerify', 'checkUpdate', 'help', 'options']) assert.match(html, new RegExp(`<button id="${id}"`));
+  assert.match(html, /<button id="help"[^>]*>使用帮助<\/button>\s*<button id="options"/);
   assert.doesNotMatch(html, /<button id="reconnect"/);
   assert.doesNotMatch(html, /<button id="logs"/);
   assert.match(html, /id="reconnect" hidden/);
   assert.match(html, /id="logs" hidden/);
-  assert.match(css, /grid-template-columns:\s*repeat\(3,/);
+  assert.match(css, /grid-template-columns:\s*repeat\(4,/);
 });
 
 test('settings page owns the real-time updater and no longer exposes reconnect or runtime-log controls', async () => {

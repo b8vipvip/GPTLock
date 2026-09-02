@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPTLock 使用帮助</title>
+  <link rel="stylesheet" href="help.css">
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <p class="eyebrow">GPTLOCK LOCAL HELP</p>
+      <h1>使用帮助 <small>User guide</small></h1>
+      <p>这是随扩展安装的本地帮助页面，不依赖官网即可查看。</p>
+    </header>
+
+    <nav class="quick-nav" aria-label="帮助目录">
+      <a href="#start">快速开始</a>
+      <a href="#status">状态说明</a>
+      <a href="#verify">自动验证</a>
+      <a href="#troubleshoot">故障排查</a>
+    </nav>
+
+    <section id="start" class="card">
+      <h2>1. 快速开始 <small>Quick start</small></h2>
+      <ol>
+        <li><strong>登录 GPTLock。</strong> 登录后扩展才会启用请求锁定能力。</li>
+        <li><strong>打开“设置”。</strong> 选择允许使用的模型、推理强度和锁定策略。</li>
+        <li><strong>确认“启用 GPTLock”已开启。</strong> 开启后，正式聊天请求会在发出前进入请求锁定检查。</li>
+        <li><strong>打开 chatgpt.com 并正常聊天。</strong> GPTLock 不要求你改用 API 或 Worker。</li>
+        <li><strong>需要确认时点击“自动验证”。</strong> GPTLock 会按当前策略收集可获得的请求与响应证据。</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>2. 设置模型和推理强度 <small>Model & reasoning</small></h2>
+      <p>在“设置”页面中配置允许的模型和推理强度。请求锁定以这里保存的策略为准；ChatGPT 页面上显示的模型文字只作为辅助信息，不能单独当作后端实际响应模型的证明。</p>
+      <div class="tip"><strong>建议：</strong>先只选择你真正希望使用的模型和推理强度，再进行自动验证，这样结果更容易判断。</div>
+    </section>
+
+    <section id="status" class="card">
+      <h2>3. 主界面状态说明 <small>Status guide</small></h2>
+      <div class="status-grid">
+        <div><strong>本地核心 / Native Core</strong><p>显示本地核心是否在线及版本。本地核心用于本地能力与响应证据相关功能。</p></div>
+        <div><strong>请求锁定器 / Request interceptor</strong><p>“已连接”表示当前 ChatGPT 标签页已挂接请求拦截能力，正式聊天请求会在发送前检查。</p></div>
+        <div><strong>页面选择 / Page selection</strong><p>来自 ChatGPT 页面 DOM 的辅助观察。显示“无 / None”不代表请求锁定失效。</p></div>
+        <div><strong>响应确认 / Response evidence</strong><p>显示当前能够取得的后端响应模型/推理证据。ChatGPT 未暴露字段时可能保持“无 / None”。</p></div>
+      </div>
+    </section>
+
+    <section id="verify" class="card">
+      <h2>4. 自动验证怎么用 <small>Auto verification</small></h2>
+      <p>点击“自动验证”后，GPTLock 会使用当前锁定策略检查真实聊天链路，并在必要时自动完成程序能够执行的验证步骤。验证的目标是确认请求锁定是否生效，并尽可能取得后端响应证据。</p>
+      <ul>
+        <li><strong>验证通过：</strong>取得了与策略一致的可信响应证据。</li>
+        <li><strong>部分确认/未完全确认：</strong>请求锁定可能已经执行，但 ChatGPT 当前没有暴露完整模型或推理元数据。</li>
+        <li><strong>模型不匹配：</strong>取得了明确的后端模型证据，且与允许策略不一致。</li>
+      </ul>
+      <p class="muted">自动验证结果受 ChatGPT 当前网页协议和响应元数据可见性影响；“没有证据”与“明确证明使用了错误模型”是两种不同状态。</p>
+    </section>
+
+    <section id="troubleshoot" class="card">
+      <h2>5. 常见问题 <small>Troubleshooting</small></h2>
+      <details>
+        <summary>请求锁定器显示“未连接 / Detached”怎么办？</summary>
+        <p>先确认当前标签页是 chatgpt.com，并刷新 ChatGPT 页面。随后重新打开 GPTLock 弹窗检查状态。如果仍未连接，可完全重启浏览器后再试。</p>
+      </details>
+      <details>
+        <summary>本地核心显示“离线 / Offline”怎么办？</summary>
+        <p>按弹窗中的本地核心安装提示完成安装或修复。安装完成后重新打开浏览器。正常情况下本地核心会自动连接并在断线后重试。</p>
+      </details>
+      <details>
+        <summary>页面选择显示“无 / None”，是不是没锁住？</summary>
+        <p>不是。页面选择只是 DOM 辅助观察；ChatGPT 页面结构变化、模型选择器未展开或未暴露推理字段时，都可能显示为空。应结合“请求锁定器”和“响应确认”判断。</p>
+      </details>
+      <details>
+        <summary>响应确认一直是“无 / None”怎么办？</summary>
+        <p>这通常表示当前响应没有暴露足够的可验证元数据。可以执行一次自动验证；如果仍无证据，GPTLock 会把它视为“未完全确认”，而不是自动判定成模型不匹配。</p>
+      </details>
+      <details>
+        <summary>更新或异常后如何提供诊断信息？</summary>
+        <p>打开设置中的更新/诊断相关入口，导出运行日志后再用于排查。不要把账号密码、验证码等敏感信息写入问题描述。</p>
+      </details>
+    </section>
+
+    <section class="card compact">
+      <h2>6. 安全边界 <small>Safety boundary</small></h2>
+      <p>GPTLock 的目标是对 ChatGPT 网页正式聊天请求执行策略检查并收集可获得的验证证据。它不能强迫服务端暴露服务端本身没有返回的模型或推理字段，也不会把页面显示文字伪装成后端证明。</p>
+    </section>
+
+    <footer>GPTLock 本地使用帮助 · Local extension page</footer>
+  </main>
+</body>
+</html>
