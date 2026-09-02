@@ -140,6 +140,29 @@ h1 { font-size: clamp(48px, 6vw, 78px); line-height: .98; letter-spacing: -.065e
 .site-footer { margin-top: 70px; padding: 36px 0 48px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
 .footer-row { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
 .footer-links { display: flex; gap: 16px; flex-wrap: wrap; }
+
+/* Public legal/support pages. Kept in site.css because the production CSP blocks inline styles. */
+.legal, .support { max-width: 980px; padding: 72px 0; }
+.legal { max-width: 900px; }
+.legal h1, .support h1 { font-size: clamp(42px, 6vw, 68px); }
+.legal h1 small, .support h1 small { font-size: .48em; letter-spacing: -.03em; color: var(--muted); }
+.legal h2, .support h2 { margin-top: 42px; font-size: 26px; letter-spacing: -.03em; }
+.legal h3 { margin-top: 28px; }
+.legal p, .legal li, .support p, .support li { color: #4f5953; }
+.legal li, .support li { margin: 8px 0; }
+.legal .meta { color: var(--muted); }
+.legal .box, .support .card { padding: 18px 20px; border: 1px solid var(--line); border-radius: 18px; background: rgba(255,255,255,.62); }
+.legal .danger { background: #ffe1dc; color: #7a2f25; }
+.legal code { background: var(--paper-2); padding: 2px 6px; border-radius: 6px; }
+.legal a, .support a, .account-section small a { text-decoration: underline; text-underline-offset: 3px; }
+.legal table { width: 100%; border-collapse: collapse; margin: 18px 0; }
+.legal th, .legal td { padding: 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.legal th { color: var(--ink); }
+.support .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin: 28px 0; }
+.support .card { padding: 24px; border-radius: 22px; }
+.support .card h2 { margin-top: 0; }
+.support .warn { padding: 16px 18px; border-radius: 16px; background: #fff4c8; color: #685a21; }
+
 @media (max-width: 900px) {
   .hero { grid-template-columns: 1fr; padding-top: 64px; gap: 20px; }
   .hero-board { min-height: 380px; }
@@ -147,6 +170,10 @@ h1 { font-size: clamp(48px, 6vw, 78px); line-height: .98; letter-spacing: -.065e
   .section-head { display: block; }
   .section-head p { margin-top: 12px; }
   .account-summary { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 760px) {
+  .support .cards { grid-template-columns: 1fr; }
+  .legal table { display: block; overflow-x: auto; }
 }
 @media (max-width: 680px) {
   .shell { width: min(100% - 24px, 1180px); }
@@ -165,4 +192,5 @@ h1 { font-size: clamp(48px, 6vw, 78px); line-height: .98; letter-spacing: -.065e
   .guide-step::after { left: 38px; }
   .account-summary { grid-template-columns: 1fr; }
   .release-top, .list-row { align-items: flex-start; flex-direction: column; }
+  .legal, .support { padding-top: 48px; }
 }

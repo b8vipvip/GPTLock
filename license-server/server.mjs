@@ -321,6 +321,14 @@ const SITE_PAGES = {
   '/releases/': 'releases.html',
   '/account': 'account.html',
   '/account/': 'account.html',
+  '/privacy': 'privacy.html',
+  '/privacy/': 'privacy.html',
+  '/terms': 'terms.html',
+  '/terms/': 'terms.html',
+  '/support': 'support.html',
+  '/support/': 'support.html',
+  '/data-deletion': 'data-deletion.html',
+  '/data-deletion/': 'data-deletion.html',
 };
 const ADMIN_PAGES = {
   '/admin': 'admin.html',
