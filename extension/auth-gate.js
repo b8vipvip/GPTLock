@@ -109,9 +109,6 @@ function renderAccount(account) {
   const limits = entitlement.limits || {};
   el.accountUsage.textContent = `设备 ${usage.devices ?? 0}/${limits.devices ?? 0} · 窗口不限`;
   if (el.enabled) {
-    // popup.js is the single owner of the switch's disabled state. Keeping
-    // entitlement rendering here limited to copy avoids races where an async
-    // account refresh can overwrite the in-flight toggle state.
     if (!entitlement.active) el.enabled.title = '免费期或会员已到期，请在账户中心开通会员';
     else el.enabled.title = '启用或关闭 GPTLock；窗口数量不受限制';
   }
