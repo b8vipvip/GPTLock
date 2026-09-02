@@ -307,6 +307,24 @@ export function createSiteAccountSystem({ db, env, publicOrigin, json, bodyJson,
         }
         return json(res, 200, { ok: true }), true;
       }
+      if (url.pathname === '/site/api/account/delete' && req.method === 'POST') {
+        const session = requireSession(req);
+        const input = await bodyJson(req);
+        if (!await verifyPassword(input.currentPassword, session.password_hash)) fail(401, 'PASSWORD_MISMATCH', '当前密码错误');
+        if (String(input.confirmText || '') !== 'DELETE') fail(400, 'DELETE_CONFIRMATION_REQUIRED', '请输入 DELETE 确认永久删除账户');
+        const userId = session.user_id;
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          db.prepare('DELETE FROM account_audit_log WHERE user_id=?').run(userId);
+          const result = db.prepare('DELETE FROM users WHERE id=?').run(userId);
+          if (Number(result.changes || 0) !== 1) fail(404, 'ACCOUNT_NOT_FOUND', '账户不存在或已删除');
+          db.exec('COMMIT');
+        } catch (error) {
+          try { db.exec('ROLLBACK'); } catch {}
+          throw error;
+        }
+        return json(res, 200, { ok: true, deleted: true }, { 'set-cookie': clearCookie() }), true;
+      }
       if (url.pathname === '/site/api/account/orders' && req.method === 'POST') {
         const session = requireSession(req);
         const input = await bodyJson(req);
