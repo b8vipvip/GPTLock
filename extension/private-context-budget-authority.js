@@ -7,6 +7,7 @@
   const MIN_BACKGROUND_REFRESH_MS = 10_000;
   const STALE_REFRESH_DELAY_MS = 1_500;
   const ERROR_BACKOFF_MS = 5 * 60 * 1000;
+  const TRANSIENT_ERROR_BACKOFF_MS = 10_000;
   const MAX_SOURCE_AGE_MS = 15_000;
   const MAX_PARTS = 20_000;
   const MAX_MEDIA_PER_PART = 32;
@@ -58,6 +59,9 @@
       projectedTokens: Number(result.projectedTokens) || 0,
       percent: Number(result.percentUsed) || 0,
       projectedPercent: Number(result.projectedPercent) || 0,
+      remainingPercent: Number.isFinite(Number(result.remainingPercent))
+        ? Math.min(100, Math.max(0, Number(result.remainingPercent)))
+        : null,
       remainingTokens: Number(result.remainingTokens) || 0,
       warning: Boolean(result.warning),
       wouldExceed: Boolean(result.wouldExceed),
@@ -69,6 +73,8 @@
       budgetAvailable: true,
       privateBudgetCoverage: meta.coverage || 'conversation-tree',
       privateBudgetEvaluatedAt: meta.evaluatedAt || new Date().toISOString(),
+      privateBudgetStale: Boolean(meta.stale),
+      privateBudgetError: meta.error || null,
       estimateOnly: true,
     };
   }
@@ -90,7 +96,7 @@
     },
     applyToSnapshot(snapshot) {
       const state = api.state;
-      if (!state?.available || state.stale || !state.privateResult) return snapshot;
+      if (!state?.available || !state.privateResult) return snapshot;
       if (Date.now() - Number(state.evaluatedAtMs || 0) > REFRESH_MS + 5_000) return snapshot;
       if (snapshot?.conversationKey !== state.conversationKey) return snapshot;
       if (String(snapshot?.model || '') !== String(state.model || '')) return snapshot;
@@ -170,14 +176,30 @@
     };
   }
 
+  function retryDelayFor(code) {
+    return /(?:unavailable|unsupported|disconnect|timed?_?out|timeout|busy)/i.test(String(code || ''))
+      ? TRANSIENT_ERROR_BACKOFF_MS
+      : ERROR_BACKOFF_MS;
+  }
+
   function failure(error, preserveAvailability = false) {
     const code = String(error || 'private_context_budget_unavailable').slice(0, 80);
     const previous = api.state;
+    if (preserveAvailability && previous?.available && previous?.privateResult) {
+      api.state = {
+        ...previous,
+        stale: true,
+        error: code,
+        retryAfter: 0,
+        reason: 'source-refresh-pending',
+      };
+      return { ok: false, error: code, preserved: true };
+    }
     api.state = {
-      available: preserveAvailability ? Boolean(previous?.available) : false,
+      available: false,
       stale: true,
       error: code,
-      retryAfter: preserveAvailability ? 0 : Date.now() + ERROR_BACKOFF_MS,
+      retryAfter: preserveAvailability ? 0 : Date.now() + retryDelayFor(code),
       privateResult: null,
       evaluatedAt: null,
       evaluatedAtMs: 0,

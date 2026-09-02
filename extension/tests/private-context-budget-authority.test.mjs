@@ -48,17 +48,21 @@ test('authority maps private numeric decisions onto the legacy compatibility sna
     projectedTokens: 43020,
     percentUsed: 0.11,
     projectedPercent: 4.65,
+    remainingPercent: 99.89,
     remainingTokens: 922980,
     warning: false,
     wouldExceed: false,
     adaptiveActive: false,
     hardLimitActive: false,
     contextWindowSource: 'model-window',
-  }, { evaluatedAt: '2026-09-01T00:00:00.000Z' });
+  }, { evaluatedAt: '2026-09-01T00:00:00.000Z', stale: true, error: 'refresh_pending' });
   assert.equal(snapshot.budgetAuthority, 'private-engine');
   assert.equal(snapshot.fullConversationTokens, 1020);
   assert.equal(snapshot.safeLimitTokens, 924000);
   assert.equal(snapshot.percent, 0.11);
+  assert.equal(snapshot.remainingPercent, 99.89);
+  assert.equal(snapshot.privateBudgetStale, true);
+  assert.equal(snapshot.privateBudgetError, 'refresh_pending');
   assert.equal(snapshot.fullConversationCharacters, 1234);
 });
 

@@ -33,7 +33,8 @@
         "private-context-budget-authority.js",
         "content.js",
         "model-catalog.js",
-        "model-auto-lock.js"
+        "model-auto-lock.js",
+        "chat-length-remaining-indicator.js"
       ],
       "run_at": "document_idle"
     }
