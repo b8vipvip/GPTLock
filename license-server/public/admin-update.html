@@ -30,6 +30,14 @@
         <p class="muted">首次部署更新器需要在服务器终端安装一次 systemd watcher；安装完成后，之后的官网与服务端代码更新都可直接在本页完成，无需给 Web 服务 sudo 权限。</p>
         <pre id="updateLog" class="logbox">暂无更新日志</pre>
       </section>
+
+      <section id="releaseMirror" class="card update-card">
+        <div class="section-title"><div><h2>客户端 Release 镜像</h2><p class="muted">GitHub 正式 Release 会先由服务端下载并校验，再发布到官网。客户端只从官网镜像检查和下载安装包。</p></div><button id="releaseSyncButton" class="primary">立即同步</button></div>
+        <div class="update-meta"><span>最新镜像 <strong id="releaseLatestVersion">—</strong></span><span>镜像状态 <strong id="releaseMirrorState">等待检查</strong></span><span>最近发布 <strong id="releaseMirroredAt">—</strong></span></div>
+        <div class="update-status-row"><strong id="releaseSource">local</strong><span id="releaseMirrorMessage">正在读取 Release 镜像状态…</span></div>
+        <p id="releaseMirrorWarning" class="warning" hidden></p>
+        <pre id="releaseMirrorDetails" class="logbox">暂无 Release 镜像状态</pre>
+      </section>
     </div>
   </main>
 </div>
