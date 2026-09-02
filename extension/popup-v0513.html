@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="gptlock-popup-revision" content="v0533-popup-help-cleanup-1">
   <title>GPTLock</title>
-  <link rel="stylesheet" href="popup.css">
   <link rel="stylesheet" href="popup-v0513.css">
 </head>
-<body>
+<body data-popup-revision="v0533-popup-help-cleanup-1">
   <section id="authShell" class="auth-shell" aria-live="polite">
     <div class="auth-brand">
       <span class="auth-logo">G</span>
@@ -84,17 +84,12 @@
       </div>
       <div class="account-meta">
         <span id="accountExpiry">有效期 —</span>
-        <span id="accountUsage">设备/窗口 —</span>
+        <span id="accountUsage">设备 — · 窗口不限</span>
       </div>
       <div class="account-actions">
         <button id="accountCenter" class="primary" type="button">账户中心</button>
         <button id="accountLogout" type="button">退出登录</button>
       </div>
-    </section>
-
-    <section class="summary" aria-live="polite" hidden>
-      <strong id="guardTitle">正在读取状态…</strong>
-      <p id="guardDetail">Checking the active ChatGPT tab…</p>
     </section>
 
     <section class="enable-row">
@@ -118,15 +113,18 @@
       <div><dt>响应确认 <small>Response evidence</small></dt><dd id="responseState">—</dd></div>
     </dl>
 
+    <span id="guardTitle" hidden aria-hidden="true"></span>
+    <span id="guardDetail" hidden aria-hidden="true"></span>
+
     <div class="actions" aria-label="GPTLock 快捷操作">
       <button id="autoVerify" type="button" class="primary auto" title="自动验证 / Auto verify">自动验证</button>
       <button id="checkUpdate" type="button" title="打开设置中的版本更新中心">检查更新</button>
-      <button id="help" type="button" title="使用帮助 / Usage help">使用帮助</button>
+      <button id="help" type="button" title="使用帮助 / Help">使用帮助</button>
       <button id="options" type="button" title="设置 / Settings">设置</button>
     </div>
+    <span id="reconnect" hidden aria-hidden="true"></span>
+    <span id="logs" hidden aria-hidden="true"></span>
 
-    <button id="reconnect" type="button" hidden aria-hidden="true" tabindex="-1">重新连接</button>
-    <button id="logs" type="button" hidden aria-hidden="true" tabindex="-1">运行日志</button>
     <button id="installUpdate" type="button" hidden aria-hidden="true" tabindex="-1">立即更新</button>
     <span id="currentVersion" hidden>—</span>
     <span id="updateDetail" hidden></span>
@@ -134,8 +132,8 @@
   </main>
   <script type="module" src="popup-v0513-shell.js"></script>
   <script type="module" src="auth-gate.js"></script>
+  <script type="module" src="popup-help.js"></script>
   <script type="module" src="popup.js"></script>
   <script type="module" src="enabled-toggle-controller.js"></script>
-  <script type="module" src="popup-help.js"></script>
 </body>
 </html>
