@@ -1,6 +1,5 @@
 (() => {
   const STORAGE_KEY = 'gptlock.trusted-model-status.v1';
-  const REFRESH_MS = 750;
   const helper = globalThis.__GPTLOCK_MODEL_STATUS_HISTORY__;
   if (!helper || typeof document === 'undefined') return;
 
@@ -93,9 +92,7 @@
     }
 
     if (response.id) {
-      const label = response.historical
-        ? `${modelLabel(response.id)} · 最近已确认`
-        : modelLabel(response.id);
+      const label = modelLabel(response.id);
       const status = response.mismatch
         ? 'mismatch'
         : response.historical
@@ -172,5 +169,8 @@
   });
   window.addEventListener('popstate', refreshState);
   window.addEventListener('hashchange', refreshState);
-  window.setInterval(render, REFRESH_MS);
+
+  // Render only when model evidence or navigation state actually changes. The
+  // base model indicator already has its own 1.2 s fallback refresh; a second
+  // 750 ms DOM writer made the two layers alternate visible labels indefinitely.
 })();
