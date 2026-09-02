@@ -1,0 +1,214 @@
+name: Temporary public release privacy floor patch
+
+on:
+  push:
+    branches:
+      - fix/public-release-floor-v0530
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/public-release-floor-v0530
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - name: Apply public release privacy floor
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('license-server/site-releases.mjs')
+          text = path.read_text()
+
+          def replace_once(old, new):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one match, got {count}: {old[:120]!r}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              "  mkdirSync,\n  readFileSync,\n  renameSync,\n  statSync,\n  writeFileSync,",
+              "  mkdirSync,\n  readFileSync,\n  readdirSync,\n  renameSync,\n  rmSync,\n  statSync,\n  writeFileSync,",
+          )
+
+          replace_once(
+              "const MAX_NOTIFICATION_WAIT_MS = 25 * 1000;\nconst SAFE_TAG =",
+              "const MAX_NOTIFICATION_WAIT_MS = 25 * 1000;\nconst MIN_PUBLIC_RELEASE_TAG = 'v0.5.30';\nconst SAFE_TAG =",
+          )
+
+          replace_once(
+              ".filter((row) => !row?.draft && !row?.prerelease && SAFE_TAG.test(String(row?.tag_name || '')))\n    .slice(0, 12);",
+              ".filter((row) => !row?.draft && !row?.prerelease && SAFE_TAG.test(String(row?.tag_name || '')) && isPublicReleaseTag(row?.tag_name))\n    .slice(0, 12);",
+          )
+
+          marker = "function boundedNumber(value, min, max, fallback) {\n  const parsed = Number(value);\n  if (!Number.isFinite(parsed)) return fallback;\n  return Math.max(min, Math.min(max, parsed));\n}\n"
+          helpers = marker + "\nfunction releaseVersionParts(tag) {\n  const match = String(tag || '').trim().match(/^v(\\d+(?:\\.\\d+){1,3})$/i);\n  if (!match) return null;\n  const parts = match[1].split('.').map((part) => Number(part));\n  while (parts.length < 4) parts.push(0);\n  return parts;\n}\n\nfunction compareReleaseTags(left, right) {\n  const a = releaseVersionParts(left);\n  const b = releaseVersionParts(right);\n  if (!a || !b) return null;\n  for (let index = 0; index < 4; index += 1) {\n    if (a[index] !== b[index]) return a[index] > b[index] ? 1 : -1;\n  }\n  return 0;\n}\n\nfunction isPublicReleaseTag(tag) {\n  const compared = compareReleaseTags(tag, MIN_PUBLIC_RELEASE_TAG);\n  return compared !== null && compared >= 0;\n}\n"
+          replace_once(marker, helpers)
+
+          replace_once(
+              "  let lastLoggedError = null;\n  let lastLoggedPublishedVersion = null;",
+              "  let lastLoggedError = null;\n  let lastLoggedPublishedVersion = null;\n  let privacyCleanupError = null;",
+          )
+
+          old_ensure = "  function ensureStorage() {\n    try {\n      mkdirSync(mirrorRoot, { recursive: true, mode: 0o700 });\n      storageError = null;\n      return true;\n    } catch (error) {\n      storageError = error instanceof Error ? error : new Error(String(error));\n      return false;\n    }\n  }"
+          new_ensure = "  function prunePrivateHistoricalMirrors() {\n    privacyCleanupError = null;\n    try {\n      for (const entry of readdirSync(mirrorRoot, { withFileTypes: true })) {\n        if (!entry.isDirectory() || !SAFE_TAG.test(entry.name) || isPublicReleaseTag(entry.name)) continue;\n        rmSync(join(mirrorRoot, entry.name), { recursive: true, force: true });\n        console.warn(`[release-mirror] removed non-public historical mirror ${entry.name}`);\n      }\n    } catch (error) {\n      privacyCleanupError = error instanceof Error ? error : new Error(String(error));\n      console.warn(`[release-mirror] historical privacy cleanup failed: ${errorText(privacyCleanupError)}`);\n    }\n  }\n\n  function ensureStorage() {\n    try {\n      mkdirSync(mirrorRoot, { recursive: true, mode: 0o700 });\n      prunePrivateHistoricalMirrors();\n      storageError = null;\n      return true;\n    } catch (error) {\n      storageError = error instanceof Error ? error : new Error(String(error));\n      return false;\n    }\n  }"
+          replace_once(old_ensure, new_ensure)
+
+          old_normalized = "  function normalizedIndex(raw = {}) {\n    const releases = Array.isArray(raw.releases) ? raw.releases : [];\n    return {\n      ok: true,\n      currentVersion: currentProductVersion,\n      source: releases.length ? 'server-mirror' : 'local',\n      generation: String(raw.generation || generationFor(releases)),\n      mirroredAt: raw.mirroredAt || null,\n      latestVersion: releases[0]?.tag?.replace(/^v/i, '') || null,\n      releases,\n    };\n  }\n\n  function loadIndex() {\n    if (cache) return cache;\n    cache = normalizedIndex(readJson(indexPath, {}));\n    return cache;\n  }"
+          new_normalized = "  function normalizedIndex(raw = {}) {\n    const rawReleases = Array.isArray(raw.releases) ? raw.releases : [];\n    const releases = rawReleases.filter((release) => isPublicReleaseTag(release?.tag));\n    const removedPrivateHistory = releases.length !== rawReleases.length;\n    return {\n      ok: true,\n      currentVersion: currentProductVersion,\n      minimumPublicVersion: MIN_PUBLIC_RELEASE_TAG.replace(/^v/i, ''),\n      source: releases.length ? 'server-mirror' : 'local',\n      generation: removedPrivateHistory ? generationFor(releases) : String(raw.generation || generationFor(releases)),\n      mirroredAt: raw.mirroredAt || null,\n      latestVersion: releases[0]?.tag?.replace(/^v/i, '') || null,\n      releases,\n    };\n  }\n\n  function loadIndex() {\n    if (cache) return cache;\n    const raw = readJson(indexPath, {});\n    cache = normalizedIndex(raw);\n    if (Array.isArray(raw.releases) && raw.releases.length !== cache.releases.length) atomicJson(indexPath, cache);\n    return cache;\n  }"
+          replace_once(old_normalized, new_normalized)
+
+          old_publish = "  function publishIndex(releases) {\n    const previous = loadIndex();\n    const generation = generationFor(releases);\n    const next = normalizedIndex({\n      generation,\n      mirroredAt: new Date().toISOString(),\n      releases,\n    });"
+          new_publish = "  function publishIndex(releases) {\n    const previous = loadIndex();\n    const publishable = releases.filter((release) => isPublicReleaseTag(release?.tag));\n    const generation = generationFor(publishable);\n    const next = normalizedIndex({\n      generation,\n      mirroredAt: new Date().toISOString(),\n      releases: publishable,\n    });"
+          replace_once(old_publish, new_publish)
+
+          replace_once(
+              "  function releaseAssetsAvailable(release) {\n    if (!release || !SAFE_TAG.test(String(release.tag || '')) || !Array.isArray(release.assets)) return false;",
+              "  function releaseAssetsAvailable(release) {\n    if (!release || !SAFE_TAG.test(String(release.tag || '')) || !isPublicReleaseTag(release.tag) || !Array.isArray(release.assets)) return false;",
+          )
+
+          replace_once(
+              "  async function downloadAsset(releaseTag, asset) {\n    const name = basename(String(asset?.name || ''));",
+              "  async function downloadAsset(releaseTag, asset) {\n    if (!isPublicReleaseTag(releaseTag)) throw new Error(`Release ${releaseTag} is below the public release floor`);\n    const name = basename(String(asset?.name || ''));",
+          )
+
+          replace_once(
+              "    if (!SAFE_TAG.test(tag)) throw new Error(`Unsafe release tag: ${tag}`);",
+              "    if (!SAFE_TAG.test(tag)) throw new Error(`Unsafe release tag: ${tag}`);\n    if (!isPublicReleaseTag(tag)) throw new Error(`Release ${tag} is below the public release floor`);",
+          )
+
+          replace_once(
+              "        assetTimeoutMs,\n        transportPolicy: policy,",
+              "        assetTimeoutMs,\n        minimumPublicRelease: MIN_PUBLIC_RELEASE_TAG,\n        privacyCleanupError: privacyCleanupError ? errorText(privacyCleanupError) : null,\n        transportPolicy: policy,",
+          )
+
+          replace_once(
+              "    if (!SAFE_TAG.test(tag) || !SAFE_ASSET.test(name) || basename(name) !== name) return false;",
+              "    if (!SAFE_TAG.test(tag) || !isPublicReleaseTag(tag) || !SAFE_ASSET.test(name) || basename(name) !== name) return false;",
+          )
+
+          path.write_text(text)
+          PY
+
+          cat > license-server/test/release-privacy-floor.test.mjs <<'EOF'
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+          import { tmpdir } from 'node:os';
+          import { dirname, join } from 'node:path';
+          import { fileURLToPath } from 'node:url';
+          import test from 'node:test';
+
+          import { createSiteReleaseFeed } from '../site-releases.mjs';
+
+          const SERVER_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+          const TOKEN = 'github_pat_release_privacy_floor_test';
+
+          function digest(bytes) {
+            return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+          }
+
+          function row(tag, id, bytes) {
+            return {
+              tag_name: tag,
+              name: `GPTLock ${tag}`,
+              draft: false,
+              prerelease: false,
+              published_at: '2026-09-02T00:00:00Z',
+              assets: [{
+                id,
+                name: `gptlock-${tag.slice(1)}.zip`,
+                url: `https://api.github.com/repos/b8vipvip/GPTLock/releases/assets/${id}`,
+                size: bytes.length,
+                digest: digest(bytes),
+              }],
+            };
+          }
+
+          test('public mirror permanently excludes and removes releases older than v0.5.30', async (t) => {
+            const mirrorRoot = mkdtempSync(join(tmpdir(), 'gptlock-release-privacy-floor-'));
+            t.after(() => rmSync(mirrorRoot, { recursive: true, force: true }));
+
+            const oldDir = join(mirrorRoot, 'v0.5.29');
+            mkdirSync(oldDir, { recursive: true });
+            writeFileSync(join(oldDir, 'private-old.zip'), 'private-history');
+            writeFileSync(join(mirrorRoot, 'index.json'), JSON.stringify({
+              generation: 'legacy-generation',
+              mirroredAt: '2026-08-31T00:00:00Z',
+              releases: [{
+                tag: 'v0.5.29',
+                name: 'private historical release',
+                publishedAt: '2026-08-31T00:00:00Z',
+                assets: [{ name: 'private-old.zip', url: 'https://gptlock.mv3.cn/downloads/releases/v0.5.29/private-old.zip', size: 15, digest: digest(Buffer.from('private-history')) }],
+              }],
+            }));
+
+            const currentBytes = Buffer.from('public-v0.5.30');
+            const oldBytes = Buffer.from('private-v0.5.29');
+            const rows = [row('v0.5.30', 530, currentBytes), row('v0.5.29', 529, oldBytes)];
+            const calls = [];
+            const fetchImpl = async (url) => {
+              calls.push(String(url));
+              if (String(url).includes('/releases?per_page=12')) {
+                return new Response(JSON.stringify(rows), { status: 200, headers: { 'content-type': 'application/json' } });
+              }
+              if (String(url).endsWith('/530')) return new Response(currentBytes, { status: 200 });
+              if (String(url).endsWith('/529')) return new Response(oldBytes, { status: 200 });
+              throw new Error(`Unexpected URL: ${url}`);
+            };
+
+            const feed = createSiteReleaseFeed({
+              serverRoot: SERVER_ROOT,
+              fetchImpl,
+              env: {
+                GPTLOCK_GITHUB_TOKEN: TOKEN,
+                GPTLOCK_LICENSE_PUBLIC_ORIGIN: 'https://gptlock.mv3.cn',
+                GPTLOCK_RELEASE_MIRROR_DIR: mirrorRoot,
+                GPTLOCK_RELEASE_FETCH_RETRIES: '1',
+              },
+            });
+
+            const before = await feed.load();
+            assert.equal(before.minimumPublicVersion, '0.5.30');
+            assert.deepEqual(before.releases, []);
+            assert.equal(existsSync(oldDir), false);
+            assert.doesNotMatch(readFileSync(join(mirrorRoot, 'index.json'), 'utf8'), /0\.5\.29|private-old/);
+
+            const result = await feed.sync();
+            assert.equal(result.latestVersion, '0.5.30');
+            assert.deepEqual(result.releases.map((release) => release.tag), ['v0.5.30']);
+            assert.equal(calls.some((url) => url.endsWith('/529')), false);
+            assert.equal(feed.serveAsset({ method: 'GET' }, {}, '/downloads/releases/v0.5.29/private-old.zip'), false);
+            assert.equal(existsSync(join(mirrorRoot, 'v0.5.29')), false);
+            assert.doesNotMatch(readFileSync(join(mirrorRoot, 'index.json'), 'utf8'), /0\.5\.29|private-old/);
+          });
+          EOF
+
+          rm -f .github/workflows/temp-public-release-floor.yml
+
+          cd license-server
+          npm run check
+          npm test
+          cd ..
+
+      - name: Commit privacy floor patch
+        shell: bash
+        run: |
+          git config user.name "gptlock-release-policy-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "fix(releases): enforce public floor at v0.5.30"
+          git push origin HEAD:fix/public-release-floor-v0530
