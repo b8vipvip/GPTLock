@@ -159,6 +159,11 @@
     if (areaName === 'sync' && changes.policy?.newValue) {
       policy = changes.policy.newValue;
       scheduleRender();
+      return;
+    }
+    if (areaName === 'local' && changes[STORAGE_KEY]) {
+      trusted = changes[STORAGE_KEY].newValue || null;
+      scheduleRender();
     }
   });
 
