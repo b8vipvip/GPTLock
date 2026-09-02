@@ -13,6 +13,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 const RELEASES_API = 'https://api.github.com/repos/b8vipvip/GPTLock/releases?per_page=12';
 const DEFAULT_ORIGIN = 'https://gptlock.mv3.cn';
 const DEFAULT_SYNC_MS = 60 * 1000;
+const DEFAULT_FETCH_RETRIES = 2;
 const MAX_NOTIFICATION_WAIT_MS = 25 * 1000;
 const SAFE_TAG = /^v\d+(?:\.\d+){1,3}$/i;
 const SAFE_ASSET = /^[A-Za-z0-9][A-Za-z0-9._+()-]{0,159}$/;
@@ -99,18 +100,33 @@ function defaultMirrorRoot(serverRoot, env) {
   return join(serverRoot, 'data', 'releases');
 }
 
+function errorText(error) {
+  return (error instanceof Error ? error.message : String(error || 'unknown error')).slice(0, 500);
+}
+
+function sleep(ms) {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
 export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = process.env }) {
   const token = String(env.GPTLOCK_GITHUB_TOKEN || env.GH_TOKEN || '').trim();
   const publicOrigin = normalizeOrigin(env.GPTLOCK_LICENSE_PUBLIC_ORIGIN);
   const mirrorRoot = resolve(env.GPTLOCK_RELEASE_MIRROR_DIR || defaultMirrorRoot(serverRoot, env));
   const indexPath = join(mirrorRoot, 'index.json');
   const syncIntervalMs = Math.max(30_000, Number(env.GPTLOCK_RELEASE_SYNC_INTERVAL_MS || DEFAULT_SYNC_MS));
+  const fetchRetries = Math.max(1, Math.min(5, Number(env.GPTLOCK_RELEASE_FETCH_RETRIES || DEFAULT_FETCH_RETRIES)));
   const currentProductVersion = currentVersion(serverRoot);
   const waiters = new Set();
   let timer = null;
   let syncing = null;
   let cache = null;
   let storageError = null;
+  let lastWarning = null;
+  let lastSyncAttemptAt = null;
+  let lastSyncSuccessAt = null;
+  let lastSyncErrorAt = null;
+  let lastSyncError = null;
+  let historyFailures = [];
 
   function ensureStorage() {
     try {
@@ -137,6 +153,27 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
     return headers;
   }
 
+  async function githubFetch(url, options = {}, timeoutMs = 15_000) {
+    let lastError = null;
+    let lastResponse = null;
+    for (let attempt = 1; attempt <= fetchRetries; attempt += 1) {
+      try {
+        const response = await fetchImpl(url, {
+          ...options,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        lastResponse = response;
+        if (response.ok || (response.status < 500 && response.status !== 429)) return response;
+        lastError = new Error(`GitHub request returned ${response.status}`);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+      if (attempt < fetchRetries) await sleep(250 * attempt);
+    }
+    if (lastResponse) return lastResponse;
+    throw lastError || new Error('GitHub request failed');
+  }
+
   function normalizedIndex(raw = {}) {
     const releases = Array.isArray(raw.releases) ? raw.releases : [];
     return {
@@ -147,7 +184,6 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
       mirroredAt: raw.mirroredAt || null,
       latestVersion: releases[0]?.tag?.replace(/^v/i, '') || null,
       releases,
-      ...(raw.warning ? { warning: raw.warning } : {}),
     };
   }
 
@@ -157,9 +193,10 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
     return cache;
   }
 
-  function withStorageState(feed) {
-    if (!storageError) return feed;
-    return { ...feed, warning: 'release_mirror_storage_unavailable' };
+  function publicView(feed = loadIndex()) {
+    let warning = lastWarning;
+    if (storageError) warning = 'release_mirror_storage_unavailable';
+    return warning ? { ...feed, warning } : { ...feed };
   }
 
   function notifyWaiters(next) {
@@ -179,6 +216,18 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
     cache = next;
     if (generation !== previous.generation) notifyWaiters(next);
     return next;
+  }
+
+  function releaseAssetsAvailable(release) {
+    if (!release || !SAFE_TAG.test(String(release.tag || '')) || !Array.isArray(release.assets)) return false;
+    return release.assets.every((asset) => {
+      const name = String(asset?.name || '');
+      if (!SAFE_ASSET.test(name) || basename(name) !== name) return false;
+      const path = join(mirrorRoot, release.tag, name);
+      if (!existsSync(path)) return false;
+      const expectedSize = Math.max(0, Number(asset?.size || 0));
+      return !expectedSize || statSync(path).size === expectedSize;
+    });
   }
 
   async function downloadAsset(releaseTag, asset) {
@@ -209,11 +258,10 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
       }
     }
 
-    const response = await fetchImpl(apiUrl, {
+    const response = await githubFetch(apiUrl, {
       headers: githubHeaders('application/octet-stream'),
       redirect: 'follow',
-      signal: AbortSignal.timeout(120_000),
-    });
+    }, 120_000);
     if (!response.ok) throw new Error(`GitHub asset download failed (${response.status}): ${name}`);
     const bytes = Buffer.from(await response.arrayBuffer());
     if (expectedSize && bytes.length !== expectedSize) {
@@ -249,37 +297,66 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
     };
   }
 
+  function markFatalSyncError(error) {
+    const current = loadIndex();
+    lastSyncErrorAt = new Date().toISOString();
+    lastSyncError = errorText(error);
+    lastWarning = storageError
+      ? 'release_mirror_storage_unavailable'
+      : current.releases.length ? 'release_mirror_sync_failed' : 'release_feed_unavailable';
+    return publicView(current);
+  }
+
   async function syncOnce() {
+    lastSyncAttemptAt = new Date().toISOString();
+    historyFailures = [];
     if (!ensureStorage()) throw storageError;
     if (!token) {
-      const current = loadIndex();
-      return { ...current, warning: 'private_release_token_required' };
+      lastWarning = 'private_release_token_required';
+      lastSyncErrorAt = lastSyncAttemptAt;
+      lastSyncError = 'GPTLOCK_GITHUB_TOKEN or GH_TOKEN is not configured in the running service';
+      return publicView(loadIndex());
     }
-    const response = await fetchImpl(RELEASES_API, {
-      headers: githubHeaders(),
-      signal: AbortSignal.timeout(15_000),
-    });
+
+    const response = await githubFetch(RELEASES_API, { headers: githubHeaders() }, 20_000);
     if (!response.ok) throw new Error(`GitHub release feed returned ${response.status}`);
     const rows = safeReleaseRows(await response.json());
-    const releases = [];
-    for (const row of rows) releases.push(await mirrorRelease(row));
-    return publishIndex(releases);
+    if (!rows.length) throw new Error('GitHub release feed contains no formal releases');
+
+    const previous = loadIndex();
+    const rowTags = new Set(rows.map((row) => String(row.tag_name || '')));
+    const reusablePrevious = previous.releases.filter((release) => rowTags.has(release.tag) && releaseAssetsAvailable(release));
+
+    // The newest formal release is the client safety boundary. Mirror and publish it first,
+    // so a stale/broken historical asset can never make the latest client version disappear.
+    const latest = await mirrorRelease(rows[0]);
+    const bootstrap = [latest, ...reusablePrevious.filter((release) => release.tag !== latest.tag)].slice(0, 12);
+    publishIndex(bootstrap);
+
+    const releases = [latest];
+    for (const row of rows.slice(1)) {
+      const tag = String(row.tag_name || '');
+      try {
+        releases.push(await mirrorRelease(row));
+      } catch (error) {
+        const reusable = reusablePrevious.find((release) => release.tag === tag);
+        if (reusable) releases.push(reusable);
+        historyFailures.push({ tag, error: errorText(error) });
+      }
+    }
+
+    const final = publishIndex(releases);
+    lastSyncSuccessAt = new Date().toISOString();
+    lastSyncErrorAt = null;
+    lastSyncError = null;
+    lastWarning = historyFailures.length ? 'release_history_partial' : null;
+    return publicView(final);
   }
 
   async function sync() {
     if (syncing) return syncing;
     syncing = syncOnce()
-      .catch((error) => {
-        const current = loadIndex();
-        const storageUnavailable = Boolean(storageError);
-        return {
-          ...current,
-          warning: storageUnavailable
-            ? 'release_mirror_storage_unavailable'
-            : current.releases.length ? 'release_mirror_sync_failed' : 'release_feed_unavailable',
-          syncError: error instanceof Error ? error.message : String(error),
-        };
-      })
+      .catch((error) => markFatalSyncError(error))
       .finally(() => { syncing = null; });
     return syncing;
   }
@@ -356,7 +433,27 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
 
   async function load() {
     ensureStorage();
-    return withStorageState(loadIndex());
+    return publicView(loadIndex());
+  }
+
+  async function status() {
+    ensureStorage();
+    return {
+      ...publicView(loadIndex()),
+      mirror: {
+        root: mirrorRoot,
+        tokenConfigured: Boolean(token),
+        storageAvailable: !storageError,
+        syncInProgress: Boolean(syncing),
+        syncIntervalMs,
+        fetchRetries,
+        lastAttemptAt: lastSyncAttemptAt,
+        lastSuccessAt: lastSyncSuccessAt,
+        lastErrorAt: lastSyncErrorAt,
+        lastError: lastSyncError,
+        historyFailures,
+      },
+    };
   }
 
   function notificationPayload(result) {
@@ -373,6 +470,7 @@ export function createSiteReleaseFeed({ serverRoot, fetchImpl = fetch, env = pro
 
   return {
     load,
+    status,
     sync,
     start,
     stop,
