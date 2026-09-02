@@ -20,6 +20,14 @@ test('forced alignment retries when page controls are unavailable or generation 
   assert.doesNotMatch(source, /currentModel\s*&&\s*currentModel\s*!==\s*desiredModel/);
 });
 
+test('whole-page MutationObserver is only armed after active retries are exhausted and disconnects before retrying', () => {
+  assert.match(source, /function armWakeObserver\(\)/);
+  assert.match(source, /attempts < MAX_ACTIVE_ATTEMPTS/);
+  assert.match(source, /armWakeObserver\(\)/);
+  assert.match(source, /wakeObserver\?\.disconnect\(\)/);
+  assert.doesNotMatch(source, /new MutationObserver\([\s\S]*?\)\.observe\(document\.documentElement/);
+});
+
 test('forced sync is loaded into every ChatGPT tab after the normal lock runtime', () => {
   const scripts = manifest.content_scripts.flatMap((entry) => entry.js || []);
   const contentIndex = scripts.indexOf('content.js');

@@ -32,6 +32,7 @@
   let pending = false;
   let attempts = 0;
   let syncing = false;
+  let wakeObserver = null;
 
   function visible(element) {
     if (!element?.getBoundingClientRect) return false;
@@ -116,8 +117,45 @@
       : allowed[0] || null;
   }
 
+  function disarmWakeObserver() {
+    wakeObserver?.disconnect();
+    wakeObserver = null;
+  }
+
+  function armWakeObserver() {
+    if (!pending || wakeObserver || !document.documentElement) return;
+    wakeObserver = new MutationObserver(() => {
+      if (!pending) {
+        disarmWakeObserver();
+        return;
+      }
+      disarmWakeObserver();
+      attempts = 0;
+      scheduleRetry(250);
+    });
+    wakeObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['aria-label', 'aria-selected', 'aria-checked', 'data-state', 'data-value', 'data-model', 'data-model-id'],
+    });
+  }
+
+  function finishSync() {
+    pending = false;
+    attempts = 0;
+    clearTimeout(timer);
+    timer = null;
+    disarmWakeObserver();
+  }
+
   async function alignNow() {
-    if (syncing || !pending || settings?.enabled === false) return;
+    timer = null;
+    if (syncing || !pending) return;
+    if (settings?.enabled === false) {
+      finishSync();
+      return;
+    }
     if (document.querySelector(GENERATING_SELECTORS.join(','))) {
       scheduleRetry();
       return;
@@ -146,8 +184,7 @@
       const modelAligned = !desiredModel || finalModel === desiredModel;
       const reasoningAligned = !preferred || finalReasoning === preferred;
       if (modelAligned && reasoningAligned) {
-        pending = false;
-        attempts = 0;
+        finishSync();
         window.dispatchEvent(new CustomEvent('gptlock:lock-selection-synced', {
           detail: { model: finalModel, reasoning: finalReasoning },
         }));
@@ -155,7 +192,11 @@
       }
 
       attempts += 1;
-      if (retry && attempts < MAX_ACTIVE_ATTEMPTS) scheduleRetry();
+      if (retry && attempts < MAX_ACTIVE_ATTEMPTS) {
+        scheduleRetry();
+      } else if (retry) {
+        armWakeObserver();
+      }
     } finally {
       syncing = false;
     }
@@ -170,6 +211,7 @@
   function requestForcedSync({ resetAttempts = true } = {}) {
     pending = true;
     if (resetAttempts) attempts = 0;
+    disarmWakeObserver();
     clearTimeout(timer);
     timer = window.setTimeout(() => void alignNow(), 80);
   }
@@ -205,18 +247,6 @@
   });
   window.addEventListener('popstate', () => pending && requestForcedSync({ resetAttempts: false }));
   window.addEventListener('hashchange', () => pending && requestForcedSync({ resetAttempts: false }));
-
-  new MutationObserver(() => {
-    if (pending && attempts >= MAX_ACTIVE_ATTEMPTS) {
-      attempts = 0;
-      scheduleRetry(250);
-    }
-  }).observe(document.documentElement, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['aria-label', 'aria-selected', 'aria-checked', 'data-state', 'data-value', 'data-model', 'data-model-id'],
-  });
 
   loadCurrentConfiguration();
 })();

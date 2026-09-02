@@ -8,8 +8,6 @@
   let policy = null;
   let trusted = null;
   let refreshQueued = false;
-  let rootObserver = null;
-  let observedRoot = null;
   let writeQueue = Promise.resolve();
 
   function modelLabel(value) {
@@ -46,14 +44,6 @@
     scheduleRender();
   }
 
-  function observeRoot(root) {
-    if (!root || root === observedRoot) return;
-    rootObserver?.disconnect();
-    observedRoot = root;
-    rootObserver = new MutationObserver(scheduleRender);
-    rootObserver.observe(root, { childList: true, subtree: true, characterData: true, attributes: true });
-  }
-
   function ensureStyle(root) {
     if (root.getElementById('gptlock-model-status-continuity-style')) return;
     const style = document.createElement('style');
@@ -69,8 +59,11 @@
     const row = button.querySelector(`[data-source="${source}"]`);
     if (!row) return;
     if (row.dataset.status !== status) row.dataset.status = status;
-    if (historyKind) row.dataset.history = historyKind;
-    else delete row.dataset.history;
+    if (historyKind) {
+      if (row.dataset.history !== historyKind) row.dataset.history = historyKind;
+    } else if (row.hasAttribute('data-history')) {
+      row.removeAttribute('data-history');
+    }
     const target = row.querySelector('.model-value');
     if (target && target.textContent !== value) target.textContent = value;
   }
@@ -81,7 +74,6 @@
     const root = host?.shadowRoot;
     const button = root?.querySelector('button');
     if (!root || !button) return;
-    observeRoot(root);
     ensureStyle(root);
 
     const selected = helper.selectStatus({ state, history: trusted, policy });
@@ -114,13 +106,14 @@
       setRow(button, 'response', request.current ? '等待当前响应' : '等待响应', 'waiting');
     }
 
-    button.dataset.tone = response.mismatch
+    const tone = response.mismatch
       ? 'mismatch'
       : response.confirmed
         ? 'confirmed'
         : request.id
           ? 'request'
           : 'unknown';
+    if (button.dataset.tone !== tone) button.dataset.tone = tone;
 
     const requestDetail = request.id
       ? `${modelLabel(request.id)} (${request.id})${request.historical ? ' · 最近一次可信请求，当前聊天尚未发送' : ' · 当前聊天请求'}`
@@ -130,17 +123,18 @@
       : request.current ? '等待当前聊天响应' : '等待当前聊天首次响应';
     const pageRow = button.querySelector('[data-source="page"]');
     const pageValue = pageRow?.querySelector('.model-value')?.textContent || '未识别';
-    button.title = [
+    const detail = [
       `页面模型：${pageValue}`,
       `请求模型：${requestDetail}`,
       `响应模型：${responseDetail}`,
     ].join('\n');
+    if (button.title !== detail) button.title = detail;
   }
 
   function scheduleRender() {
     if (refreshQueued) return;
     refreshQueued = true;
-    queueMicrotask(render);
+    window.setTimeout(render, 0);
   }
 
   function refreshState() {

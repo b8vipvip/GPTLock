@@ -46,18 +46,46 @@
     };
   }
 
+  function sourcePriority(source) {
+    return source === 'network_request_metadata' || source === 'network_response_metadata' ? 2 : 1;
+  }
+
+  function shouldReplaceEvidence(existing, candidate) {
+    if (!candidate?.model || !candidate?.capturedAt) return false;
+    if (!existing?.model || !existing?.capturedAt) return true;
+    const existingAt = timestamp(existing.capturedAt);
+    const candidateAt = timestamp(candidate.capturedAt);
+    if (candidateAt > existingAt) return true;
+    if (candidateAt < existingAt) return false;
+    if (normalizeModelId(existing.model) !== normalizeModelId(candidate.model)) return true;
+    if (Boolean(candidate.confirmed) !== Boolean(existing.confirmed)) return Boolean(candidate.confirmed);
+    return sourcePriority(candidate.source) > sourcePriority(existing.source);
+  }
+
+  function sameEvidence(left, right) {
+    return normalizeModelId(left?.model) === normalizeModelId(right?.model)
+      && String(left?.capturedAt || '') === String(right?.capturedAt || '')
+      && String(left?.source || '') === String(right?.source || '')
+      && Boolean(left?.confirmed) === Boolean(right?.confirmed);
+  }
+
   function mergeTrustedEvidence(previous, state, nowIso = new Date().toISOString()) {
     const next = safePrevious(previous);
     const auto = state?.autoVerification;
+    let changed = false;
 
     const requestModel = normalizeModelId(state?.lastRequest?.model)
       || (auto?.requestLockConfirmed ? normalizeModelId(auto?.requestModel) : null);
     if (requestModel) {
-      next.request = {
+      const candidate = {
         model: requestModel,
         capturedAt: state?.lastRequest?.capturedAt || auto?.completedAt || state?.updatedAt || nowIso,
         source: state?.lastRequest?.model ? 'network_request_metadata' : 'auto_verification_request',
       };
+      if (shouldReplaceEvidence(next.request, candidate) && !sameEvidence(next.request, candidate)) {
+        next.request = candidate;
+        changed = true;
+      }
     }
 
     const verification = state?.lastVerification;
@@ -72,15 +100,19 @@
       : null;
     const responseModel = verifiedResponseModel || autoResponseModel;
     if (responseModel) {
-      next.response = {
+      const candidate = {
         model: responseModel,
         capturedAt: verification?.verifiedAt || auto?.completedAt || state?.updatedAt || nowIso,
         source: verifiedResponseModel ? 'network_response_metadata' : 'auto_verification_response',
         confirmed: true,
       };
+      if (shouldReplaceEvidence(next.response, candidate) && !sameEvidence(next.response, candidate)) {
+        next.response = candidate;
+        changed = true;
+      }
     }
 
-    if (requestModel || responseModel) next.updatedAt = nowIso;
+    if (changed) next.updatedAt = nowIso;
     return next;
   }
 
@@ -145,6 +177,9 @@
     timestamp,
     fresh,
     policyAllows,
+    sourcePriority,
+    shouldReplaceEvidence,
+    sameEvidence,
     mergeTrustedEvidence,
     responseAppliesToLatestRequest,
     selectStatus,
