@@ -171,10 +171,11 @@ jobs:
           fi
           tar -C native-core/target/release -czf "dist/gptlock-core-${RELEASE_VERSION}-linux-x64.tar.gz" "${tar_files[@]}"
           cd extension
-          zip -9 "../dist/gptlock-extension-${RELEASE_VERSION}.zip" *.js *.css *.html manifest.json
+          zip -9 "../dist/gptlock-extension-${RELEASE_VERSION}.zip" *.js *.css *.html manifest.json icons/*.png
           unzip -l "../dist/gptlock-extension-${RELEASE_VERSION}.zip" | grep -q 'account-client.js'
           unzip -l "../dist/gptlock-extension-${RELEASE_VERSION}.zip" | grep -q 'auth-gate.js'
           unzip -l "../dist/gptlock-extension-${RELEASE_VERSION}.zip" | grep -q 'account.html'
+          unzip -l "../dist/gptlock-extension-${RELEASE_VERSION}.zip" | grep -q 'icons/icon128.png'
       - name: Enforce Linux release distribution boundary
         shell: bash
         run: |
