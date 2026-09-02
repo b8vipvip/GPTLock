@@ -306,7 +306,7 @@ async function handleAdmin(req, res, url) {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     return download(res, runtimeLogger.exportText(), `gptlock-server-runtime-${stamp}.jsonl`);
   }
-  if (url.pathname === '/admin/api/releases' && req.method === 'GET') return json(res, 200, await siteReleases.load());
+  if (url.pathname === '/admin/api/releases' && req.method === 'GET') return json(res, 200, await siteReleases.status());
   if (url.pathname === '/admin/api/releases/sync' && req.method === 'POST') return json(res, 200, await siteReleases.sync());
   if (url.pathname === '/admin/api/update' && req.method === 'GET') return json(res, 200, updateManager.info());
   if (url.pathname === '/admin/api/update' && req.method === 'POST') return json(res, 202, updateManager.request());
@@ -355,6 +355,7 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/site.css') return staticFile(res, join(PUBLIC, 'site.css'));
     if (url.pathname === '/site.js') return staticFile(res, join(PUBLIC, 'site.js'));
     if (url.pathname === '/admin.js') return staticFile(res, join(PUBLIC, 'admin.js'));
+    if (url.pathname === '/admin-release-mirror.js') return staticFile(res, join(PUBLIC, 'admin-release-mirror.js'));
     if (url.pathname === '/client-runtime-admin.js') return staticFile(res, join(PUBLIC, 'client-runtime-admin.js'));
     if (url.pathname === '/admin.css') return staticFile(res, join(PUBLIC, 'admin.css'));
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('Not found');
