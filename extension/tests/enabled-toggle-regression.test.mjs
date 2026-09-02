@@ -11,12 +11,14 @@ test('account gate no longer writes the enable switch disabled state', () => {
   assert.match(authGate, /gptlock-entitlement-state/);
 });
 
-test('enable switch has a single-owner controller with timeout and rollback', () => {
-  assert.match(controller, /TOGGLE_TIMEOUT_MS/);
+test('enable switch has a single-owner controller with bounded storage writes and rollback', () => {
+  assert.match(controller, /STORAGE_TIMEOUT_MS/);
+  assert.match(controller, /storageSetSettings/);
   assert.match(controller, /stopImmediatePropagation\(\)/);
   assert.match(controller, /toggle\.checked = previous/);
   assert.match(controller, /\.finally\(\(\) => \{/);
   assert.match(controller, /syncAvailability\(\)/);
+  assert.doesNotMatch(controller, /GPTLOCK_SET_ENABLED/);
 });
 
 test('current popup loads the stable enable toggle controller after popup.js', () => {
