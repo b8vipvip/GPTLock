@@ -109,10 +109,12 @@ function renderAccount(account) {
   const limits = entitlement.limits || {};
   el.accountUsage.textContent = `设备 ${usage.devices ?? 0}/${limits.devices ?? 0} · 窗口不限`;
   if (el.enabled) {
-    el.enabled.disabled = !entitlement.active;
     if (!entitlement.active) el.enabled.title = '免费期或会员已到期，请在账户中心开通会员';
     else el.enabled.title = '启用或关闭 GPTLock；窗口数量不受限制';
   }
+  window.dispatchEvent(new CustomEvent('gptlock-entitlement-state', {
+    detail: { authenticated, active: Boolean(entitlement.active) },
+  }));
 }
 
 async function refreshGate() {
