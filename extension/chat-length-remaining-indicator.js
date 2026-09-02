@@ -140,7 +140,7 @@
       ? state.percent <= 0 ? 'danger' : state.percent <= 20 ? 'warning' : 'safe'
       : 'waiting';
     if (row.dataset.status !== status) row.dataset.status = status;
-    row.dataset.remainingSource = state.source;
+    if (row.dataset.remainingSource !== state.source) row.dataset.remainingSource = state.source;
 
     const detail = detailText(state);
     if (row.title !== detail) row.title = detail;
