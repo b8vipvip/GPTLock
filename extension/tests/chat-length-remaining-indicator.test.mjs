@@ -77,7 +77,7 @@ test('chat length display no longer waits for or consumes private remainingPerce
   assert.equal(indicator.formatPercent(result.percent), '75%');
   assert.match(source, /estimateTextTokens/);
   assert.match(source, /local-operational-budget/);
-  assert.doesNotMatch(source, /计算中|等待私有核心/);
+  assert.doesNotMatch(source, /__GPTLOCK_PRIVATE_CONTEXT_BUDGET_AUTHORITY__/);
 });
 
 test('unknown models retain the conservative fallback window from the verified estimator', () => {
