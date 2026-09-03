@@ -176,15 +176,6 @@ jobs:
           unzip -l "../dist/gptwork-extension-${RELEASE_VERSION}.zip" | grep -q 'auth-gate.js'
           unzip -l "../dist/gptwork-extension-${RELEASE_VERSION}.zip" | grep -q 'account.html'
           unzip -l "../dist/gptwork-extension-${RELEASE_VERSION}.zip" | grep -q 'icons/icon128.png'
-      - name: Add legacy download aliases for pre-GPTWork clients
-        env:
-          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cp "dist/gptwork-core-${RELEASE_VERSION}-linux-x64.tar.gz" "dist/gptlock-core-${RELEASE_VERSION}-linux-x64.tar.gz"
-          cp "dist/gptwork-extension-${RELEASE_VERSION}.zip" "dist/gptlock-extension-${RELEASE_VERSION}.zip"
-          cp "dist/gptwork_${RELEASE_VERSION}_amd64.deb" "dist/gptlock_${RELEASE_VERSION}_amd64.deb"
       - name: Enforce Linux release distribution boundary
         shell: bash
         run: |
@@ -328,9 +319,6 @@ jobs:
               Remove-Item -LiteralPath $certPath -Force
             }
           }
-      - name: Add legacy Windows installer alias for pre-GPTWork clients
-        shell: pwsh
-        run: Copy-Item -LiteralPath 'dist\windows\GPTWorkSetup-x64.exe' -Destination 'dist\windows\GPTLockSetup-x64.exe' -Force
       - name: Enforce Windows release distribution boundary
         shell: pwsh
         run: |
@@ -357,9 +345,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: release-windows
-          path: |
-            dist/windows/GPTWorkSetup-x64.exe
-            dist/windows/GPTLockSetup-x64.exe
+          path: dist/windows/GPTWorkSetup-x64.exe
           if-no-files-found: error
 
   publish:
