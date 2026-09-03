@@ -3,6 +3,7 @@
   const EVIDENCE_STORAGE_KEY = 'discoveredModelEvidence';
   const DISCOVERY_SCHEMA_KEY = 'modelDiscoverySchemaVersion';
   const DISCOVERY_SCHEMA_VERSION = 2;
+  const TRUSTED_STATUS_STORAGE_KEY = 'gptlock.trusted-model-status.v1';
   const MAX_DISCOVERED_MODELS = 64;
   const STATE_REFRESH_MS = 1200;
   const PAGE_REFRESH_DELAY_MS = 120;
@@ -21,6 +22,8 @@
 
   let indicator = null;
   let lastState = null;
+  let trustedStatus = null;
+  let currentPolicy = null;
   let localPageObservation = null;
   let writeQueue = Promise.resolve();
   let stateRefreshInFlight = false;
@@ -159,19 +162,38 @@
   function modelSnapshot(state) {
     const pageObservation = effectivePageObservation(state);
     const pageModel = normalizeModelId(pageObservation?.model);
-    const requestModel = normalizeModelId(state?.lastRequest?.model);
+    const historyHelper = globalThis.__GPTLOCK_MODEL_STATUS_HISTORY__;
+    const selected = historyHelper?.selectStatus?.({
+      state,
+      history: trustedStatus,
+      policy: currentPolicy,
+    }) || null;
+
+    const stateRequestModel = normalizeModelId(state?.lastRequest?.model);
+    const requestModel = normalizeModelId(selected?.request?.id) || stateRequestModel;
+    const requestHistorical = Boolean(requestModel && selected?.request?.historical);
+    const requestCurrent = selected ? Boolean(selected?.request?.current) : Boolean(stateRequestModel);
+
     const verification = state?.lastVerification;
     const responseCurrent = responseAppliesToLatestRequest(state);
-    const responseModel = responseCurrent ? normalizeModelId(verification?.model) : null;
-    const responseConfirmed = Boolean(
-      responseModel
+    const fallbackResponseModel = responseCurrent ? normalizeModelId(verification?.model) : null;
+    const responseModel = normalizeModelId(selected?.response?.id) || fallbackResponseModel;
+    const responseHistorical = Boolean(responseModel && selected?.response?.historical);
+    const fallbackResponseConfirmed = Boolean(
+      fallbackResponseModel
       && verification?.evidenceSource === 'network_response_metadata'
       && !verification?.reasons?.includes?.('model_missing')
     );
-    const responseMismatch = Boolean(
-      responseModel
+    const fallbackResponseMismatch = Boolean(
+      fallbackResponseModel
       && (verification?.reasons?.includes?.('model_not_allowed') || verification?.verdict === 'mismatch')
     );
+    const responseConfirmed = selected?.response?.id
+      ? Boolean(selected.response.confirmed)
+      : fallbackResponseConfirmed;
+    const responseMismatch = selected?.response?.id
+      ? Boolean(selected.response.mismatch)
+      : fallbackResponseMismatch;
 
     return {
       page: {
@@ -181,15 +203,23 @@
       },
       request: {
         id: requestModel,
-        label: requestModel ? modelLabel(requestModel) : '等待请求',
-        status: requestModel ? 'request' : 'waiting',
+        label: requestModel
+          ? `${modelLabel(requestModel)}${requestHistorical ? ' · 最近请求' : ''}`
+          : '等待请求',
+        status: requestHistorical ? 'request-history' : requestModel ? 'request' : 'waiting',
+        historical: requestHistorical,
       },
       response: {
         id: responseModel,
-        label: responseModel ? modelLabel(responseModel) : responseCurrent ? '等待响应' : '等待当前响应',
-        status: responseMismatch ? 'mismatch' : responseConfirmed ? 'confirmed' : responseModel ? 'response' : 'waiting',
+        label: responseModel ? modelLabel(responseModel) : requestCurrent ? '等待当前响应' : '等待响应',
+        status: responseMismatch
+          ? 'mismatch'
+          : responseHistorical
+            ? 'confirmed-history'
+            : responseConfirmed ? 'confirmed' : responseModel ? 'response' : 'waiting',
         confirmed: responseConfirmed,
         mismatch: responseMismatch,
+        historical: responseHistorical,
       },
     };
   }
@@ -311,7 +341,9 @@
         .model-key{opacity:.76;font-weight:650}
         .model-value{font-weight:800;text-align:right;overflow:hidden;text-overflow:ellipsis}
         .model-row[data-status="waiting"] .model-value,.model-row[data-status="unknown"] .model-value{opacity:.65;font-weight:650}
-        .model-row[data-status="confirmed"] .model-value{color:#dcfce7}
+        .model-row[data-status="request-history"] .model-value{color:#dbeafe;opacity:1;font-weight:800}
+        .model-row[data-status="confirmed"] .model-value,.model-row[data-status="confirmed-history"] .model-value{color:#dcfce7}
+        .model-row[data-status="confirmed-history"] .model-value{opacity:1;font-weight:800}
         .model-row[data-status="mismatch"] .model-value{color:#fee2e2}
         button[data-tone="confirmed"]{background:rgba(21,128,61,.72);border-color:rgba(187,247,208,.48)}
         button[data-tone="request"]{background:rgba(37,99,235,.72);border-color:rgba(191,219,254,.48)}
@@ -371,8 +403,12 @@
     schedulePosition();
   }
 
-  function consumeState(state) {
-    if (!state) return;
+  function consumeState(state, policy = null) {
+    if (policy) currentPolicy = policy;
+    if (!state) {
+      render(lastState);
+      return;
+    }
     lastState = state;
     rememberModels(trustedModelCandidates(state));
     render(state);
@@ -411,13 +447,31 @@
     chrome.runtime.sendMessage({ type: 'GPTLOCK_GET_STATE' }, (response) => {
       stateRefreshInFlight = false;
       if (chrome.runtime.lastError) return;
-      if (response?.ok) consumeState(response.data?.tabState);
+      if (response?.ok) consumeState(response.data?.tabState, response.data?.policy);
     });
   }
 
   chrome.runtime.onMessage.addListener((message) => {
-    if (message?.type === 'GPTLOCK_GUARD_STATE') consumeState(message.state);
+    if (message?.type === 'GPTLOCK_GUARD_STATE') consumeState(message.state, message.policy);
     return false;
+  });
+
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === 'local' && changes[TRUSTED_STATUS_STORAGE_KEY]) {
+      trustedStatus = changes[TRUSTED_STATUS_STORAGE_KEY].newValue || null;
+      render(lastState);
+      return;
+    }
+    if (areaName === 'sync' && changes.policy?.newValue) {
+      currentPolicy = changes.policy.newValue;
+      render(lastState);
+    }
+  });
+
+  chrome.storage.local.get(TRUSTED_STATUS_STORAGE_KEY, (stored) => {
+    if (chrome.runtime.lastError) return;
+    trustedStatus = stored?.[TRUSTED_STATUS_STORAGE_KEY] || null;
+    render(lastState);
   });
 
   const pageObserver = new MutationObserver(schedulePageRefresh);
