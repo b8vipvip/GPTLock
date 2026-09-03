@@ -5,6 +5,7 @@ import { centsFromZpayMoney, verifyZpaySignature, zpayMoneyFromCents, zpaySign }
 test('ZPAY MD5 signing follows ASCII key order and excludes sign/sign_type/empty values', () => {
   const params = { type: 'alipay', pid: '10001', money: '19.00', out_trade_no: '202609030001', empty: '', sign_type: 'MD5' };
   const sign = zpaySign(params, 'merchant-secret');
+  assert.equal(sign, 'e7f2b486ce8a017d096f0b8c67566556');
   const callback = new URLSearchParams({ ...params, sign, sign_type: 'MD5' });
   assert.equal(verifyZpaySignature(callback, 'merchant-secret'), true);
   callback.set('money', '19.01');
