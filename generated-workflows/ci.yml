@@ -241,7 +241,7 @@ jobs:
           if ($chromeManifest.path -ne $sourceBinary) { throw "Custom source root was not registered: $($chromeManifest.path)" }
       - uses: actions/upload-artifact@v4
         with:
-          name: gptlock-windows-setup
+          name: gptwork-windows-setup
           path: dist/windows/GPTWorkSetup-x64.exe
           if-no-files-found: error
 
@@ -266,16 +266,16 @@ jobs:
           contents="$(dpkg-deb --contents "$package")"
           printf '%s\n' "$contents"
           grep -q '/usr/bin/gptwork-engine' <<<"$contents"
-          grep -q '/usr/share/gptlock/extension/account-client.js' <<<"$contents"
-          grep -q '/usr/share/gptlock/extension/auth-gate.js' <<<"$contents"
-          grep -q '/usr/share/gptlock/extension/account.html' <<<"$contents"
-          grep -q '/usr/share/gptlock/extension/context-budget.js' <<<"$contents"
+          grep -q '/usr/share/gptwork/extension/account-client.js' <<<"$contents"
+          grep -q '/usr/share/gptwork/extension/auth-gate.js' <<<"$contents"
+          grep -q '/usr/share/gptwork/extension/account.html' <<<"$contents"
+          grep -q '/usr/share/gptwork/extension/context-budget.js' <<<"$contents"
           if grep -E '/private-engine/|\.rs$|Cargo\.toml$|Cargo\.lock$' <<<"$contents"; then
             echo 'Private implementation source leaked into Linux package.' >&2
             exit 1
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: gptlock-linux-deb
-          path: dist/linux/gptlock_*_amd64.deb
+          name: gptwork-linux-deb
+          path: dist/linux/gptwork_*_amd64.deb
           if-no-files-found: error
