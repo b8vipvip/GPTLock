@@ -350,7 +350,7 @@ export function createSiteAccountSystem({ db, env, publicOrigin, json, bodyJson,
         const session = requireSession(req);
         const order = db.prepare('SELECT * FROM membership_orders WHERE id=? AND user_id=?').get(Number(orderMatch[1]), session.user_id);
         if (!order) fail(404, 'ORDER_NOT_FOUND', '订单不存在');
-        if (order.status === 'pending' && Date.parse(order.expires_at) <= Date.now()) {
+        if (order.status === 'pending' && order.payment_method !== 'usdt' && Date.parse(order.expires_at) <= Date.now()) {
           db.prepare("UPDATE membership_orders SET status='expired' WHERE id=? AND status='pending'").run(order.id);
         }
         return json(res, 200, { ok: true, order: orderPublic(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(order.id)) }), true;

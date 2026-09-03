@@ -528,7 +528,7 @@ export function createAccountSystem({
       FROM user_sessions s JOIN users u ON u.id=s.user_id
       WHERE s.token_hash=? AND s.revoked_at IS NULL`).get(sha256(token));
     if (!row) return null;
-    if (Date.parse(row.expires_at) <= Date.now()) {
+    if (!allowExpiredPending && Date.parse(row.expires_at) <= Date.now()) {
       db.prepare('UPDATE user_sessions SET revoked_at=? WHERE id=?').run(nowIso(), row.id);
       return null;
     }
@@ -799,7 +799,7 @@ export function createAccountSystem({
       planSnapshot: normalizePlanSnapshot(row.plan_snapshot_json, db.prepare('SELECT * FROM membership_plans WHERE code=?').get(row.plan_code)),
     };
   }
-  function markOrderPaid(row) {
+  function markOrderPaid(row, { allowExpiredPending = false } = {}) {
     if (!row) fail(404, 'ORDER_NOT_FOUND', '订单不存在');
     if (row.status === 'paid') return row;
     if (row.status !== 'pending') fail(409, 'ORDER_NOT_PENDING', '订单当前状态无法确认付款');
@@ -1082,7 +1082,7 @@ export function createAccountSystem({
         const session = requireSession(req);
         const order = db.prepare('SELECT * FROM membership_orders WHERE id=? AND user_id=?').get(Number(orderMatch[1]), session.user_id);
         if (!order) fail(404, 'ORDER_NOT_FOUND', '订单不存在');
-        if (order.status === 'pending' && Date.parse(order.expires_at) <= Date.now()) {
+        if (order.status === 'pending' && order.payment_method !== 'usdt' && Date.parse(order.expires_at) <= Date.now()) {
           db.prepare(`UPDATE membership_orders SET status='expired' WHERE id=? AND status='pending'`).run(order.id);
         }
         return json(res, 200, { ok: true, order: orderPublic(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(order.id)) }, cors), true;
@@ -1456,7 +1456,7 @@ export function createAccountSystem({
     accountSummary,
     testOutbox,
     markOrderPaidById(orderId, context = {}) {
-      const paid = markOrderPaid(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(orderId)));
+      const paid = markOrderPaid(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(orderId)), { allowExpiredPending: context?.source === 'okx_auto' });
       if (context?.source === 'okx_auto') {
         audit('order_auto_paid_okx', paid.user_id, {
           orderId: paid.id, depositId: context.depositId || '', txId: context.txId || '',

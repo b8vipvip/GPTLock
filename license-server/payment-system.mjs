@@ -146,6 +146,11 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
   function ensureRuntimeTables() {
     if (runtimeReady) return;
     db.exec(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS secure_settings (
         key TEXT PRIMARY KEY,
         ciphertext TEXT NOT NULL,
@@ -291,10 +296,20 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
     const current = db.prepare('SELECT * FROM usdt_order_payments WHERE order_id=?').get(order.id);
     if (current) return current;
     const price = quote || usdtQuote(order.plan_code);
+    const baseAmountMicros = Number(price.amountMicros);
+    const reserved = new Set(db.prepare(`SELECT d.expected_amount_micros FROM usdt_order_payments d
+      JOIN membership_orders o ON o.id=d.order_id
+      WHERE o.status='pending' AND o.payment_method='usdt' AND o.id<>?`).all(order.id).map((row) => Number(row.expected_amount_micros)));
+    let expectedAmountMicros = null;
+    for (let offset = 0; offset <= 999; offset += 1) {
+      const candidate = baseAmountMicros + offset;
+      if (!reserved.has(candidate)) { expectedAmountMicros = candidate; break; }
+    }
+    if (!expectedAmountMicros) throw Object.assign(new Error('当前待支付 USDT 订单过多，暂时无法分配唯一付款金额，请稍后重试'), { status: 409, code: 'USDT_AMOUNT_POOL_EXHAUSTED' });
     const details = method('usdt');
     const now = nowIso();
     db.prepare(`INSERT INTO usdt_order_payments(order_id,expected_amount_micros,asset,network,address,memo,updated_at)
-      VALUES(?,?,?,?,?,?,?)`).run(order.id, price.amountMicros, 'USDT', details?.crypto_network || '', details?.crypto_address || '', details?.crypto_memo || '', now);
+      VALUES(?,?,?,?,?,?,?)`).run(order.id, expectedAmountMicros, 'USDT', details?.crypto_network || '', details?.crypto_address || '', details?.crypto_memo || '', now);
     return db.prepare('SELECT * FROM usdt_order_payments WHERE order_id=?').get(order.id);
   }
 
@@ -401,6 +416,7 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
       const deposits = await createClient().getDepositHistory({ ccy: 'USDT', limit: 100 });
       const usedDepositIds = new Set(db.prepare("SELECT okx_deposit_id FROM usdt_order_payments WHERE okx_deposit_id<>''").all().map((row) => row.okx_deposit_id));
       const usedTxIds = new Set(db.prepare("SELECT okx_tx_id FROM usdt_order_payments WHERE okx_tx_id<>''").all().map((row) => row.okx_tx_id));
+      const activeOrderIds = new Set(orders.map((row) => row.order_id));
       let settled = 0;
       let ambiguous = 0;
 
@@ -409,7 +425,7 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
         const depId = cleanText(deposit.depId, 120);
         const txId = cleanText(deposit.txId, 300);
         if ((depId && usedDepositIds.has(depId)) || (txId && usedTxIds.has(txId))) continue;
-        const candidates = orders.filter((row) => depositMatchesOrder(deposit, row, config));
+        const candidates = orders.filter((row) => activeOrderIds.has(row.order_id) && depositMatchesOrder(deposit, row, config));
         if (!candidates.length) continue;
         const stateValue = String(deposit.state || '');
         if (candidates.length > 1) {
@@ -432,6 +448,7 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
           if (depId) usedDepositIds.add(depId);
           if (txId) usedTxIds.add(txId);
           status.lastMatchedOrderId = candidate.order_id;
+          activeOrderIds.delete(candidate.order_id);
           settled += 1;
         } catch (error) {
           markCandidates([candidate.order_id], 'error', stateValue, `自动开通失败：${cleanText(error?.message || error, 350)}`);
