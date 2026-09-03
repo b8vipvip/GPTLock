@@ -35,6 +35,8 @@ jobs:
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
           cargo generate-lockfile --manifest-path native-core/Cargo.toml
+          cargo fmt --manifest-path native-core/Cargo.toml
+          cargo fmt --manifest-path private-engine/Cargo.toml
           git diff --check
       - name: Run full rename regression suites
         shell: bash
