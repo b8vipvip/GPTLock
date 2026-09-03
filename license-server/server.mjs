@@ -239,13 +239,14 @@ function staticFile(res, path) {
 
 // Payment schema migration must run before account-system initializes its legacy
 // payment tables, so existing WeChat/Alipay databases can safely add USDT.
-const paymentSystem = createPaymentSystem({ db, publicOrigin: PUBLIC_ORIGIN, json });
+const paymentSystem = createPaymentSystem({ db, publicOrigin: PUBLIC_ORIGIN, json, secret: SECRET, env });
 const accountSystem = createAccountSystem({
   db, env, secret: SECRET, publicOrigin: PUBLIC_ORIGIN, allowedExtensionIds: ALLOWED_EXTENSION_IDS,
   windowTtlSeconds: WINDOW_TTL_SECONDS, json, bodyJson, clientIp,
 });
+paymentSystem.attachSettlement((orderId, context) => accountSystem.markOrderPaidById(orderId, context));
 const siteAccounts = createSiteAccountSystem({
-  db, env, publicOrigin: PUBLIC_ORIGIN, json, bodyJson, clientIp, accountSummary: accountSystem.accountSummary,
+  db, env, publicOrigin: PUBLIC_ORIGIN, json, bodyJson, clientIp, accountSummary: accountSystem.accountSummary, paymentSystem,
 });
 const siteReleases = createSiteReleaseFeed({ serverRoot: ROOT, env });
 const clientRuntimeLogs = createClientRuntimeLogManager({ db, env, json });
@@ -383,7 +384,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.on('close', () => siteReleases.stop());
+server.on('close', () => { siteReleases.stop(); paymentSystem.close(); });
 
 server.listen(PORT, HOST, () => {
   runtimeLogger.log('info', 'server_started', { pid: process.pid, host: HOST, port: PORT, publicOrigin: PUBLIC_ORIGIN,

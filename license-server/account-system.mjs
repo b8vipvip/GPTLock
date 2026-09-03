@@ -1455,5 +1455,15 @@ export function createAccountSystem({
     handleAdmin,
     accountSummary,
     testOutbox,
+    markOrderPaidById(orderId, context = {}) {
+      const paid = markOrderPaid(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(orderId)));
+      if (context?.source === 'okx_auto') {
+        audit('order_auto_paid_okx', paid.user_id, {
+          orderId: paid.id, depositId: context.depositId || '', txId: context.txId || '',
+          amount: context.amount || '', chain: context.chain || '', depositTs: context.depositTs || '',
+        });
+      }
+      return orderPublic(paid);
+    },
   };
 }

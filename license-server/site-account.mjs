@@ -51,7 +51,7 @@ function clampInt(value, min, max, fallback) {
   return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
 }
 
-export function createSiteAccountSystem({ db, env, publicOrigin, json, bodyJson, clientIp, accountSummary }) {
+export function createSiteAccountSystem({ db, env, publicOrigin, json, bodyJson, clientIp, accountSummary, paymentSystem }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS site_sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,9 +184,7 @@ export function createSiteAccountSystem({ db, env, publicOrigin, json, bodyJson,
     });
   }
   function paymentMethods() {
-    return db.prepare('SELECT code,name,enabled,pay_url,instructions FROM payment_methods WHERE enabled=1 ORDER BY code').all().map((row) => ({
-      code: row.code, name: row.name, payUrl: row.pay_url || '', instructions: row.instructions || '',
-    }));
+    return paymentSystem.list(true);
   }
   function orderPublic(row) {
     if (!row) return null;
@@ -194,7 +192,8 @@ export function createSiteAccountSystem({ db, env, publicOrigin, json, bodyJson,
     try { snapshot = JSON.parse(row.plan_snapshot_json || '{}'); } catch {}
     return { id: row.id, planCode: row.plan_code, paymentMethod: row.payment_method, amountCents: row.amount_cents,
       status: row.status, payUrl: row.pay_url || '', createdAt: row.created_at, expiresAt: row.expires_at,
-      paidAt: row.paid_at, membershipId: row.membership_id, planSnapshot: snapshot };
+      paidAt: row.paid_at, membershipId: row.membership_id, planSnapshot: snapshot,
+      payment: row.payment_method === 'usdt' ? paymentSystem.orderPaymentDetails(row.id) : null };
   }
   function listOrders(userId) {
     return db.prepare('SELECT * FROM membership_orders WHERE user_id=? ORDER BY id DESC LIMIT 20').all(userId).map(orderPublic);
@@ -336,11 +335,14 @@ export function createSiteAccountSystem({ db, env, publicOrigin, json, bodyJson,
         try { benefits = JSON.parse(plan.benefits_json || '[]'); } catch {}
         const snapshot = { code: plan.code, name: plan.name, priceCents: plan.price_cents, durationDays: plan.duration_days,
           maxDevices: plan.max_devices, maxWindows: plan.max_windows, benefits };
-        const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+        const usdtQuote = method.code === 'usdt' ? paymentSystem.usdtQuote(plan.code) : null;
+        const ttlMs = method.code === 'usdt' ? paymentSystem.usdtOrderTtlMs() : 30 * 60 * 1000;
+        const expiresAt = new Date(Date.now() + ttlMs).toISOString();
         const result = db.prepare(`INSERT INTO membership_orders(user_id,plan_code,payment_method,amount_cents,status,pay_url,created_at,expires_at,plan_snapshot_json)
           VALUES(?,?,?,?, 'pending',?,?,?,?)`).run(session.user_id, plan.code, method.code, plan.price_cents,
             method.pay_url || '', nowIso(), expiresAt, JSON.stringify(snapshot));
         const order = db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(result.lastInsertRowid));
+        if (usdtQuote) paymentSystem.attachUsdtOrder(order.id, usdtQuote);
         return json(res, 201, { ok: true, order: orderPublic(order), instructions: method.instructions || '' }), true;
       }
       const orderMatch = url.pathname.match(/^\/site\/api\/account\/orders\/(\d+)$/);
@@ -355,7 +357,7 @@ export function createSiteAccountSystem({ db, env, publicOrigin, json, bodyJson,
       }
       return false;
     } catch (error) {
-      if (error instanceof SiteAccountError) {
+      if (error instanceof SiteAccountError || (error?.status && error?.code)) {
         json(res, error.status, { ok: false, error: { code: error.code, message: error.message } });
         return true;
       }
