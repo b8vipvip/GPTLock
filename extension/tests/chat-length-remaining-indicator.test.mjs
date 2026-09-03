@@ -52,7 +52,7 @@ test('learned real ChatGPT thread boundary remains more conservative than the lo
   });
   assert.equal(result.source, 'learned-chatgpt-thread-boundary');
   assert.equal(result.metricCount, 3);
-  assert.equal(result.percent, 30);
+  assert.ok(Math.abs(result.percent - 30) < 1e-9);
 });
 
 test('chat length display no longer waits for or consumes private remainingPercent', () => {
