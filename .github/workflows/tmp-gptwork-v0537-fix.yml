@@ -1,0 +1,239 @@
+name: Temporary GPTWork v0.5.37 Fix
+
+on:
+  push:
+    branches:
+      - fix/gptwork-assets-chat-length-v0537-20260903
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'chore: stage GPTWork v0.5.37 patch workflow'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/gptwork-assets-chat-length-v0537-20260903
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Apply GPTWork asset and chat-length fixes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'expected block missing in {path}: {old[:120]!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          # Future GitHub Release assets are GPTWork-only.
+          replace_once('.github/workflows/release.yml', '''      - name: Add legacy download aliases for pre-GPTWork clients
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cp "dist/gptwork-core-${RELEASE_VERSION}-linux-x64.tar.gz" "dist/gptlock-core-${RELEASE_VERSION}-linux-x64.tar.gz"
+          cp "dist/gptwork-extension-${RELEASE_VERSION}.zip" "dist/gptlock-extension-${RELEASE_VERSION}.zip"
+          cp "dist/gptwork_${RELEASE_VERSION}_amd64.deb" "dist/gptlock_${RELEASE_VERSION}_amd64.deb"
+''', '')
+          replace_once('.github/workflows/release.yml', '''      - name: Add legacy Windows installer alias for pre-GPTWork clients
+        shell: pwsh
+        run: Copy-Item -LiteralPath 'dist\\windows\\GPTWorkSetup-x64.exe' -Destination 'dist\\windows\\GPTLockSetup-x64.exe' -Force
+''', '')
+          replace_once('.github/workflows/release.yml', '''          path: |
+            dist/windows/GPTWorkSetup-x64.exe
+            dist/windows/GPTLockSetup-x64.exe
+''', '''          path: dist/windows/GPTWorkSetup-x64.exe
+''')
+
+          replace_once('extension/update-manager.js', "export const LEGACY_WINDOWS_INSTALLER_NAME = 'GPTLockSetup-x64.exe';\n", '')
+          replace_once('extension/update-manager.js', '''  const installerAsset = Array.isArray(release.assets)
+    ? (release.assets.find((asset) => asset?.name === WINDOWS_INSTALLER_NAME)
+      || release.assets.find((asset) => asset?.name === LEGACY_WINDOWS_INSTALLER_NAME))
+    : null;
+''', '''  const installerAsset = Array.isArray(release.assets)
+    ? release.assets.find((asset) => asset?.name === WINDOWS_INSTALLER_NAME)
+    : null;
+''')
+
+          replace_once('packaging/linux/update.sh', '''preferred = f"gptwork_{version}_amd64.deb"
+legacy = f"gptlock_{version}_amd64.deb"
+if preferred in assets:
+    name = preferred
+elif legacy in assets:
+    name = legacy
+else:
+    candidates = sorted(name for name in assets if (name.startswith("gptwork_") or name.startswith("gptlock_")) and name.endswith("_amd64.deb"))
+    if not candidates:
+        raise SystemExit("official mirrored release does not contain a Linux amd64 package")
+    name = candidates[-1]
+''', '''preferred = f"gptwork_{version}_amd64.deb"
+if preferred not in assets:
+    raise SystemExit("official mirrored release does not contain the GPTWork Linux amd64 package")
+name = preferred
+''')
+
+          # Avoid an infinite “计算中” state: if the conversation-tree endpoint is unavailable,
+          # collect the visible active conversation DOM and still delegate all numeric math to the private engine.
+          authority_path = Path('extension/private-context-budget-authority.js')
+          authority = authority_path.read_text(encoding='utf-8')
+          marker = '''  function sourceIsFresh(source, maxAgeMs = MAX_SOURCE_AGE_MS) {
+'''
+          insert = '''  function pageConversationKey() {
+    const snapshot = globalThis.__GPTLOCK_CONTEXT_BUDGET__?.snapshot?.();
+    if (snapshot?.conversationKey) return String(snapshot.conversationKey);
+    try {
+      const url = new URL(location.href);
+      const conversationId = url.pathname.match(/(?:^|\\/)c\\/([a-zA-Z0-9_-]+)/)?.[1] || null;
+      return conversationId ? `conversation:${conversationId}` : `page:${url.pathname}`;
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  function pageModel() {
+    const snapshot = globalThis.__GPTLOCK_CONTEXT_BUDGET__?.snapshot?.();
+    if (snapshot?.model) return String(snapshot.model);
+    const evidence = globalThis.__GPTLOCK_PAGE_MODEL_EVIDENCE__?.collect?.();
+    return typeof evidence?.model === 'string' ? evidence.model : null;
+  }
+
+  function domHistorySnapshot() {
+    const history = [];
+    const seen = new Set();
+    const push = (element, mediaRoot = element) => {
+      if (!element || history.length >= MAX_PARTS) return;
+      const key = mediaRoot || element;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const text = textOf(element).trim();
+      const media = mediaCounts(mediaRoot);
+      if (!text && media.images === 0 && media.attachments === 0) return;
+      history.push(normalizePart({ text, ...media }));
+    };
+
+    for (const element of document.querySelectorAll('[data-message-author-role]')) {
+      const turn = element.closest('article[data-testid^="conversation-turn-"]') || element;
+      push(element, turn);
+    }
+    if (!history.length) {
+      for (const turn of document.querySelectorAll('article[data-testid^="conversation-turn-"]')) push(turn, turn);
+    }
+    if (!history.length) return null;
+    return {
+      conversationKey: pageConversationKey(),
+      model: pageModel(),
+      measuredAt: new Date().toISOString(),
+      history,
+      coverage: 'dom-visible-fallback',
+    };
+  }
+
+'''
+          if marker not in authority:
+              raise SystemExit('private authority insertion marker missing')
+          authority = authority.replace(marker, insert + marker, 1)
+          authority = authority.replace('''      const source = globalThis.__GPTLOCK_CONTEXT_BUDGET__?.privateHistorySnapshot?.();
+''', '''      const source = globalThis.__GPTLOCK_CONTEXT_BUDGET__?.privateHistorySnapshot?.() || domHistorySnapshot();
+''', 1)
+          authority = authority.replace('''    const source = refreshHistory && typeof legacy.refreshPrivateHistory === 'function'
+      ? await legacy.refreshPrivateHistory()
+      : legacy.privateHistorySnapshot?.();
+    const maxAgeMs = refreshHistory ? 5_000 : MAX_SOURCE_AGE_MS;
+    if (!source || !sourceIsFresh(source, maxAgeMs) || !Array.isArray(source.history) || !source.history.length) return null;
+''', '''    let source = refreshHistory && typeof legacy.refreshPrivateHistory === 'function'
+      ? await legacy.refreshPrivateHistory()
+      : legacy.privateHistorySnapshot?.();
+    const maxAgeMs = refreshHistory ? 5_000 : MAX_SOURCE_AGE_MS;
+    if (!source || !sourceIsFresh(source, maxAgeMs) || !Array.isArray(source.history) || !source.history.length) {
+      source = domHistorySnapshot();
+    }
+    if (!source || !sourceIsFresh(source, MAX_SOURCE_AGE_MS) || !Array.isArray(source.history) || !source.history.length) return null;
+''', 1)
+          authority = authority.replace('''      const evaluatedAt = new Date().toISOString();
+      api.state = {
+''', '''      const evaluatedAt = new Date().toISOString();
+      const coverage = input.source.coverage || 'conversation-tree';
+      api.state = {
+''', 1)
+          authority = authority.replace("        coverage: 'conversation-tree',\n", "        coverage,\n", 1)
+          authority = authority.replace("          coverage: 'conversation-tree',\n", "          coverage,\n", 1)
+          authority_path.write_text(authority, encoding='utf-8')
+
+          replace_once('extension/chat-length-remaining-indicator.js', '''    const error = String(authority?.error || '').trim();
+    const unavailable = Boolean(error && error !== 'full_history_unavailable');
+''', '''    const error = String(authority?.error || '').trim();
+    const unavailable = Boolean(error);
+''')
+
+          replace_once('extension/tests/private-context-authority-integration.test.mjs', '''const [manifestText, budgetText, packageText] = await Promise.all([
+  readFile(new URL('../manifest.json', import.meta.url), 'utf8'),
+  readFile(new URL('../context-budget.js', import.meta.url), 'utf8'),
+  readFile(new URL('../package.json', import.meta.url), 'utf8'),
+]);
+''', '''const [manifestText, budgetText, authorityText, packageText] = await Promise.all([
+  readFile(new URL('../manifest.json', import.meta.url), 'utf8'),
+  readFile(new URL('../context-budget.js', import.meta.url), 'utf8'),
+  readFile(new URL('../private-context-budget-authority.js', import.meta.url), 'utf8'),
+  readFile(new URL('../package.json', import.meta.url), 'utf8'),
+]);
+''')
+          p = Path('extension/tests/private-context-authority-integration.test.mjs')
+          text = p.read_text(encoding='utf-8')
+          text += '''\n\ntest('private authority falls back to visible conversation DOM when the conversation-tree endpoint is unavailable', () => {\n  assert.match(authorityText, /function domHistorySnapshot\\(\\)/);\n  assert.match(authorityText, /data-message-author-role/);\n  assert.match(authorityText, /dom-visible-fallback/);\n  assert.match(authorityText, /privateHistorySnapshot\\?\\.\\(\\) \\|\\| domHistorySnapshot\\(\\)/);\n  assert.match(authorityText, /source = domHistorySnapshot\\(\\)/);\n});\n'''
+          p.write_text(text, encoding='utf-8')
+
+          p = Path('extension/tests/chat-length-remaining-indicator.test.mjs')
+          text = p.read_text(encoding='utf-8')
+          text += '''\n\ntest('missing full-history input does not leave the indicator stuck on calculating forever', () => {\n  const state = indicator.selectDisplayState({\n    snapshot: { conversationKey: 'conversation:1', model: 'gpt-5.6-sol' },\n    authority: { available: false, error: 'full_history_unavailable' },\n  });\n  assert.equal(state.status, 'unavailable');\n  assert.equal(state.percent, null);\n});\n'''
+          p.write_text(text, encoding='utf-8')
+
+          replace_once('extension/tests/gptwork-brand.test.mjs', '''test('compatibility contracts remain available during rename transition', () => {
+  assert.match(read('extension/update-manager.js'), /LEGACY_WINDOWS_INSTALLER_NAME = 'GPTLockSetup-x64\\.exe'/);
+  assert.match(read('extension/manifest.json'), /https:\\/\\/gptlock\\.mv3\\.cn\\/\\*/);
+  assert.match(read('native-core/src/lib.rs'), /com\\.gptlock\\.core/);
+});
+''', '''test('future release artifacts use GPTWork names while protocol compatibility identifiers remain stable', () => {
+  const release = read('.github/workflows/release.yml');
+  assert.match(release, /gptwork-core-\\$\\{RELEASE_VERSION\\}-linux-x64\\.tar\\.gz/);
+  assert.match(release, /gptwork-extension-\\$\\{RELEASE_VERSION\\}\\.zip/);
+  assert.match(release, /GPTWorkSetup-x64\\.exe/);
+  assert.doesNotMatch(release, /GPTLockSetup-x64\\.exe|gptlock-core-\\$\\{RELEASE_VERSION\\}|gptlock-extension-\\$\\{RELEASE_VERSION\\}|gptlock_\\$\\{RELEASE_VERSION\\}_amd64\\.deb/);
+  assert.doesNotMatch(read('extension/update-manager.js'), /LEGACY_WINDOWS_INSTALLER_NAME|GPTLockSetup-x64\\.exe/);
+  assert.doesNotMatch(read('packaging/linux/update.sh'), /gptlock_\\{version\\}_amd64\\.deb/);
+  assert.match(read('extension/manifest.json'), /https:\\/\\/gptlock\\.mv3\\.cn\\/\\*/);
+  assert.match(read('native-core/src/lib.rs'), /com\\.gptlock\\.core/);
+});
+''')
+
+          # Formal v0.5.37 version bump.
+          manifest_path = Path('extension/manifest.json')
+          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+          manifest['version'] = '0.5.37'
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          package_path = Path('extension/package.json')
+          package = json.loads(package_path.read_text(encoding='utf-8'))
+          package['version'] = '0.5.37'
+          package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          replace_once('native-core/Cargo.toml', 'version = "0.5.36"\n', 'version = "0.5.37"\n')
+          PY
+
+          cargo generate-lockfile --manifest-path native-core/Cargo.toml
+          cargo metadata --locked --no-deps --manifest-path native-core/Cargo.toml >/dev/null
+          rm -f .github/workflows/tmp-gptwork-v0537-fix.yml
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: finalize GPTWork assets and chat length v0.5.37'
+          git push origin HEAD:fix/gptwork-assets-chat-length-v0537-20260903
