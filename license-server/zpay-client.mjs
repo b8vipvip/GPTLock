@@ -9,7 +9,7 @@ function cleanEntries(input) {
   return entries
     .filter(([key, value]) => key !== 'sign' && key !== 'sign_type' && value !== null && value !== undefined && String(value) !== '')
     .map(([key, value]) => [String(key), String(value)])
-    .sort(([a], [b]) => a.localeCompare(b, 'en'));
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 export function zpaySign(input, key) {
