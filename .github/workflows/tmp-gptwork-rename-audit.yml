@@ -1,4 +1,4 @@
-name: Temporary GPTWork Rename Audit
+name: Temporary GPTWork Rename Migration
 
 on:
   push:
@@ -6,23 +6,490 @@ on:
       - refactor/gptwork-unified-brand-20260903
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  audit:
+  migrate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Find legacy GPTLock identifiers
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Rename product to GPTWork with compatibility preservation
         shell: bash
         run: |
           set -Eeuo pipefail
-          echo '===== FILES ====='
-          git grep -I -l -E 'GPTLock|GPTLOCK|gptlock|GptLock|com\.gptlock' -- ':!*.png' ':!*.jpg' ':!*.jpeg' ':!*.gif' ':!*.ico' | sort || true
-          echo '===== COUNTS BY TOKEN ====='
-          for token in GPTLock GPTLOCK gptlock GptLock com.gptlock; do
-            count="$(git grep -I -o -F "$token" -- ':!*.png' ':!*.jpg' ':!*.jpeg' ':!*.gif' ':!*.ico' 2>/dev/null | wc -l | tr -d ' ')"
-            echo "$token=$count"
-          done
-          echo '===== MATCHES ====='
-          git grep -I -n -E 'GPTLock|GPTLOCK|gptlock|GptLock|com\.gptlock' -- ':!*.png' ':!*.jpg' ':!*.jpeg' ':!*.gif' ':!*.ico' || true
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+
+          root = Path('.')
+          tracked = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+          binary_suffixes = {'.png', '.jpg', '.jpeg', '.gif', '.ico', '.exe', '.deb', '.gz', '.zip'}
+          artifact_replacements = [
+              ('gptlock-private-engine', 'gptwork-private-engine'),
+              ('gptlock_private_engine', 'gptwork_private_engine'),
+              ('gptlock-license-server', 'gptwork-license-server'),
+              ('gptlock-extension', 'gptwork-extension'),
+              ('gptlock-core', 'gptwork-core'),
+              ('gptlock_core', 'gptwork_core'),
+              ('gptlock-engine', 'gptwork-engine'),
+              ('gptlock-update', 'gptwork-update'),
+              ('GptLock', 'GptWork'),
+          ]
+
+          for name in tracked:
+              if not name:
+                  continue
+              path = Path(name)
+              if path.suffix.lower() in binary_suffixes:
+                  continue
+              try:
+                  text = path.read_text(encoding='utf-8-sig')
+              except (UnicodeDecodeError, OSError):
+                  continue
+              original = text
+              text = text.replace('GPTLock', 'GPTWork')
+              text = re.sub(r'(?<![A-Za-z0-9_])GPTLOCK(?![A-Za-z0-9_-])', 'GPTWORK', text)
+              for old, new in artifact_replacements:
+                  text = text.replace(old, new)
+              # The GitHub repository slug is infrastructure and has not been renamed yet.
+              text = text.replace('b8vipvip/GPTWork', 'b8vipvip/GPTLock')
+              if text != original:
+                  path.write_text(text, encoding='utf-8')
+
+          renames = {
+              'packaging/windows/GPTLock.iss': 'packaging/windows/GPTWork.iss',
+              'packaging/windows/Install-GPTLock.ps1': 'packaging/windows/Install-GPTWork.ps1',
+              'packaging/windows/Repair-GPTLock.ps1': 'packaging/windows/Repair-GPTWork.ps1',
+              'packaging/windows/Update-GPTLock.ps1': 'packaging/windows/Update-GPTWork.ps1',
+              'packaging/linux/gptlock-core.deb.service': 'packaging/linux/gptwork-core.deb.service',
+              'packaging/linux/gptlock-core.service': 'packaging/linux/gptwork-core.service',
+          }
+          for old, new in renames.items():
+              if Path(old).exists():
+                  subprocess.run(['git', 'mv', old, new], check=True)
+
+          def replace_file(path_name, old, new, count=None):
+              path = Path(path_name)
+              text = path.read_text(encoding='utf-8-sig')
+              if old not in text:
+                  raise SystemExit(f'expected text not found in {path_name}: {old[:120]!r}')
+              if count is None:
+                  text = text.replace(old, new)
+              else:
+                  text = text.replace(old, new, count)
+              path.write_text(text, encoding='utf-8')
+
+          # Native Core: new installs use GPTWORK_HOME/~/.gptwork while existing ~/.gptlock
+          # state is reused automatically so device IDs, policies and audit data do not reset.
+          config_path = Path('native-core/src/config.rs')
+          config_text = config_path.read_text(encoding='utf-8')
+          config_text, changed = re.subn(
+              r'    pub fn discover\(\) -> Result<Self> \{.*?\n    \}\n\n    pub fn at',
+              '''    pub fn discover() -> Result<Self> {
+        for variable in ["GPTWORK_HOME", "GPTLOCK_HOME"] {
+            if let Some(override_root) = env::var_os(variable) {
+                if override_root.is_empty() {
+                    bail!("{variable} is empty");
+                }
+                return Ok(Self::at(PathBuf::from(override_root)));
+            }
+        }
+
+        let home = if cfg!(windows) {
+            env::var_os("USERPROFILE").or_else(|| env::var_os("HOME"))
+        } else {
+            env::var_os("HOME")
+        }
+        .context("cannot determine the current user's home directory")?;
+        let home = PathBuf::from(home);
+        let preferred = home.join(".gptwork");
+        let legacy = home.join(".gptlock");
+        let root = if preferred.exists() || !legacy.exists() {
+            preferred
+        } else {
+            legacy
+        };
+        Ok(Self::at(root))
+    }
+
+    pub fn at''',
+              config_text,
+              count=1,
+              flags=re.S,
+          )
+          if changed != 1:
+              raise SystemExit('failed to replace ConfigStore::discover')
+          config_path.write_text(config_text, encoding='utf-8')
+
+          # Private engine: canonical GPTWork executable/env names, with one-way fallback to
+          # the legacy names for in-place upgrades where the old file is still present.
+          engine_path = Path('native-core/src/private_engine.rs')
+          engine_text = engine_path.read_text(encoding='utf-8')
+          engine_text = engine_text.replace(
+              'const PRIVATE_ENGINE_ENV: &str = "GPTLOCK_PRIVATE_ENGINE";',
+              'const PRIVATE_ENGINE_ENV: &str = "GPTWORK_PRIVATE_ENGINE";\nconst LEGACY_PRIVATE_ENGINE_ENV: &str = "GPTLOCK_PRIVATE_ENGINE";',
+          )
+          engine_text, changed = re.subn(
+              r'fn executable_name\(\) -> .*?\nfn usable_file',
+              '''fn executable_name() -> &'static str {
+    if cfg!(windows) {
+        "gptwork-engine.exe"
+    } else {
+        "gptwork-engine"
+    }
+}
+
+fn legacy_executable_name() -> &'static str {
+    if cfg!(windows) {
+        "gptlock-engine.exe"
+    } else {
+        "gptlock-engine"
+    }
+}
+
+fn default_engine_path() -> Result<PathBuf> {
+    let current = env::current_exe().context("resolve current executable")?;
+    let directory = current.parent().context("resolve executable directory")?;
+    let preferred = directory.join(executable_name());
+    let legacy = directory.join(legacy_executable_name());
+    if preferred.is_file() || !legacy.is_file() {
+        Ok(preferred)
+    } else {
+        Ok(legacy)
+    }
+}
+
+pub fn configured_path() -> Result<PathBuf> {
+    for variable in [PRIVATE_ENGINE_ENV, LEGACY_PRIVATE_ENGINE_ENV] {
+        if let Some(value) = env::var_os(variable) {
+            let path = PathBuf::from(value);
+            if path.as_os_str().is_empty() {
+                anyhow::bail!("{variable} is empty");
+            }
+            return Ok(path);
+        }
+    }
+    default_engine_path()
+}
+
+fn usable_file''',
+              engine_text,
+              count=1,
+              flags=re.S,
+          )
+          if changed != 1:
+              raise SystemExit('failed to replace private-engine path compatibility block')
+          engine_path.write_text(engine_text, encoding='utf-8')
+
+          # Windows Setup keeps its stable Inno AppId (upgrade lineage), installs GPTWork
+          # binaries, and explicitly stops both current and legacy process names during upgrade.
+          iss_path = Path('packaging/windows/GPTWork.iss')
+          iss = iss_path.read_text(encoding='utf-8')
+          iss = iss.replace(
+              '  CorePath: String;\n  EnginePath: String;',
+              '  CorePath: String;\n  EnginePath: String;\n  LegacyCorePath: String;\n  LegacyEnginePath: String;',
+          )
+          iss = iss.replace(
+              "  CorePath := PowerShellSingleQuote(ExpandConstant('{app}\\bin\\gptwork-core.exe'));\n  EnginePath := PowerShellSingleQuote(ExpandConstant('{app}\\bin\\gptwork-engine.exe'));",
+              "  CorePath := PowerShellSingleQuote(ExpandConstant('{app}\\bin\\gptwork-core.exe'));\n  EnginePath := PowerShellSingleQuote(ExpandConstant('{app}\\bin\\gptwork-engine.exe'));\n  LegacyCorePath := PowerShellSingleQuote(ExpandConstant('{app}\\bin\\gptlock-core.exe'));\n  LegacyEnginePath := PowerShellSingleQuote(ExpandConstant('{app}\\bin\\gptlock-engine.exe'));",
+          )
+          iss = iss.replace(
+              "'$targets=@([IO.Path]::GetFullPath(''' + CorePath + '''),[IO.Path]::GetFullPath(''' + EnginePath + ''')); ' +",
+              "'$targets=@([IO.Path]::GetFullPath(''' + CorePath + '''),[IO.Path]::GetFullPath(''' + EnginePath + '''),[IO.Path]::GetFullPath(''' + LegacyCorePath + '''),[IO.Path]::GetFullPath(''' + LegacyEnginePath + ''')); ' +",
+          )
+          iss = iss.replace(
+              "Get-Process -Name ''gptwork-core'',''gptwork-engine'' -ErrorAction",
+              "Get-Process -Name ''gptwork-core'',''gptwork-engine'',''gptlock-core'',''gptlock-engine'' -ErrorAction",
+          )
+          iss = iss.replace(
+              "  if FileExists(ExpandConstant('{app}\\bin\\gptwork-core.exe')) or\n     FileExists(ExpandConstant('{app}\\bin\\gptwork-engine.exe')) then",
+              "  if FileExists(ExpandConstant('{app}\\bin\\gptwork-core.exe')) or\n     FileExists(ExpandConstant('{app}\\bin\\gptwork-engine.exe')) or\n     FileExists(ExpandConstant('{app}\\bin\\gptlock-core.exe')) or\n     FileExists(ExpandConstant('{app}\\bin\\gptlock-engine.exe')) then",
+          )
+          install_delete_anchor = 'Type: filesandordirs; Name: "{app}\\extension"\n'
+          if install_delete_anchor not in iss:
+              raise SystemExit('Windows InstallDelete anchor missing')
+          iss = iss.replace(
+              install_delete_anchor,
+              install_delete_anchor
+              + 'Type: files; Name: "{app}\\bin\\gptlock-core.exe"\n'
+              + 'Type: files; Name: "{app}\\bin\\gptlock-engine.exe"\n'
+              + 'Type: files; Name: "{app}\\tools\\Update-GPTLock.ps1"\n'
+              + 'Type: files; Name: "{app}\\tools\\Repair-GPTLock.ps1"\n',
+              1,
+          )
+          iss_path.write_text(iss, encoding='utf-8')
+
+          # Windows update coordinator must also terminate an old GPTLock core that may still
+          # be running while the first GPTWork upgrade is replacing the installation.
+          updater_path = Path('native-core/src/updater.rs')
+          updater = updater_path.read_text(encoding='utf-8')
+          updater = updater.replace(
+              "return @(Get-Process -Name 'gptwork-core' -ErrorAction SilentlyContinue | Where-Object {",
+              "return @(Get-Process -Name 'gptwork-core','gptlock-core' -ErrorAction SilentlyContinue | Where-Object {",
+          )
+          updater_path.write_text(updater, encoding='utf-8')
+
+          # Debian stays package-id `gptlock` for dpkg upgrade continuity, but canonical payload
+          # and release filenames are GPTWork. Compatibility symlinks keep old scripts/services valid.
+          deb_path = Path('packaging/linux/build-deb.sh')
+          deb = deb_path.read_text(encoding='utf-8')
+          deb = deb.replace('$package_root/usr/share/gptlock/extension', '$package_root/usr/share/gptwork/extension')
+          deb = deb.replace(
+              'install -m 0755 "$script_dir/update.sh" "$package_root/usr/bin/gptwork-update"\n',
+              'install -m 0755 "$script_dir/update.sh" "$package_root/usr/bin/gptwork-update"\n'
+              'ln -s gptwork-core "$package_root/usr/bin/gptlock-core"\n'
+              'if [[ -n "$private_engine_path" ]]; then ln -s gptwork-engine "$package_root/usr/bin/gptlock-engine"; fi\n'
+              'ln -s gptwork-update "$package_root/usr/bin/gptlock-update"\n',
+          )
+          deb = deb.replace(
+              'install -m 0644 "$script_dir/gptwork-core.deb.service" "$package_root/usr/lib/systemd/user/gptwork-core.service"\n',
+              'install -m 0644 "$script_dir/gptwork-core.deb.service" "$package_root/usr/lib/systemd/user/gptwork-core.service"\n'
+              'ln -s gptwork-core.service "$package_root/usr/lib/systemd/user/gptlock-core.service"\n',
+          )
+          marker = 'while IFS= read -r file; do\n'
+          if marker not in deb:
+              raise SystemExit('Debian extension copy marker missing')
+          deb = deb.replace(marker, 'ln -s gptwork "$package_root/usr/share/gptlock"\n' + marker, 1)
+          deb = deb.replace('output="$output_dir/gptlock_${version}_${architecture}.deb"', 'output="$output_dir/gptwork_${version}_${architecture}.deb"')
+          deb_path.write_text(deb, encoding='utf-8')
+
+          # Manual Linux install: new installs use ~/.local/share/gptwork while an existing
+          # ~/.local/share/gptlock tree is retained in place. The old service name becomes an alias.
+          install_path = Path('packaging/linux/install.sh')
+          install = install_path.read_text(encoding='utf-8')
+          install = install.replace(
+              'install_dir="$data_home/gptlock/bin"\ninstalled_binary="$install_dir/gptwork-core"\ninstalled_updater="$install_dir/gptwork-update"\ninstalled_extension="$data_home/gptlock/extension"',
+              'preferred_root="$data_home/gptwork"\nlegacy_root="$data_home/gptlock"\n'
+              'if [[ -d "$legacy_root" && ! -e "$preferred_root" ]]; then\n  product_root="$legacy_root"\nelse\n  product_root="$preferred_root"\nfi\n'
+              'install_dir="$product_root/bin"\ninstalled_binary="$install_dir/gptwork-core"\ninstalled_updater="$install_dir/gptwork-update"\ninstalled_extension="$product_root/extension"',
+          )
+          install = install.replace(
+              'install -m 0755 "$script_dir/update.sh" "$installed_updater"\n',
+              'install -m 0755 "$script_dir/update.sh" "$installed_updater"\n'
+              'ln -sfn gptwork-core "$install_dir/gptlock-core"\n'
+              'ln -sfn gptwork-update "$install_dir/gptlock-update"\n',
+          )
+          install = install.replace(
+              'cat >"$systemd_dir/gptwork-core.service" <<EOF',
+              'systemctl --user stop gptlock-core.service 2>/dev/null || true\n'
+              'cat >"$systemd_dir/gptwork-core.service" <<EOF',
+          )
+          install = install.replace(
+              'EOF\n\nif command -v systemctl >/dev/null 2>&1; then\n  if systemctl --user daemon-reload',
+              'EOF\nln -sfn gptwork-core.service "$systemd_dir/gptlock-core.service"\n\nif command -v systemctl >/dev/null 2>&1; then\n  if systemctl --user daemon-reload',
+          )
+          install_path.write_text(install, encoding='utf-8')
+
+          # The source service template is canonical for fresh GPTWork manual installs.
+          service_path = Path('packaging/linux/gptwork-core.service')
+          service = service_path.read_text(encoding='utf-8').replace('/.local/share/gptlock/', '/.local/share/gptwork/')
+          service_path.write_text(service, encoding='utf-8')
+
+          # Linux updater prefers the GPTWork asset/service but accepts the legacy alias so it
+          # also works against transition releases and old mirrors.
+          linux_update_path = Path('packaging/linux/update.sh')
+          linux_update = linux_update_path.read_text(encoding='utf-8')
+          linux_update = linux_update.replace(
+              'preferred = f"gptlock_{version}_amd64.deb"\nif preferred in assets:\n    name = preferred\nelse:\n    candidates = sorted(name for name in assets if name.startswith("gptlock_") and name.endswith("_amd64.deb"))',
+              'preferred = f"gptwork_{version}_amd64.deb"\nlegacy = f"gptlock_{version}_amd64.deb"\n'
+              'if preferred in assets:\n    name = preferred\nelif legacy in assets:\n    name = legacy\nelse:\n    candidates = sorted(name for name in assets if (name.startswith("gptwork_") or name.startswith("gptlock_")) and name.endswith("_amd64.deb"))',
+          )
+          linux_update = linux_update.replace(
+              'systemctl --user try-restart gptwork-core.service 2>/dev/null || true',
+              'systemctl --user try-restart gptwork-core.service 2>/dev/null || systemctl --user try-restart gptlock-core.service 2>/dev/null || true',
+          )
+          linux_update_path.write_text(linux_update, encoding='utf-8')
+
+          # Release: publish canonical GPTWork artifacts and transition aliases so v0.5.35 and
+          # older updaters can still find the exact legacy filenames they know.
+          release_path = Path('.github/workflows/release.yml')
+          release = release_path.read_text(encoding='utf-8')
+          release = release.replace("-name 'gptlock_*_amd64.deb'", "-name 'gptwork_*_amd64.deb'")
+          linux_boundary = '      - name: Enforce Linux release distribution boundary\n'
+          legacy_linux = '''      - name: Add legacy Linux download aliases
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cp "dist/gptwork-core-${RELEASE_VERSION}-linux-x64.tar.gz" "dist/gptlock-core-${RELEASE_VERSION}-linux-x64.tar.gz"
+          cp "dist/gptwork-extension-${RELEASE_VERSION}.zip" "dist/gptlock-extension-${RELEASE_VERSION}.zip"
+          cp "dist/gptwork_${RELEASE_VERSION}_amd64.deb" "dist/gptlock_${RELEASE_VERSION}_amd64.deb"
+'''
+          if linux_boundary not in release:
+              raise SystemExit('release Linux boundary anchor missing')
+          release = release.replace(linux_boundary, legacy_linux + linux_boundary, 1)
+          windows_boundary = '      - name: Enforce Windows release distribution boundary\n'
+          legacy_windows = '''      - name: Add legacy Windows installer alias
+        shell: pwsh
+        run: Copy-Item -LiteralPath 'dist\\windows\\GPTWorkSetup-x64.exe' -Destination 'dist\\windows\\GPTLockSetup-x64.exe' -Force
+'''
+          if windows_boundary not in release:
+              raise SystemExit('release Windows boundary anchor missing')
+          release = release.replace(windows_boundary, legacy_windows + windows_boundary, 1)
+          release = release.replace(
+              '          path: dist/windows/GPTWorkSetup-x64.exe\n',
+              '          path: |\n            dist/windows/GPTWorkSetup-x64.exe\n            dist/windows/GPTLockSetup-x64.exe\n',
+              1,
+          )
+          release_path.write_text(release, encoding='utf-8')
+
+          # CI uses canonical GPTWork Debian artifact names after build-deb was renamed.
+          for ci_name in ['.github/workflows/ci.yml']:
+              p = Path(ci_name)
+              t = p.read_text(encoding='utf-8')
+              t = t.replace("-name 'gptlock_*_amd64.deb'", "-name 'gptwork_*_amd64.deb'")
+              t = t.replace('gptlock_${version}_amd64.deb', 'gptwork_${version}_amd64.deb')
+              p.write_text(t, encoding='utf-8')
+
+          # The extension uses GPTWork as the canonical installer name; accept the legacy asset
+          # as a migration fallback while always saving it under the new filename.
+          update_path = Path('extension/update-manager.js')
+          update = update_path.read_text(encoding='utf-8')
+          update = update.replace(
+              "export const WINDOWS_INSTALLER_NAME = 'GPTWorkSetup-x64.exe';",
+              "export const WINDOWS_INSTALLER_NAME = 'GPTWorkSetup-x64.exe';\nexport const LEGACY_WINDOWS_INSTALLER_NAME = 'GPTLockSetup-x64.exe';",
+          )
+          update = update.replace(
+              "? release.assets.find((asset) => asset?.name === WINDOWS_INSTALLER_NAME)\n    : null;",
+              "? (release.assets.find((asset) => asset?.name === WINDOWS_INSTALLER_NAME)\n      || release.assets.find((asset) => asset?.name === LEGACY_WINDOWS_INSTALLER_NAME))\n    : null;",
+          )
+          update_path.write_text(update, encoding='utf-8')
+
+          # Hide compatibility aliases from the public download page whenever the canonical
+          # GPTWork asset exists; legacy clients still receive them through the API.
+          site_path = Path('license-server/public/site.js')
+          site = site_path.read_text(encoding='utf-8')
+          helper_anchor = 'async function loadReleaseFeed() {\n'
+          helper = '''function canonicalAssetForLegacy(name) {
+            const value = String(name || '');
+            if (value === 'GPTLockSetup-x64.exe') return 'GPTWorkSetup-x64.exe';
+            if (value.startsWith('gptlock-extension-')) return value.replace('gptlock-extension-', 'gptwork-extension-');
+            if (value.startsWith('gptlock-core-')) return value.replace('gptlock-core-', 'gptwork-core-');
+            if (value.startsWith('gptlock_')) return value.replace('gptlock_', 'gptwork_');
+            return '';
+          }
+
+'''
+          if helper_anchor not in site:
+              raise SystemExit('site release feed anchor missing')
+          site = site.replace(helper_anchor, helper + helper_anchor, 1)
+          site = site.replace(
+              '    const assets = node(\'div\', \'asset-row\');\n    for (const asset of release.assets || []) {',
+              "    const assets = node('div', 'asset-row');\n    const releaseAssets = release.assets || [];\n    const releaseAssetNames = new Set(releaseAssets.map((asset) => String(asset?.name || '')));\n    for (const asset of releaseAssets) {\n      const canonical = canonicalAssetForLegacy(asset?.name);\n      if (canonical && releaseAssetNames.has(canonical)) continue;",
+          )
+          site_path.write_text(site, encoding='utf-8')
+
+          # Migration notes make the remaining legacy technical identifiers explicit. They are
+          # compatibility contracts, not the product name, and changing them in-place would lose
+          # sessions, device identity, encrypted settings, or production routing.
+          Path('docs/GPTWORK_MIGRATION.md').write_text('''# GPTWork 品牌迁移 / GPTWork Brand Migration
+
+从本次变更开始，产品、扩展、网站、安装器、可执行文件和发布资产的正式名称统一为 **GPTWork**。
+
+为保证现有安装无损升级，下列旧值暂时作为兼容协议保留，不再代表产品名称：
+
+- GitHub 仓库实际路径 `b8vipvip/GPTLock` 与线上域名 `gptlock.mv3.cn`，在基础设施真正迁移前必须保持可访问。
+- Native Messaging Host ID `com.gptlock.core`，用于已安装浏览器注册表/manifest 的兼容。
+- `GPTLOCK_*` 环境变量、`gptlock*` Chrome storage/localStorage key、Cookie 名和服务端数据库路径，用于保留现有部署与登录状态。
+- `.gptlock` 本地数据目录、设备 ID 派生盐、加密 AAD/密钥派生标签等持久化协议值不可直接改名；新安装优先使用 `GPTWORK_HOME`/`.gptwork`，旧目录会自动继续使用。
+- 过渡发布继续附带旧文件名下载别名，确保旧版自动更新器可以升级到 GPTWork；新界面只展示 GPTWork 正式资产。
+
+这些兼容标识不得用于新的用户可见品牌文案。后续只有在完成数据/服务迁移并验证旧客户端退场后才能删除。
+''', encoding='utf-8')
+
+          # Regression test for the canonical product name and migration contracts.
+          Path('extension/tests/gptwork-brand.test.mjs').write_text('''import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const extensionRoot = path.resolve(here, '..');
+const repoRoot = path.resolve(extensionRoot, '..');
+const read = (relative) => fs.readFileSync(path.join(repoRoot, relative), 'utf8');
+
+test('GPTWork is the canonical product and artifact name', () => {
+  const manifest = JSON.parse(read('extension/manifest.json'));
+  const extensionPackage = JSON.parse(read('extension/package.json'));
+  assert.equal(manifest.name, 'GPTWork');
+  assert.equal(manifest.action.default_title, 'GPTWork');
+  assert.equal(extensionPackage.name, 'gptwork-extension');
+  assert.match(read('native-core/Cargo.toml'), /name = "gptwork-core"/);
+  assert.match(read('private-engine/Cargo.toml'), /name = "gptwork-private-engine"/);
+  assert.match(read('packaging/windows/GPTWork.iss'), /OutputBaseFilename=GPTWorkSetup-x64/);
+  assert.match(read('.github/workflows/release.yml'), /--title "GPTWork \$RELEASE_TAG"/);
+});
+
+test('user-facing surfaces do not expose the former product name', () => {
+  const roots = ['extension', 'license-server/public'];
+  const files = [];
+  for (const rootName of roots) {
+    const root = path.join(repoRoot, rootName);
+    const walk = (directory) => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const full = path.join(directory, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\\.(?:html|css)$/.test(entry.name)) files.push(full);
+      }
+    };
+    walk(root);
+  }
+  for (const file of files) {
+    const source = fs.readFileSync(file, 'utf8');
+    assert.doesNotMatch(source, /GPTLock|(?<![A-Za-z0-9_])GPTLOCK(?![A-Za-z0-9_-])/,
+      `legacy product brand leaked into ${path.relative(repoRoot, file)}`);
+  }
+});
+
+test('transition release keeps legacy download aliases without changing stable infrastructure', () => {
+  const release = read('.github/workflows/release.yml');
+  assert.match(release, /GPTLockSetup-x64\.exe/);
+  assert.match(release, /gptlock-extension-/);
+  assert.match(release, /gptlock-core-/);
+  assert.match(read('extension/update-manager.js'), /LEGACY_WINDOWS_INSTALLER_NAME = 'GPTLockSetup-x64\.exe'/);
+  assert.match(read('extension/manifest.json'), /https:\/\/gptlock\.mv3\.cn\/\*/);
+  assert.match(read('native-core/src/lib.rs'), /com\.gptlock\.core/);
+});
+''', encoding='utf-8')
+
+          # Remove the temporary migration workflow from the final branch.
+          Path('.github/workflows/tmp-gptwork-rename-audit.yml').unlink()
+          PY
+
+          # Cargo package names changed; let Cargo normalize the lockfile root package entry.
+          cargo generate-lockfile --manifest-path native-core/Cargo.toml
+
+          git diff --check
+      - name: Run regression suites
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          (cd extension && npm test)
+          (cd license-server && npm test)
+          cargo fmt --manifest-path native-core/Cargo.toml -- --check
+          cargo test --locked --manifest-path native-core/Cargo.toml
+          cargo fmt --manifest-path private-engine/Cargo.toml -- --check
+          cargo test --manifest-path private-engine/Cargo.toml
+          bash -n packaging/linux/install.sh
+          bash -n packaging/linux/update.sh
+          bash -n packaging/linux/build-deb.sh
+          pwsh -NoProfile -NonInteractive -Command "[void][ScriptBlock]::Create((Get-Content -LiteralPath 'packaging/windows/Install-GPTWork.ps1' -Raw)); [void][ScriptBlock]::Create((Get-Content -LiteralPath 'packaging/windows/Repair-GPTWork.ps1' -Raw)); [void][ScriptBlock]::Create((Get-Content -LiteralPath 'packaging/windows/Update-GPTWork.ps1' -Raw))"
+      - name: Commit GPTWork migration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --stat
+          git commit -m 'refactor: rename product to GPTWork with upgrade compatibility'
+          git push origin HEAD:refactor/gptwork-unified-brand-20260903
