@@ -50,7 +50,7 @@
     }
 
     const error = String(authority?.error || '').trim();
-    const unavailable = Boolean(error && error !== 'full_history_unavailable');
+    const unavailable = Boolean(error);
     return {
       status: unavailable ? 'unavailable' : 'pending',
       percent: null,
