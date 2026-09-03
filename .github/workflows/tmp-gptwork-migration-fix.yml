@@ -1,0 +1,46 @@
+name: Temporary GPTWork Migration Workflow Repair
+
+on:
+  push:
+    branches:
+      - refactor/gptwork-unified-brand-20260903
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Repair embedded target-workflow expression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/tmp-gptwork-rename-audit.yml')
+          text = path.read_text(encoding='utf-8')
+          marker = "          legacy_linux = '''      - name: Add legacy Linux download aliases\n"
+          if marker not in text:
+              raise SystemExit('legacy_linux marker missing')
+          text = text.replace(
+              marker,
+              "          release_version_expression = '$' + '{{ needs.metadata.outputs.version }}'\n"
+              "          legacy_linux = f'''      - name: Add legacy Linux download aliases\n",
+              1,
+          )
+          old = '          RELEASE_VERSION: $' + '{{ needs.metadata.outputs.version }}'
+          new = '          RELEASE_VERSION: {release_version_expression}'
+          if old not in text:
+              raise SystemExit('embedded release expression missing')
+          text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/tmp-gptwork-rename-audit.yml
+          git commit -m 'chore: make GPTWork migration workflow expression-safe'
+          git push origin HEAD:refactor/gptwork-unified-brand-20260903
