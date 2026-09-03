@@ -33,14 +33,18 @@ test('user-facing HTML/CSS no longer exposes legacy product brand', () => {
   }
 });
 
-test('future release artifacts use GPTWork names while protocol compatibility identifiers remain stable', () => {
+test('future release artifacts use exact GPTWork names while protocol compatibility identifiers remain stable', () => {
   const release = read('.github/workflows/release.yml');
-  assert.match(release, /gptwork-core-\$\{RELEASE_VERSION\}-linux-x64\.tar\.gz/);
-  assert.match(release, /gptwork-extension-\$\{RELEASE_VERSION\}\.zip/);
+  const linuxBuilder = read('packaging/linux/build-deb.sh');
+  const linuxUpdater = read('packaging/linux/update.sh');
+  assert.match(release, /GPTWork-core-\$\{RELEASE_VERSION\}-linux-x64\.tar\.gz/);
+  assert.match(release, /GPTWork-extension-\$\{RELEASE_VERSION\}\.zip/);
   assert.match(release, /GPTWorkSetup-x64\.exe/);
+  assert.match(linuxBuilder, /GPTWork_\$\{version\}_\$\{architecture\}\.deb/);
+  assert.match(linuxUpdater, /preferred = f"GPTWork_\{version\}_amd64\.deb"/);
   assert.doesNotMatch(release, /GPTLockSetup-x64\.exe|gptlock-core-\$\{RELEASE_VERSION\}|gptlock-extension-\$\{RELEASE_VERSION\}|gptlock_\$\{RELEASE_VERSION\}_amd64\.deb/);
   assert.doesNotMatch(read('extension/update-manager.js'), /LEGACY_WINDOWS_INSTALLER_NAME|GPTLockSetup-x64\.exe/);
-  assert.doesNotMatch(read('packaging/linux/update.sh'), /gptlock_\{version\}_amd64\.deb/);
+  assert.doesNotMatch(linuxUpdater, /gptlock_\{version\}_amd64\.deb/);
   assert.match(read('extension/manifest.json'), /https:\/\/gptlock\.mv3\.cn\/\*/);
   assert.match(read('native-core/src/lib.rs'), /com\.gptlock\.core/);
 });
