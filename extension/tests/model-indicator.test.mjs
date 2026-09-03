@@ -35,3 +35,13 @@ test('model indicator renders page request and response evidence simultaneously'
   assert.match(source, /updateRow\(button, 'response'/);
   assert.doesNotMatch(source, /candidates\.sort/);
 });
+
+test('base model indicator owns trusted-history rendering so periodic refresh cannot overwrite it with waiting labels', () => {
+  assert.match(source, /gptlock\.trusted-model-status\.v1/);
+  assert.match(source, /__GPTLOCK_MODEL_STATUS_HISTORY__/);
+  assert.match(source, /selectStatus/);
+  assert.match(source, /最近请求/);
+  assert.match(source, /request-history/);
+  assert.match(source, /confirmed-history/);
+  assert.match(source, /storage\.onChanged/);
+});
