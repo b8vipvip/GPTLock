@@ -1,0 +1,36 @@
+name: Temporary ZPAY Integration
+
+on:
+  push:
+    branches:
+      - fix/account-layout-payment-clarity-20260903
+    paths:
+      - .github/workflows/tmp-zpay-integration.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/account-layout-payment-clarity-20260903
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Apply ZPAY integration
+        run: python3 tools/patch_zpay_integration.py
+      - name: Run license server tests
+        working-directory: license-server
+        run: npm test
+      - name: Commit patched sources
+        run: |
+          git config user.name "gptwork-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add license-server
+          git diff --cached --check
+          git commit -m "feat: integrate ZPAY automatic checkout and settlement"
+          git push origin HEAD:fix/account-layout-payment-clarity-20260903
