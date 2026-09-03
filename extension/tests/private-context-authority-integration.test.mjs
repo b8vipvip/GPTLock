@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [manifestText, budgetText, packageText] = await Promise.all([
+const [manifestText, budgetText, authorityText, packageText] = await Promise.all([
   readFile(new URL('../manifest.json', import.meta.url), 'utf8'),
   readFile(new URL('../context-budget.js', import.meta.url), 'utf8'),
+  readFile(new URL('../private-context-budget-authority.js', import.meta.url), 'utf8'),
   readFile(new URL('../package.json', import.meta.url), 'utf8'),
 ]);
 
@@ -21,4 +22,12 @@ test('legacy context guard delegates exact send-time decisions to the private au
   assert.match(budgetText, /authority\.evaluateForSend\(\)/);
   assert.match(budgetText, /refreshPrivateHistory/);
   assert.match(budgetText, /privateHistoryParts/);
+});
+
+test('private authority falls back to visible conversation DOM when the conversation-tree endpoint is unavailable', () => {
+  assert.match(authorityText, /function domHistorySnapshot\(\)/);
+  assert.match(authorityText, /data-message-author-role/);
+  assert.match(authorityText, /dom-visible-fallback/);
+  assert.match(authorityText, /privateHistorySnapshot\?\.\(\) \|\| domHistorySnapshot\(\)/);
+  assert.match(authorityText, /source = domHistorySnapshot\(\)/);
 });
