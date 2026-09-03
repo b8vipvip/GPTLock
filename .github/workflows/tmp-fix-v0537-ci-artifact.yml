@@ -1,0 +1,39 @@
+name: Temporary Fix GPTWork v0.5.37 CI Artifact Path
+
+on:
+  push:
+    branches:
+      - fix/gptwork-assets-chat-length-v0537-20260903
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'chore: fix GPTWork v0.5.37 CI artifact path'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/gptwork-assets-chat-length-v0537-20260903
+          fetch-depth: 0
+      - name: Update CI artifact path and remove temporary workflow
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/workflows/ci.yml')
+          s = p.read_text(encoding='utf-8')
+          old = 'path: dist/linux/gptwork_*_amd64.deb'
+          new = 'path: dist/linux/GPTWork_*_amd64.deb'
+          if old not in s:
+              raise SystemExit('expected old Linux CI artifact path was not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          PY
+          rm -f .github/workflows/tmp-fix-v0537-ci-artifact.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'ci: upload GPTWork Debian artifact'
+          git push origin HEAD:fix/gptwork-assets-chat-length-v0537-20260903
