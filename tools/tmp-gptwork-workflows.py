@@ -19,6 +19,8 @@ TARGETED = [
     ('gptlock-update', 'gptwork-update'),
     ('gptlock-windows-setup', 'gptwork-windows-setup'),
     ('gptlock-linux-deb', 'gptwork-linux-deb'),
+    ('gptlock-release-', 'gptwork-release-'),
+    ('gptlock-repository-housekeeping', 'gptwork-repository-housekeeping'),
     ('GPTLock.iss', 'GPTWork.iss'),
     ('GPTLockSetup-x64.exe', 'GPTWorkSetup-x64.exe'),
     ('GPTLock-Release-Boundary-Inspect', 'GPTWork-Release-Boundary-Inspect'),
