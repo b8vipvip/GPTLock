@@ -81,3 +81,12 @@ test('private calculation errors surface as unavailable instead of waiting forev
   assert.equal(state.status, 'unavailable');
   assert.equal(state.percent, null);
 });
+
+test('missing full-history input does not leave the indicator stuck on calculating forever', () => {
+  const state = indicator.selectDisplayState({
+    snapshot: { conversationKey: 'conversation:1', model: 'gpt-5.6-sol' },
+    authority: { available: false, error: 'full_history_unavailable' },
+  });
+  assert.equal(state.status, 'unavailable');
+  assert.equal(state.percent, null);
+});
