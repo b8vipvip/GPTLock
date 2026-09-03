@@ -9,6 +9,7 @@ test('model status continuity persists trusted evidence but never writes the flo
   assert.match(source, /mergeTrustedEvidence/);
   assert.match(source, /chrome\.storage\.local\.set/);
   assert.doesNotMatch(source, /gptlock-model-indicator-host/);
+  assert.doesNotMatch(source, /shadowRoot/);
   assert.doesNotMatch(source, /querySelector\(.*model-row/);
   assert.doesNotMatch(source, /setRow\(/);
   assert.doesNotMatch(source, /scheduleRender/);
