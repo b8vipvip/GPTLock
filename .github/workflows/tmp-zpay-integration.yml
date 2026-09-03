@@ -22,7 +22,9 @@ jobs:
         with:
           node-version: '24'
       - name: Apply ZPAY integration
-        run: python3 tools/patch_zpay_integration.py
+        run: |
+          python3 tools/patch_zpay_integration.py
+          python3 tools/patch_zpay_test_fix.py
       - name: Run license server tests
         working-directory: license-server
         run: npm test
