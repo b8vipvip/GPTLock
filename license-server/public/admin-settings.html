@@ -49,7 +49,8 @@
         <div class="payment-grid">
           <article>
             <label class="check"><input id="wechatEnabled" type="checkbox"> 启用微信支付</label>
-            <label>HTTPS 支付页 / 二维码地址<input id="wechatUrl" type="url" placeholder="上传二维码后可自动生成"></label>
+            <label>收款模式<select id="wechatProvider"><option value="manual">静态收款码 / 人工确认</option><option value="zpay">ZPAY · 自动回调确认</option></select></label>
+            <label>HTTPS 支付页 / 二维码地址<input id="wechatUrl" type="url" placeholder="静态模式使用；上传二维码后可自动生成"></label>
             <label>付款说明<textarea id="wechatInstructions" rows="3"></textarea></label>
             <label>收款二维码<input id="wechatQrFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
             <div class="inline"><button id="wechatQrUpload" type="button">上传/替换二维码</button><button id="wechatQrDelete" type="button">删除二维码</button></div>
@@ -57,7 +58,8 @@
           </article>
           <article>
             <label class="check"><input id="alipayEnabled" type="checkbox"> 启用支付宝</label>
-            <label>HTTPS 支付页 / 二维码地址<input id="alipayUrl" type="url" placeholder="上传二维码后可自动生成"></label>
+            <label>收款模式<select id="alipayProvider"><option value="manual">静态收款码 / 人工确认</option><option value="zpay">ZPAY · 自动回调确认</option></select></label>
+            <label>HTTPS 支付页 / 二维码地址<input id="alipayUrl" type="url" placeholder="静态模式使用；上传二维码后可自动生成"></label>
             <label>付款说明<textarea id="alipayInstructions" rows="3"></textarea></label>
             <label>收款二维码<input id="alipayQrFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
             <div class="inline"><button id="alipayQrUpload" type="button">上传/替换二维码</button><button id="alipayQrDelete" type="button">删除二维码</button></div>
@@ -75,6 +77,21 @@
             <p id="usdtQrState" class="muted">未检查二维码</p>
           </article>
         </div>
+
+        <div class="section-title"><div><h3>ZPAY 自动收款</h3><p class="muted">兼容易支付协议。商户密钥仅加密保存在服务端；用户创建订单后由 GPTWork 生成订单级签名并 POST 到 ZPAY，异步回调必须通过 MD5 签名、商户 ID、金额、渠道和订单号校验后才自动开通会员。</p></div></div>
+        <div class="grid three">
+          <label class="check"><input id="zpayEnabled" type="checkbox"> 启用 ZPAY 网关</label>
+          <label>ZPAY 商户 ID / PID<input id="zpayPid" autocomplete="off" placeholder="支付渠道 → API安全"></label>
+          <label>ZPAY 商户密钥 / KEY<input id="zpayKey" type="password" autocomplete="new-password" placeholder="留空表示不修改"></label>
+          <label>支付宝渠道 ID / CID（可选）<input id="zpayAlipayCid" autocomplete="off" placeholder="多个用英文逗号分隔；留空随机渠道"></label>
+          <label>微信渠道 ID / CID（可选）<input id="zpayWechatCid" autocomplete="off" placeholder="多个用英文逗号分隔；留空随机渠道"></label>
+        </div>
+        <div class="inline">
+          <button id="saveZpaySettings" type="button" class="primary">保存 ZPAY 配置</button>
+          <button id="testZpayConnection" type="button">测试 ZPAY API</button>
+          <button id="clearZpayCredentials" type="button" class="danger">清除 ZPAY 凭据</button>
+        </div>
+        <p id="zpayState" class="muted">尚未读取 ZPAY 状态</p>
 
         <h3>USDT 套餐价格</h3>
         <p class="muted">为每个会员套餐设置基础 USDT 价格。创建订单时服务端会冻结金额，并可加入不超过 0.000999 USDT 的订单识别尾数，避免多个相同套餐订单同时付款时误匹配。</p>
@@ -98,7 +115,7 @@
         </div>
         <p id="okxState" class="muted">尚未读取 OKX 状态</p>
         <p class="muted">自动流程只在金额、USDT 币种、订单时间窗口以及可用的网络/地址条件匹配，并且 OKX 充值状态达到最终成功时执行。存在多个候选订单时会停止自动开通并要求人工核对。</p>
-        <p class="muted">微信/支付宝静态个人收款码保持“创建订单 → 扫码付款 → 管理员确认实际到账 → 开通会员”，不会因为用户点击“已付款”而自动开通。</p>
+        <p class="muted">微信/支付宝选择“静态收款码”时仍保持人工确认；选择 ZPAY 时只有服务端验证 ZPAY 官方回调签名、商户号、订单号、金额和渠道全部一致后才自动开通。</p>
         <p id="paymentSettingsMessage" class="message"></p>
         <p id="settingsMessage" class="message"></p>
       </section>

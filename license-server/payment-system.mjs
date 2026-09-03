@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
 import { createOkxClient, OKX_DEFAULT_BASE_URL } from './okx-client.mjs';
+import { createZpayClient, centsFromZpayMoney, verifyZpaySignature, zpayMoneyFromCents, zpaySign, ZPAY_SUBMIT_URL } from './zpay-client.mjs';
 
 const MAX_QR_BYTES = 1024 * 1024;
 const MAX_PAYMENT_BODY = 2 * 1024 * 1024;
@@ -142,6 +143,7 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
   let startupTimer = null;
   let checking = false;
   const status = { lastCheckAt: null, lastSuccessAt: null, lastError: '', lastMatchedOrderId: null };
+  const zpayStatus = { lastTestAt: null, lastError: '' };
   const CONFIG_KEY = secret ? createHmac('sha256', secret).update('gptlock-okx-payment-settings:v1').digest() : null;
 
   function ensureRuntimeTables() {
@@ -182,6 +184,20 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
       ) STRICT;
       CREATE UNIQUE INDEX IF NOT EXISTS idx_usdt_payment_dep_id ON usdt_order_payments(okx_deposit_id) WHERE okx_deposit_id<>'';
       CREATE UNIQUE INDEX IF NOT EXISTS idx_usdt_payment_tx_id ON usdt_order_payments(okx_tx_id) WHERE okx_tx_id<>'';
+      CREATE TABLE IF NOT EXISTS zpay_order_payments (
+        order_id INTEGER PRIMARY KEY REFERENCES membership_orders(id) ON DELETE CASCADE,
+        merchant_trade_no TEXT NOT NULL UNIQUE,
+        channel TEXT NOT NULL CHECK(channel IN ('alipay','wxpay')),
+        amount_cents INTEGER NOT NULL CHECK(amount_cents >= 0),
+        client_ip TEXT NOT NULL DEFAULT '',
+        user_agent TEXT NOT NULL DEFAULT '',
+        zpay_trade_no TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'awaiting' CHECK(status IN ('awaiting','settled','error')),
+        paid_at TEXT,
+        last_error TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_zpay_trade_no ON zpay_order_payments(zpay_trade_no) WHERE zpay_trade_no<>'';
     `);
     runtimeReady = true;
   }
@@ -241,6 +257,144 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
     };
   }
 
+  function paymentProvider(code) {
+    if (!['wechat', 'alipay'].includes(code)) return code === 'usdt' ? 'okx' : 'manual';
+    const value = getSetting(`payment_provider_${code}`, 'manual');
+    return value === 'zpay' ? 'zpay' : 'manual';
+  }
+  function cleanChannelIds(value) {
+    const raw = cleanText(value, 240).replace(/\s+/g, '');
+    if (!raw) return '';
+    if (!/^\d+(?:,\d+)*$/.test(raw)) throw Object.assign(new Error('ZPAY 支付渠道 ID 只能填写数字，多个 ID 使用英文逗号分隔'), { status: 400, code: 'INVALID_ZPAY_CID' });
+    return raw;
+  }
+  function zpayConfig() {
+    const pid = getSetting('zpay_pid', '');
+    const key = getSecureSetting('zpay_key');
+    return {
+      enabled: getSetting('zpay_enabled', '0') === '1',
+      configured: Boolean(pid && key),
+      pid,
+      key,
+      pidHint: pid ? `${pid.slice(0, 4)}…${pid.slice(-4)}` : '',
+      alipayCid: getSetting('zpay_alipay_cid', ''),
+      wechatCid: getSetting('zpay_wechat_cid', ''),
+      submitUrl: ZPAY_SUBMIT_URL,
+    };
+  }
+  function zpayChannelForPayment(code) {
+    return code === 'alipay' ? 'alipay' : code === 'wechat' ? 'wxpay' : '';
+  }
+  function zpayAvailableForPayment(code) {
+    if (paymentProvider(code) !== 'zpay') return false;
+    const config = zpayConfig();
+    return Boolean(config.enabled && config.configured && zpayChannelForPayment(code));
+  }
+  function zpayClient() {
+    const config = zpayConfig();
+    if (!config.configured) throw Object.assign(new Error('ZPAY 商户 ID / 商户密钥尚未配置完整'), { status: 409, code: 'ZPAY_NOT_CONFIGURED' });
+    return createZpayClient({ pid: config.pid, key: config.key, fetchImpl });
+  }
+  function createZpayTradeNo(orderId) {
+    const base = `${Date.now()}${String(Number(orderId)).padStart(10, '0')}`;
+    return base.slice(0, 32);
+  }
+  function zpayOrderDetails(orderId) {
+    ensureRuntimeTables();
+    const row = db.prepare('SELECT * FROM zpay_order_payments WHERE order_id=?').get(Number(orderId));
+    if (!row) return null;
+    return {
+      provider: 'zpay', merchantTradeNo: row.merchant_trade_no, tradeNo: row.zpay_trade_no || '',
+      channel: row.channel, status: row.status, paidAt: row.paid_at, lastError: row.last_error || '',
+    };
+  }
+  function prepareOrder(order, context = {}) {
+    if (!order || !['wechat', 'alipay'].includes(order.payment_method) || paymentProvider(order.payment_method) !== 'zpay') return order;
+    ensureRuntimeTables();
+    if (!zpayAvailableForPayment(order.payment_method)) {
+      throw Object.assign(new Error('ZPAY 尚未启用或商户凭据未配置完整'), { status: 409, code: 'ZPAY_NOT_READY' });
+    }
+    const existing = db.prepare('SELECT * FROM zpay_order_payments WHERE order_id=?').get(order.id);
+    if (!existing) {
+      const channel = zpayChannelForPayment(order.payment_method);
+      let tradeNo = createZpayTradeNo(order.id);
+      while (db.prepare('SELECT 1 FROM zpay_order_payments WHERE merchant_trade_no=?').get(tradeNo)) {
+        tradeNo = `${Date.now()}${String(order.id).padStart(10, '0')}`.slice(0, 32);
+      }
+      db.prepare(`INSERT INTO zpay_order_payments(order_id,merchant_trade_no,channel,amount_cents,client_ip,user_agent,updated_at)
+        VALUES(?,?,?,?,?,?,?)`).run(order.id, tradeNo, channel, Number(order.amount_cents), cleanText(context.clientIp, 64), cleanText(context.userAgent, 240), nowIso());
+    }
+    const payUrl = `${publicOrigin}/site/api/zpay/checkout/${order.id}`;
+    db.prepare('UPDATE membership_orders SET pay_url=? WHERE id=?').run(payUrl, order.id);
+    return db.prepare('SELECT * FROM membership_orders WHERE id=?').get(order.id);
+  }
+  function zpayCheckoutParams(orderId) {
+    ensureRuntimeTables();
+    const detail = db.prepare(`SELECT z.*,o.status AS order_status,o.amount_cents,o.plan_snapshot_json
+      FROM zpay_order_payments z JOIN membership_orders o ON o.id=z.order_id WHERE z.order_id=?`).get(Number(orderId));
+    if (!detail) throw Object.assign(new Error('ZPAY 订单不存在'), { status: 404, code: 'ZPAY_ORDER_NOT_FOUND' });
+    if (detail.order_status !== 'pending') throw Object.assign(new Error('该订单已不是待支付状态'), { status: 409, code: 'ORDER_NOT_PENDING' });
+    const config = zpayConfig();
+    if (!config.enabled || !config.configured) throw Object.assign(new Error('ZPAY 当前不可用'), { status: 409, code: 'ZPAY_NOT_READY' });
+    let snapshot = {};
+    try { snapshot = JSON.parse(detail.plan_snapshot_json || '{}'); } catch {}
+    const planName = cleanText(snapshot.name || snapshot.code || '会员', 60).replace(/[<>]/g, '');
+    const params = {
+      pid: config.pid,
+      type: detail.channel,
+      out_trade_no: detail.merchant_trade_no,
+      notify_url: `${publicOrigin}/site/api/zpay/notify`,
+      return_url: `${publicOrigin}/site/api/zpay/return`,
+      name: `GPTWork ${planName} 会员服务`.slice(0, 100),
+      money: zpayMoneyFromCents(detail.amount_cents),
+      param: `order-${detail.order_id}`,
+    };
+    const cid = detail.channel === 'alipay' ? config.alipayCid : config.wechatCid;
+    if (cid) params.cid = cid;
+    params.sign = zpaySign(params, config.key);
+    params.sign_type = 'MD5';
+    return params;
+  }
+  function htmlEscape(value) {
+    return String(value).replace(/[&<>\"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' })[char]);
+  }
+  function writePlain(res, statusCode, value) {
+    const payload = Buffer.from(String(value), 'utf8');
+    res.writeHead(statusCode, { 'content-type': 'text/plain; charset=utf-8', 'content-length': payload.length, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+    res.end(payload);
+  }
+  async function settleZpayCallback(url) {
+    ensureRuntimeTables();
+    const config = zpayConfig();
+    if (!config.configured) throw Object.assign(new Error('ZPAY 凭据未配置'), { status: 503, code: 'ZPAY_NOT_CONFIGURED' });
+    if (!verifyZpaySignature(url.searchParams, config.key)) throw Object.assign(new Error('ZPAY 回调签名校验失败'), { status: 400, code: 'ZPAY_BAD_SIGNATURE' });
+    if (url.searchParams.get('pid') !== config.pid) throw Object.assign(new Error('ZPAY 回调商户 ID 不匹配'), { status: 400, code: 'ZPAY_PID_MISMATCH' });
+    if (url.searchParams.get('trade_status') !== 'TRADE_SUCCESS') throw Object.assign(new Error('ZPAY 回调尚未支付成功'), { status: 409, code: 'ZPAY_NOT_PAID' });
+    const merchantTradeNo = cleanText(url.searchParams.get('out_trade_no'), 32);
+    const detail = db.prepare(`SELECT z.*,o.status AS order_status,o.amount_cents,o.payment_method
+      FROM zpay_order_payments z JOIN membership_orders o ON o.id=z.order_id WHERE z.merchant_trade_no=?`).get(merchantTradeNo);
+    if (!detail) throw Object.assign(new Error('ZPAY 商户订单号不存在'), { status: 404, code: 'ZPAY_ORDER_NOT_FOUND' });
+    const callbackCents = centsFromZpayMoney(url.searchParams.get('money'));
+    if (callbackCents === null || callbackCents !== Number(detail.amount_cents)) throw Object.assign(new Error('ZPAY 回调金额与订单金额不一致'), { status: 400, code: 'ZPAY_AMOUNT_MISMATCH' });
+    if (url.searchParams.get('type') !== detail.channel) throw Object.assign(new Error('ZPAY 回调支付渠道不匹配'), { status: 400, code: 'ZPAY_CHANNEL_MISMATCH' });
+    if (detail.status === 'settled' || detail.order_status === 'paid') return detail.order_id;
+    if (!settleOrderById) throw Object.assign(new Error('会员自动开通回调尚未就绪'), { status: 503, code: 'SETTLEMENT_NOT_READY' });
+    const providerTradeNo = cleanText(url.searchParams.get('trade_no'), 160);
+    try {
+      await Promise.resolve(settleOrderById(detail.order_id, {
+        source: 'zpay_auto', tradeNo: providerTradeNo, merchantTradeNo, channel: detail.channel, amount: url.searchParams.get('money') || '',
+      }));
+      const paidAt = nowIso();
+      db.prepare(`UPDATE zpay_order_payments SET zpay_trade_no=?,status='settled',paid_at=?,last_error='',updated_at=? WHERE order_id=?`)
+        .run(providerTradeNo, paidAt, paidAt, detail.order_id);
+      return detail.order_id;
+    } catch (error) {
+      db.prepare(`UPDATE zpay_order_payments SET status='error',last_error=?,updated_at=? WHERE order_id=?`)
+        .run(cleanText(error?.message || error, 500), nowIso(), detail.order_id);
+      throw error;
+    }
+  }
+
   function method(code, enabledOnly = false) {
     if (!PAYMENT_CODES.has(code)) return null;
     return db.prepare(`SELECT p.*,d.qr_mime,d.qr_blob,d.crypto_asset,d.crypto_network,d.crypto_address,d.crypto_memo
@@ -253,13 +407,16 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
     return Object.fromEntries(rows.map((row) => [row.plan_code, formatUsdtMicros(row.amount_micros)]));
   }
   function publicMethod(row) {
-    const qrConfigured = Boolean(row?.qr_blob && row?.qr_mime);
+    const provider = paymentProvider(row.code);
+    const zpay = provider === 'zpay' ? zpayConfig() : null;
+    const qrConfigured = provider === 'zpay' ? false : Boolean(row?.qr_blob && row?.qr_mime);
     const config = row.code === 'usdt' ? okxConfig() : null;
     return {
       code: row.code,
       name: row.name,
       enabled: Boolean(row.enabled),
-      payUrl: row.pay_url || '',
+      provider,
+      payUrl: provider === 'zpay' ? '' : (row.pay_url || ''),
       instructions: row.instructions || '',
       qrConfigured,
       qrUrl: qrConfigured ? `${publicOrigin}/site/api/payment-qr/${row.code}` : '',
@@ -270,14 +427,15 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
         memo: row.crypto_memo || '',
       } : null,
       planPrices: row.code === 'usdt' ? planPriceMap() : null,
-      autoConfirm: row.code === 'usdt' ? Boolean(config.enabled && config.configured) : false,
+      autoConfirm: row.code === 'usdt' ? Boolean(config.enabled && config.configured) : (provider === 'zpay' ? Boolean(zpay.enabled && zpay.configured) : false),
     };
   }
   function list(enabledOnly = false) {
-    return db.prepare(`SELECT p.*,d.qr_mime,d.qr_blob,d.crypto_asset,d.crypto_network,d.crypto_address,d.crypto_memo
+    const methods = db.prepare(`SELECT p.*,d.qr_mime,d.qr_blob,d.crypto_asset,d.crypto_network,d.crypto_address,d.crypto_memo
       FROM payment_methods p LEFT JOIN payment_method_details d ON d.code=p.code
       ${enabledOnly ? 'WHERE p.enabled=1' : ''}
       ORDER BY CASE p.code WHEN 'wechat' THEN 10 WHEN 'alipay' THEN 20 WHEN 'usdt' THEN 30 ELSE 99 END,p.code`).all().map(publicMethod);
+    return enabledOnly ? methods.filter((item) => item.provider !== 'zpay' || item.autoConfirm) : methods;
   }
   function replyFailure(res, error) {
     json(res, error.status || 500, { ok: false, error: { code: error.code || 'PAYMENT_ERROR', message: error.status ? error.message : '支付配置处理失败' } });
@@ -504,13 +662,52 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
       ...status,
     };
   }
+  function adminZpayPublic() {
+    const config = zpayConfig();
+    return {
+      enabled: config.enabled, configured: config.configured, pidHint: config.pidHint,
+      alipayCid: config.alipayCid, wechatCid: config.wechatCid, submitUrl: config.submitUrl, ...zpayStatus,
+    };
+  }
 
   async function handleAdmin(req, res, url) {
     if (!url.pathname.startsWith('/admin/api/payments')) return false;
     try {
       ensureRuntimeTables();
       if (url.pathname === '/admin/api/payments' && req.method === 'GET') {
-        return json(res, 200, { ok: true, paymentMethods: list(false), okx: adminOkxPublic(), usdtPlanPrices: planPriceMap() }), true;
+        return json(res, 200, { ok: true, paymentMethods: list(false), okx: adminOkxPublic(), zpay: adminZpayPublic(), usdtPlanPrices: planPriceMap() }), true;
+      }
+      if (url.pathname === '/admin/api/payments/zpay' && req.method === 'PUT') {
+        const input = await readJson(req, 128 * 1024);
+        if (input.clearCredentials === true) {
+          setSetting('zpay_pid', '');
+          setSecureSetting('zpay_key', '');
+          setSetting('zpay_enabled', '0');
+        } else {
+          if (input.pid !== undefined) {
+            const pid = cleanText(input.pid, 128);
+            if (pid && !/^[A-Za-z0-9]+$/.test(pid)) throw Object.assign(new Error('ZPAY 商户 ID 格式无效'), { status: 400, code: 'INVALID_ZPAY_PID' });
+            setSetting('zpay_pid', pid);
+          }
+          if (input.key !== undefined && String(input.key)) setSecureSetting('zpay_key', String(input.key).slice(0, 512));
+          if (input.enabled !== undefined) setSetting('zpay_enabled', input.enabled ? '1' : '0');
+        }
+        if (input.alipayCid !== undefined) setSetting('zpay_alipay_cid', cleanChannelIds(input.alipayCid));
+        if (input.wechatCid !== undefined) setSetting('zpay_wechat_cid', cleanChannelIds(input.wechatCid));
+        zpayStatus.lastError = '';
+        return json(res, 200, { ok: true, zpay: adminZpayPublic() }), true;
+      }
+      if (url.pathname === '/admin/api/payments/zpay/test' && req.method === 'POST') {
+        try {
+          const result = await zpayClient().queryBalance();
+          zpayStatus.lastTestAt = nowIso();
+          zpayStatus.lastError = '';
+          return json(res, 200, { ok: true, connected: true, balance: String(result.balance ?? ''), zpay: adminZpayPublic() }), true;
+        } catch (error) {
+          zpayStatus.lastTestAt = nowIso();
+          zpayStatus.lastError = cleanText(error?.message || error, 500);
+          throw error;
+        }
       }
       const match = url.pathname.match(/^\/admin\/api\/payments\/(wechat|alipay|usdt)$/);
       if (match && req.method === 'PUT') {
@@ -524,6 +721,10 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
         const instructions = input.instructions === undefined ? current.instructions : cleanText(input.instructions, 1000);
         db.prepare('UPDATE payment_methods SET enabled=?,pay_url=?,instructions=?,updated_at=? WHERE code=?')
           .run(enabled, payUrl, instructions, nowIso(), code);
+        if (code !== 'usdt' && input.provider !== undefined) {
+          if (!['manual', 'zpay'].includes(String(input.provider))) throw Object.assign(new Error('支付提供方仅支持 manual 或 zpay'), { status: 400, code: 'INVALID_PAYMENT_PROVIDER' });
+          setSetting(`payment_provider_${code}`, String(input.provider));
+        }
         if (code === 'usdt') {
           const crypto = input.crypto || {};
           const asset = cleanText(crypto.asset || current.crypto_asset || 'USDT', 24).toUpperCase() || 'USDT';
@@ -619,6 +820,41 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
   }
 
   async function handleSite(req, res, url) {
+    const checkoutMatch = url.pathname.match(/^\/site\/api\/zpay\/checkout\/(\d+)$/);
+    if (checkoutMatch && req.method === 'GET') {
+      try {
+        const params = zpayCheckoutParams(Number(checkoutMatch[1]));
+        const nonce = randomBytes(18).toString('base64url');
+        const fields = Object.entries(params).map(([name, value]) => `<input type="hidden" name="${htmlEscape(name)}" value="${htmlEscape(value)}">`).join('');
+        const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>正在前往 ZPAY</title></head><body><main><p>正在前往 ZPAY 安全收银台…</p><form id="zpay" method="post" action="${ZPAY_SUBMIT_URL}">${fields}<button type="submit">继续支付</button></form></main><script nonce="${nonce}">document.getElementById('zpay').submit();</script></body></html>`;
+        const payload = Buffer.from(html, 'utf8');
+        res.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8', 'content-length': payload.length, 'cache-control': 'no-store',
+          'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'none'; form-action https://zpayz.cn; base-uri 'none'; frame-ancestors 'none'`,
+          'referrer-policy': 'no-referrer', 'x-frame-options': 'DENY', 'x-content-type-options': 'nosniff',
+        });
+        res.end(payload);
+      } catch (error) { writePlain(res, error.status || 500, error.status ? error.message : 'ZPAY checkout failed'); }
+      return true;
+    }
+    if (url.pathname === '/site/api/zpay/notify' && req.method === 'GET') {
+      try {
+        await settleZpayCallback(url);
+        writePlain(res, 200, 'success');
+      } catch (error) {
+        logger.warn?.('GPTWork ZPAY notify rejected:', error.code || '', error.message);
+        writePlain(res, error.status || 500, 'fail');
+      }
+      return true;
+    }
+    if (url.pathname === '/site/api/zpay/return' && req.method === 'GET') {
+      let result = 'pending';
+      try { await settleZpayCallback(url); result = 'success'; }
+      catch (error) { logger.warn?.('GPTWork ZPAY return not settled:', error.code || '', error.message); }
+      res.writeHead(302, { location: `${publicOrigin}/account?zpay=${result}`, 'cache-control': 'no-store' });
+      res.end();
+      return true;
+    }
     if (url.pathname === '/site/api/payments' && req.method === 'GET') {
       return json(res, 200, { ok: true, paymentMethods: list(true) }), true;
     }
@@ -650,6 +886,8 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
     usdtQuote,
     attachUsdtOrder,
     orderPaymentDetails,
+    prepareOrder,
+    zpayOrderDetails,
     usdtOrderTtlMs,
     runAutoSettlement,
     attachSettlement,

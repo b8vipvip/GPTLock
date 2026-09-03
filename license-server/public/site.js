@@ -104,6 +104,7 @@ async function initAccount() {
   const dashboard = document.getElementById('accountDashboard');
   const loginCard = document.getElementById('loginCard');
   let config = { plans: [], paymentMethods: [] };
+  const zpayReturn = new URLSearchParams(location.search).get('zpay');
   try { config = await api('/site/api/account/config'); } catch {}
   try {
     const paymentConfig = await api('/site/api/payments');
@@ -116,6 +117,11 @@ async function initAccount() {
       const data = await api('/site/api/account/me');
       loading.classList.add('hidden'); guest.classList.add('hidden'); dashboard.classList.remove('hidden'); loginCard.classList.add('hidden');
       renderAccount(data, config, refresh);
+      if (zpayReturn) {
+        const box = document.getElementById('paymentBox');
+        notice(box, zpayReturn === 'success' ? 'ZPAY 已返回支付成功，会员权益已刷新。' : '已从 ZPAY 返回；如果刚完成付款，请稍候几秒等待异步回调并自动刷新。', zpayReturn === 'success' ? 'good' : '');
+        history.replaceState(null, '', location.pathname);
+      }
       return true;
     } catch (error) {
       loading.classList.add('hidden'); dashboard.classList.add('hidden'); guest.classList.remove('hidden'); loginCard.classList.remove('hidden');
@@ -178,8 +184,8 @@ async function initAccount() {
 }
 
 function paymentMethodLabel(method) {
-  if (method.code === 'wechat') return '微信支付';
-  if (method.code === 'alipay') return '支付宝';
+  if (method.code === 'wechat') return method.provider === 'zpay' ? '微信支付（ZPAY）' : '微信支付';
+  if (method.code === 'alipay') return method.provider === 'zpay' ? '支付宝（ZPAY）' : '支付宝';
   if (method.code === 'usdt') return 'USDT';
   return method.name || method.code;
 }
@@ -226,6 +232,8 @@ function renderPaymentBox(result, method) {
     box.append(node('small', '', method.autoConfirm
       ? '请严格按上方数量、网络与地址付款。服务端会通过 OKX 只读 API 核对金额、网络/地址和订单时间窗口；仅在 OKX 充值状态达到最终成功后自动开通会员。'
       : '当前尚未启用 OKX 自动到账核对；付款后需要管理员确认到账才能开通会员。'));
+  } else if (method.provider === 'zpay') {
+    box.append(node('small', '', '点击“打开支付页面”后将进入 ZPAY 收银台。只有服务端验证 ZPAY 回调签名、商户号、订单号、金额与支付渠道全部一致后，才会自动确认订单并开通会员。'));
   } else {
     box.append(node('small', '', '微信/支付宝静态收款码没有可信服务器回调：付款后订单保持待支付，由管理员核对实际到账并确认后开通会员。'));
   }

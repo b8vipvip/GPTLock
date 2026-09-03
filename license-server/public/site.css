@@ -110,6 +110,9 @@ h1 { font-size: clamp(48px, 6vw, 78px); line-height: .98; letter-spacing: -.065e
 .asset-row { display: flex; flex-wrap: wrap; gap: 9px; }
 .asset-link { padding: 8px 11px; border: 1px solid var(--line); border-radius: 12px; background: #fff; font-size: 13px; font-weight: 700; }
 .account-layout { display: grid; grid-template-columns: .72fr 1.28fr; gap: 22px; align-items: start; }
+.account-layout:has(#loginCard.hidden) { grid-template-columns: minmax(0, 1fr); }
+.account-layout:has(#loginCard.hidden) > .account-card:not(#loginCard) { grid-column: 1 / -1; }
+.account-layout:has(#loginCard.hidden) .form-grid { max-width: 620px; }
 .account-card { border: 1px solid var(--line); background: rgba(255,255,255,.66); border-radius: 28px; padding: 26px; box-shadow: 0 10px 30px rgba(40,44,40,.05); }
 .account-card h2, .account-card h3 { letter-spacing: -.035em; }
 .form-grid { display: grid; gap: 14px; }
@@ -131,10 +134,15 @@ h1 { font-size: clamp(48px, 6vw, 78px); line-height: .98; letter-spacing: -.065e
 .list-main small { display: block; color: var(--muted); overflow-wrap: anywhere; }
 .btn-small { padding: 7px 10px; border-radius: 10px; font-size: 12px; }
 .account-section { margin-top: 26px; padding-top: 22px; border-top: 1px dashed var(--line); }
-.plan-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.plan { padding: 16px; border-radius: 16px; background: var(--paper); }
-.plan strong { display: block; }
-.plan-price { font-size: 24px; font-weight: 900; letter-spacing: -.04em; margin: 8px 0; }
+.plan-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.plan { display: flex; flex-direction: column; gap: 10px; min-height: 210px; padding: 20px; border: 1px solid rgba(23,32,29,.08); border-radius: 20px; background: var(--paper); }
+.plan strong { display: block; font-size: 17px; }
+.plan-price { font-size: 24px; font-weight: 900; letter-spacing: -.04em; margin: 4px 0; }
+.plan small { color: var(--muted); }
+.payment-method-select { width: 100%; margin-top: auto; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.82); color: var(--ink); }
+.plan > .btn { width: 100%; }
+.plan:not(:has(.payment-method-select))::after { content: "支付方式尚未启用，暂不能创建订单"; margin-top: auto; padding: 9px 10px; border-radius: 10px; background: rgba(255,244,200,.82); color: #685a21; font-size: 12px; font-weight: 700; }
+.payment-box { margin-top: 14px; }
 .hidden { display: none!important; }
 .loading { padding: 26px; color: var(--muted); text-align: center; border: 1px dashed var(--line); border-radius: 20px; }
 .site-footer { margin-top: 70px; padding: 36px 0 48px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }

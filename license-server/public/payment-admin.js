@@ -88,6 +88,7 @@ function render(data) {
     if (enabled) enabled.checked = Boolean(method.enabled);
     if (url) url.value = method.payUrl || '';
     if (instructions) instructions.value = method.instructions || '';
+    if (code !== 'usdt' && $(`${code}Provider`)) $(`${code}Provider`).value = method.provider === 'zpay' ? 'zpay' : 'manual';
     renderQrState(code, method);
     if (code === 'usdt') {
       $('usdtNetwork').value = method.crypto?.network || '';
@@ -105,6 +106,18 @@ function render(data) {
   if ($('okxSecretKey')) $('okxSecretKey').value = '';
   if ($('okxPassphrase')) $('okxPassphrase').value = '';
   if ($('okxState')) $('okxState').textContent = okxStatusText(okx);
+  const zpay = data.zpay || {};
+  if ($('zpayEnabled')) $('zpayEnabled').checked = Boolean(zpay.enabled);
+  if ($('zpayPid')) $('zpayPid').value = '';
+  if ($('zpayKey')) $('zpayKey').value = '';
+  if ($('zpayAlipayCid')) $('zpayAlipayCid').value = zpay.alipayCid || '';
+  if ($('zpayWechatCid')) $('zpayWechatCid').value = zpay.wechatCid || '';
+  if ($('zpayState')) {
+    const parts = [zpay.configured ? `凭据已配置${zpay.pidHint ? `（${zpay.pidHint}）` : ''}` : '凭据未配置', zpay.enabled ? '网关已启用' : '网关未启用'];
+    if (zpay.lastTestAt) parts.push(`最近测试 ${new Date(zpay.lastTestAt).toLocaleString()}`);
+    if (zpay.lastError) parts.push(`错误：${zpay.lastError}`);
+    $('zpayState').textContent = parts.join(' · ');
+  }
 }
 
 async function loadPayments(force = false) {
@@ -127,6 +140,7 @@ async function saveMethod(code) {
     enabled: Boolean($(`${code}Enabled`)?.checked),
     payUrl: $(`${code}Url`)?.value.trim() || '',
     instructions: $(`${code}Instructions`)?.value.trim() || '',
+    ...(code !== 'usdt' ? { provider: $(`${code}Provider`)?.value || 'manual' } : {}),
   };
   if (code === 'usdt') {
     body.crypto = {
@@ -162,6 +176,54 @@ async function savePayments() {
   } finally {
     button.disabled = false;
   }
+}
+
+async function saveZpaySettings() {
+  const button = $('saveZpaySettings');
+  button.disabled = true;
+  setMessage('正在加密保存 ZPAY 配置…');
+  try {
+    const body = {
+      enabled: $('zpayEnabled').checked,
+      alipayCid: $('zpayAlipayCid').value.trim(),
+      wechatCid: $('zpayWechatCid').value.trim(),
+      ...($('zpayPid').value.trim() ? { pid: $('zpayPid').value.trim() } : {}),
+      ...($('zpayKey').value ? { key: $('zpayKey').value } : {}),
+    };
+    const data = await api('/admin/api/payments/zpay', { method: 'PUT', body: JSON.stringify(body) });
+    $('zpayPid').value = '';
+    $('zpayKey').value = '';
+    loaded = false;
+    await loadPayments(true);
+    setMessage(data.zpay?.configured ? 'ZPAY 配置已保存。现在可把支付宝/微信的“收款模式”切换为 ZPAY。' : 'ZPAY 基础设置已保存，但商户 ID / 密钥尚未配置完整。', data.zpay?.configured ? 'good' : '');
+  } catch (error) { setMessage(`ZPAY 配置保存失败：${error.message}`, 'bad'); }
+  finally { button.disabled = false; }
+}
+
+async function testZpayConnection() {
+  const button = $('testZpayConnection');
+  button.disabled = true;
+  setMessage('正在读取 ZPAY 商户余额以验证 API 凭据…');
+  try {
+    const data = await api('/admin/api/payments/zpay/test', { method: 'POST', body: '{}' });
+    loaded = false;
+    await loadPayments(true);
+    setMessage(`ZPAY API 连接成功${data.balance !== '' ? `，账户余额 ${data.balance}` : ''}。`, 'good');
+  } catch (error) { setMessage(`ZPAY API 测试失败：${error.message}`, 'bad'); }
+  finally { button.disabled = false; }
+}
+
+async function clearZpayCredentials() {
+  if (!window.confirm('清除服务端保存的 ZPAY 商户 ID 与商户密钥，并关闭 ZPAY 网关？')) return;
+  const button = $('clearZpayCredentials');
+  button.disabled = true;
+  try {
+    await api('/admin/api/payments/zpay', { method: 'PUT', body: JSON.stringify({ clearCredentials: true }) });
+    loaded = false;
+    await loadPayments(true);
+    setMessage('ZPAY 凭据已清除，网关已关闭。', 'good');
+  } catch (error) { setMessage(`清除 ZPAY 凭据失败：${error.message}`, 'bad'); }
+  finally { button.disabled = false; }
 }
 
 async function saveOkxSettings() {
@@ -285,6 +347,9 @@ async function deleteQr(code) {
 }
 
 $('saveAdvancedPayments')?.addEventListener('click', () => void savePayments());
+$('saveZpaySettings')?.addEventListener('click', () => void saveZpaySettings());
+$('testZpayConnection')?.addEventListener('click', () => void testZpayConnection());
+$('clearZpayCredentials')?.addEventListener('click', () => void clearZpayCredentials());
 $('saveOkxSettings')?.addEventListener('click', () => void saveOkxSettings());
 $('testOkxConnection')?.addEventListener('click', () => void testOkxConnection());
 $('checkOkxNow')?.addEventListener('click', () => void checkOkxNow());

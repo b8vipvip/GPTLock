@@ -27,6 +27,11 @@ function legacyDb() {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     PRAGMA foreign_keys=ON;
+    CREATE TABLE app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT;
     CREATE TABLE payment_methods (
       code TEXT PRIMARY KEY CHECK(code IN ('wechat','alipay')),
       name TEXT NOT NULL,
@@ -230,5 +235,76 @@ test('freezes unique USDT amounts and settles only final successful exact OKX de
   assert.equal(db.prepare('SELECT status FROM membership_orders WHERE id=?').get(id2).status, 'paid');
 
   payments.close();
+  db.close();
+});
+
+
+test('ZPAY checkout signs order-specific POST and settles only an exact verified callback', async () => {
+  const db = paymentRuntimeDb();
+  const payments = createPaymentSystem({ db, publicOrigin: 'https://gptlock.example', json, secret: 'test-secret-at-least-thirty-two-characters-long', logger: { warn() {} } });
+  createRuntimeSchema(db);
+  db.exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL) STRICT; INSERT INTO users(id,email) VALUES(1,'buyer@example.com');`);
+
+  let res = responseCapture();
+  await payments.handleAdmin(request('PUT', { enabled: true, pid: '10001', key: 'merchant-secret', alipayCid: '1234' }), res,
+    new URL('https://gptlock.example/admin/api/payments/zpay'));
+  assert.equal(res.status, 200);
+  res = responseCapture();
+  await payments.handleAdmin(request('PUT', { enabled: true, provider: 'zpay', instructions: 'ZPAY 自动确认' }), res,
+    new URL('https://gptlock.example/admin/api/payments/alipay'));
+  assert.equal(res.status, 200);
+  assert.equal(payments.list(true).find((row) => row.code === 'alipay').provider, 'zpay');
+
+  const createdAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  const result = db.prepare(`INSERT INTO membership_orders(user_id,plan_code,payment_method,amount_cents,status,pay_url,created_at,expires_at,plan_snapshot_json)
+    VALUES(1,'monthly','alipay',2900,'pending','',?,?,?)`).run(createdAt, expiresAt, JSON.stringify({ code: 'monthly', name: '月卡' }));
+  let order = db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(result.lastInsertRowid));
+  order = payments.prepareOrder(order, { clientIp: '203.0.113.8', userAgent: 'test' });
+  assert.match(order.pay_url, /\/site\/api\/zpay\/checkout\//);
+
+  const checkoutRes = responseCapture();
+  await payments.handleSite(request('GET'), checkoutRes, new URL(order.pay_url));
+  assert.equal(checkoutRes.status, 200);
+  const checkoutHtml = checkoutRes.body.toString('utf8');
+  assert.match(checkoutHtml, /action="https:\/\/zpayz\.cn\/submit\.php"/);
+  assert.match(checkoutHtml, /name="money" value="29\.00"/);
+  assert.match(checkoutHtml, /name="cid" value="1234"/);
+
+  const detail = payments.zpayOrderDetails(order.id);
+  const settled = [];
+  payments.attachSettlement((orderId, context) => {
+    settled.push({ orderId, context });
+    db.prepare("UPDATE membership_orders SET status='paid',paid_at=? WHERE id=? AND status='pending'").run(new Date().toISOString(), orderId);
+  });
+  payments.close();
+
+  const callback = new URL('https://gptlock.example/site/api/zpay/notify');
+  const params = {
+    pid: '10001', name: 'GPTWork 月卡 会员服务', money: '29.00', out_trade_no: detail.merchantTradeNo,
+    trade_no: 'ZPAY-TRADE-1', param: `order-${order.id}`, trade_status: 'TRADE_SUCCESS', type: 'alipay', sign_type: 'MD5',
+  };
+  const { zpaySign } = await import('../zpay-client.mjs');
+  params.sign = zpaySign(params, 'merchant-secret');
+  for (const [key, value] of Object.entries(params)) callback.searchParams.set(key, value);
+  const notifyRes = responseCapture();
+  await payments.handleSite(request('GET'), notifyRes, callback);
+  assert.equal(notifyRes.status, 200);
+  assert.equal(notifyRes.body.toString(), 'success');
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0].context.source, 'zpay_auto');
+  assert.equal(payments.zpayOrderDetails(order.id).status, 'settled');
+
+  const duplicateRes = responseCapture();
+  await payments.handleSite(request('GET'), duplicateRes, callback);
+  assert.equal(duplicateRes.body.toString(), 'success');
+  assert.equal(settled.length, 1);
+
+  const tampered = new URL(callback);
+  tampered.searchParams.set('money', '0.01');
+  const badRes = responseCapture();
+  await payments.handleSite(request('GET'), badRes, tampered);
+  assert.equal(badRes.status, 400);
+  assert.equal(badRes.body.toString(), 'fail');
   db.close();
 });
