@@ -34,17 +34,10 @@ if not re.fullmatch(r"v\d+(?:\.\d+){1,3}", tag):
     raise SystemExit("official release tag is invalid")
 version = tag[1:]
 assets = {str(item.get("name") or ""): item for item in release.get("assets") or []}
-preferred = f"gptwork_{version}_amd64.deb"
-legacy = f"gptlock_{version}_amd64.deb"
-if preferred in assets:
-    name = preferred
-elif legacy in assets:
-    name = legacy
-else:
-    candidates = sorted(name for name in assets if (name.startswith("gptwork_") or name.startswith("gptlock_")) and name.endswith("_amd64.deb"))
-    if not candidates:
-        raise SystemExit("official mirrored release does not contain a Linux amd64 package")
-    name = candidates[-1]
+preferred = f"GPTWork_{version}_amd64.deb"
+if preferred not in assets:
+    raise SystemExit("official mirrored release does not contain the GPTWork Linux amd64 package")
+name = preferred
 if "SHA256SUMS.txt" not in assets:
     raise SystemExit("official mirrored release does not contain SHA256SUMS.txt")
 

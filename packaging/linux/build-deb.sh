@@ -102,6 +102,6 @@ chmod 0755 "$package_root/DEBIAN"
 chmod 0644 "$package_root/DEBIAN/control"
 
 mkdir -p "$output_dir"
-output="$output_dir/gptwork_${version}_${architecture}.deb"
+output="$output_dir/GPTWork_${version}_${architecture}.deb"
 dpkg-deb --root-owner-group --build "$package_root" "$output"
 echo "$output"

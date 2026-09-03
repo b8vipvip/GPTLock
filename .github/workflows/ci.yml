@@ -277,5 +277,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: gptwork-linux-deb
-          path: dist/linux/gptwork_*_amd64.deb
+          path: dist/linux/GPTWork_*_amd64.deb
           if-no-files-found: error

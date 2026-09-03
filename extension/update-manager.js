@@ -3,7 +3,6 @@ import { appendRuntimeLog } from './runtime-log.js';
 export const RELEASE_API_URL = 'https://gptlock.mv3.cn/site/api/releases';
 export const RELEASES_URL = 'https://gptlock.mv3.cn/releases';
 export const WINDOWS_INSTALLER_NAME = 'GPTWorkSetup-x64.exe';
-export const LEGACY_WINDOWS_INSTALLER_NAME = 'GPTLockSetup-x64.exe';
 export const WINDOWS_DOWNLOAD_FILENAME = 'GPTWork/GPTWorkSetup-x64.exe';
 export const UPDATE_STATUS_KEY = 'gptlockUiUpdateStatus';
 export const RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION = '0.5.24';
@@ -92,8 +91,7 @@ export function parseLatestRelease(rawRelease, currentVersion) {
     throw new Error('Release version is invalid / 发布版本号无效');
   }
   const installerAsset = Array.isArray(release.assets)
-    ? (release.assets.find((asset) => asset?.name === WINDOWS_INSTALLER_NAME)
-      || release.assets.find((asset) => asset?.name === LEGACY_WINDOWS_INSTALLER_NAME))
+    ? release.assets.find((asset) => asset?.name === WINDOWS_INSTALLER_NAME)
     : null;
   const installerSha256 = sha256FromDigest(installerAsset?.digest);
   const installerUrl = secureServerDownloadUrl(installerAsset?.browser_download_url);

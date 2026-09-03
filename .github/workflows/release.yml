@@ -169,30 +169,21 @@ jobs:
             chmod 0755 native-core/target/release/gptwork-engine
             tar_files+=(gptwork-engine)
           fi
-          tar -C native-core/target/release -czf "dist/gptwork-core-${RELEASE_VERSION}-linux-x64.tar.gz" "${tar_files[@]}"
+          tar -C native-core/target/release -czf "dist/GPTWork-core-${RELEASE_VERSION}-linux-x64.tar.gz" "${tar_files[@]}"
           cd extension
-          zip -9 "../dist/gptwork-extension-${RELEASE_VERSION}.zip" *.js *.css *.html manifest.json icons/*.png
-          unzip -l "../dist/gptwork-extension-${RELEASE_VERSION}.zip" | grep -q 'account-client.js'
-          unzip -l "../dist/gptwork-extension-${RELEASE_VERSION}.zip" | grep -q 'auth-gate.js'
-          unzip -l "../dist/gptwork-extension-${RELEASE_VERSION}.zip" | grep -q 'account.html'
-          unzip -l "../dist/gptwork-extension-${RELEASE_VERSION}.zip" | grep -q 'icons/icon128.png'
-      - name: Add legacy download aliases for pre-GPTWork clients
-        env:
-          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cp "dist/gptwork-core-${RELEASE_VERSION}-linux-x64.tar.gz" "dist/gptlock-core-${RELEASE_VERSION}-linux-x64.tar.gz"
-          cp "dist/gptwork-extension-${RELEASE_VERSION}.zip" "dist/gptlock-extension-${RELEASE_VERSION}.zip"
-          cp "dist/gptwork_${RELEASE_VERSION}_amd64.deb" "dist/gptlock_${RELEASE_VERSION}_amd64.deb"
+          zip -9 "../dist/GPTWork-extension-${RELEASE_VERSION}.zip" *.js *.css *.html manifest.json icons/*.png
+          unzip -l "../dist/GPTWork-extension-${RELEASE_VERSION}.zip" | grep -q 'account-client.js'
+          unzip -l "../dist/GPTWork-extension-${RELEASE_VERSION}.zip" | grep -q 'auth-gate.js'
+          unzip -l "../dist/GPTWork-extension-${RELEASE_VERSION}.zip" | grep -q 'account.html'
+          unzip -l "../dist/GPTWork-extension-${RELEASE_VERSION}.zip" | grep -q 'icons/icon128.png'
       - name: Enforce Linux release distribution boundary
         shell: bash
         run: |
           set -Eeuo pipefail
           version="$(python -c 'import json; print(json.load(open("extension/manifest.json"))["version"])')"
-          extension_zip="dist/gptwork-extension-${version}.zip"
-          core_tar="dist/gptwork-core-${version}-linux-x64.tar.gz"
-          deb="$(find dist -maxdepth 1 -type f -name 'gptwork_*_amd64.deb' -print -quit)"
+          extension_zip="dist/GPTWork-extension-${version}.zip"
+          core_tar="dist/GPTWork-core-${version}-linux-x64.tar.gz"
+          deb="$(find dist -maxdepth 1 -type f -name 'GPTWork_*_amd64.deb' -print -quit)"
           test -f "$extension_zip"
           test -f "$core_tar"
           test -n "$deb" && test -f "$deb"
@@ -328,9 +319,6 @@ jobs:
               Remove-Item -LiteralPath $certPath -Force
             }
           }
-      - name: Add legacy Windows installer alias for pre-GPTWork clients
-        shell: pwsh
-        run: Copy-Item -LiteralPath 'dist\windows\GPTWorkSetup-x64.exe' -Destination 'dist\windows\GPTLockSetup-x64.exe' -Force
       - name: Enforce Windows release distribution boundary
         shell: pwsh
         run: |
@@ -357,9 +345,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: release-windows
-          path: |
-            dist/windows/GPTWorkSetup-x64.exe
-            dist/windows/GPTLockSetup-x64.exe
+          path: dist/windows/GPTWorkSetup-x64.exe
           if-no-files-found: error
 
   publish:
