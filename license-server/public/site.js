@@ -37,6 +37,15 @@ function notice(el, message, tone = '') {
   el.className = `notice${tone ? ` ${tone}` : ''}`;
 }
 
+function canonicalAssetForLegacy(name) {
+  const value = String(name || '');
+  if (value === 'GPTLockSetup-x64.exe') return 'GPTWorkSetup-x64.exe';
+  if (value.startsWith('gptlock-extension-')) return value.replace('gptlock-extension-', 'gptwork-extension-');
+  if (value.startsWith('gptlock-core-')) return value.replace('gptlock-core-', 'gptwork-core-');
+  if (value.startsWith('gptlock_')) return value.replace('gptlock_', 'gptwork_');
+  return '';
+}
+
 async function loadReleaseFeed() {
   const data = await api('/site/api/releases');
   const latest = data.releases?.[0];
@@ -65,7 +74,11 @@ async function loadReleaseFeed() {
     card.append(top);
     if (release.notes) card.append(node('div', 'release-notes', release.notes));
     const assets = node('div', 'asset-row');
-    for (const asset of release.assets || []) {
+    const releaseAssets = release.assets || [];
+    const releaseAssetNames = new Set(releaseAssets.map((asset) => String(asset?.name || '')));
+    for (const asset of releaseAssets) {
+      const canonical = canonicalAssetForLegacy(asset?.name);
+      if (canonical && releaseAssetNames.has(canonical)) continue;
       const url = safeHttps(asset.url);
       if (!url) continue;
       const link = node('a', 'asset-link', `${asset.name}${asset.size ? ` · ${sizeText(asset.size)}` : ''}`);
@@ -144,12 +157,12 @@ async function initAccount() {
     const out = document.getElementById('deleteAccountNotice');
     const confirmText = String(form.get('confirmText') || '');
     if (confirmText !== 'DELETE') return notice(out, '请输入 DELETE 确认永久删除账户。', 'error');
-    if (!window.confirm('永久删除 GPTLock 账户与关联数据？此操作不可撤销。')) return;
+    if (!window.confirm('永久删除 GPTWork 账户与关联数据？此操作不可撤销。')) return;
     notice(out, '正在永久删除账户与关联数据…');
     try {
       await api('/site/api/account/delete', { method: 'POST', body: JSON.stringify({ currentPassword: form.get('currentPassword'), confirmText }) });
       event.currentTarget.reset();
-      window.alert('GPTLock 账户与关联数据已删除。');
+      window.alert('GPTWork 账户与关联数据已删除。');
       location.href = '/data-deletion';
     } catch (error) { notice(out, error.message, 'error'); }
   });
@@ -238,7 +251,7 @@ function renderAccount(data, config, refresh) {
   const extensionList = document.getElementById('extensionSessionList'); extensionList.replaceChildren();
   for (const session of data.security?.sessions || []) {
     const row = node('div', 'list-row');
-    const main = node('div', 'list-main'); main.append(node('b', '', `${text(session.platform, '未知平台')} · GPTLock ${text(session.extensionVersion, '未知版本')}`), node('small', '', `最近活动 ${dateText(session.lastSeenAt)}`));
+    const main = node('div', 'list-main'); main.append(node('b', '', `${text(session.platform, '未知平台')} · GPTWork ${text(session.extensionVersion, '未知版本')}`), node('small', '', `最近活动 ${dateText(session.lastSeenAt)}`));
     row.append(main, actionButton('注销', async () => { await api('/site/api/account/sessions/revoke', { method: 'POST', body: JSON.stringify({ sessionId: session.id }) }); await refresh(); }));
     extensionList.append(row);
   }

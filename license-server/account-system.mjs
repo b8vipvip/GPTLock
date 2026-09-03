@@ -27,17 +27,17 @@ const DEFAULT_PLANS = [
   {
     code: 'monthly', name: '月卡 / Monthly', priceCents: 1900, durationDays: 30,
     maxDevices: 3, maxWindows: 3, sortOrder: 10,
-    benefits: ['30 天会员有效期', '最多 3 台设备', '最多 3 个同时窗口', '完整 GPTLock 功能'],
+    benefits: ['30 天会员有效期', '最多 3 台设备', '最多 3 个同时窗口', '完整 GPTWork 功能'],
   },
   {
     code: 'quarterly', name: '季卡 / Quarterly', priceCents: 4900, durationDays: 90,
     maxDevices: 5, maxWindows: 5, sortOrder: 20,
-    benefits: ['90 天会员有效期', '最多 5 台设备', '最多 5 个同时窗口', '完整 GPTLock 功能'],
+    benefits: ['90 天会员有效期', '最多 5 台设备', '最多 5 个同时窗口', '完整 GPTWork 功能'],
   },
   {
     code: 'yearly', name: '年卡 / Yearly', priceCents: 16900, durationDays: 365,
     maxDevices: 10, maxWindows: 10, sortOrder: 30,
-    benefits: ['365 天会员有效期', '最多 10 台设备', '最多 10 个同时窗口', '完整 GPTLock 功能'],
+    benefits: ['365 天会员有效期', '最多 10 台设备', '最多 10 个同时窗口', '完整 GPTWork 功能'],
   },
 ];
 
@@ -587,7 +587,7 @@ export function createAccountSystem({
       username: getSetting('smtp_username', ''),
       password: getSecureSetting('smtp_password'),
       fromEmail: getSetting('smtp_from_email', ''),
-      fromName: getSetting('smtp_from_name', 'GPTLock'),
+      fromName: getSetting('smtp_from_name', 'GPTWork'),
     };
   }
   function smtpConfigured() {
@@ -595,9 +595,9 @@ export function createAccountSystem({
     return Boolean(smtp.host && smtp.fromEmail && (!smtp.username || smtp.password));
   }
   async function deliverCode(user, purpose, code) {
-    const subject = purpose === 'verify_email' ? 'GPTLock 邮箱验证' : 'GPTLock 找回密码';
-    const action = purpose === 'verify_email' ? '完成邮箱验证' : '重置 GPTLock 密码';
-    const text = `您好，\n\n您正在${action}。\n验证码：${code}\n\n验证码 ${EMAIL_CODE_TTL_MINUTES} 分钟内有效，请勿转发给任何人。\n如果不是您本人操作，请忽略本邮件。\n\nGPTLock`;
+    const subject = purpose === 'verify_email' ? 'GPTWork 邮箱验证' : 'GPTWork 找回密码';
+    const action = purpose === 'verify_email' ? '完成邮箱验证' : '重置 GPTWork 密码';
+    const text = `您好，\n\n您正在${action}。\n验证码：${code}\n\n验证码 ${EMAIL_CODE_TTL_MINUTES} 分钟内有效，请勿转发给任何人。\n如果不是您本人操作，请忽略本邮件。\n\nGPTWork`;
     if (TEST_EMAIL_MODE) {
       testOutbox.push({ to: user.email, purpose, subject, text, code, createdAt: nowIso() });
       return;
@@ -833,7 +833,7 @@ export function createAccountSystem({
 
       if (path === '/api/v1/auth/register' && req.method === 'POST') {
         const input = await bodyJson(req);
-        if (!extensionAllowed(req, input.extensionId)) fail(403, 'EXTENSION_NOT_ALLOWED', '只允许官方 GPTLock 扩展注册');
+        if (!extensionAllowed(req, input.extensionId)) fail(403, 'EXTENSION_NOT_ALLOWED', '只允许官方 GPTWork 扩展注册');
         const email = normalizeEmail(input.email);
         if (!isEmail(email) || !passwordValid(input.password)) fail(400, 'INVALID_REGISTRATION', '请输入有效邮箱，密码至少 10 位');
         rateCheck('register-ip', req, EMAIL_IP_MAX, EMAIL_WINDOW_MS);
@@ -878,7 +878,7 @@ export function createAccountSystem({
 
       if (path === '/api/v1/auth/resend-verification' && req.method === 'POST') {
         const input = await bodyJson(req);
-        if (!extensionAllowed(req, input.extensionId)) fail(403, 'EXTENSION_NOT_ALLOWED', '只允许官方 GPTLock 扩展使用');
+        if (!extensionAllowed(req, input.extensionId)) fail(403, 'EXTENSION_NOT_ALLOWED', '只允许官方 GPTWork 扩展使用');
         const email = normalizeEmail(input.email);
         rateCheck('email-ip', req, EMAIL_IP_MAX, EMAIL_WINDOW_MS);
         rateCheck('email', req, EMAIL_MAX, EMAIL_WINDOW_MS, email);
@@ -891,7 +891,7 @@ export function createAccountSystem({
 
       if (path === '/api/v1/auth/verify-email' && req.method === 'POST') {
         const input = await bodyJson(req);
-        if (!extensionAllowed(req, input.extensionId)) fail(403, 'EXTENSION_NOT_ALLOWED', '只允许官方 GPTLock 扩展使用');
+        if (!extensionAllowed(req, input.extensionId)) fail(403, 'EXTENSION_NOT_ALLOWED', '只允许官方 GPTWork 扩展使用');
         const user = userByEmail(input.email);
         if (!user) fail(400, 'CODE_INVALID', '验证码错误或已失效');
         consumeEmailToken(user, 'verify_email', input.code);
@@ -905,7 +905,7 @@ export function createAccountSystem({
 
       if (path === '/api/v1/auth/login' && req.method === 'POST') {
         const input = await bodyJson(req);
-        if (!extensionAllowed(req, input.extensionId)) fail(403, 'EXTENSION_NOT_ALLOWED', '只允许官方 GPTLock 扩展登录');
+        if (!extensionAllowed(req, input.extensionId)) fail(403, 'EXTENSION_NOT_ALLOWED', '只允许官方 GPTWork 扩展登录');
         const email = normalizeEmail(input.email);
         rateCheck('login-ip', req, LOGIN_IP_MAX, LOGIN_WINDOW_MS);
         rateCheck('login', req, LOGIN_MAX, LOGIN_WINDOW_MS, email);
@@ -928,7 +928,7 @@ export function createAccountSystem({
 
       if (path === '/api/v1/auth/forgot-password' && req.method === 'POST') {
         const input = await bodyJson(req);
-        if (!extensionAllowed(req, input.extensionId)) fail(403, 'EXTENSION_NOT_ALLOWED', '只允许官方 GPTLock 扩展使用');
+        if (!extensionAllowed(req, input.extensionId)) fail(403, 'EXTENSION_NOT_ALLOWED', '只允许官方 GPTWork 扩展使用');
         const email = normalizeEmail(input.email);
         rateCheck('reset-email-ip', req, EMAIL_IP_MAX, EMAIL_WINDOW_MS);
         rateCheck('reset-email', req, EMAIL_MAX, EMAIL_WINDOW_MS, email);
@@ -941,7 +941,7 @@ export function createAccountSystem({
 
       if (path === '/api/v1/auth/reset-password' && req.method === 'POST') {
         const input = await bodyJson(req);
-        if (!extensionAllowed(req, input.extensionId)) fail(403, 'EXTENSION_NOT_ALLOWED', '只允许官方 GPTLock 扩展使用');
+        if (!extensionAllowed(req, input.extensionId)) fail(403, 'EXTENSION_NOT_ALLOWED', '只允许官方 GPTWork 扩展使用');
         if (!passwordValid(input.newPassword)) fail(400, 'WEAK_PASSWORD', '新密码至少 10 位');
         const user = userByEmail(input.email);
         if (!user || user.status === 'disabled') fail(400, 'CODE_INVALID', '验证码错误或已失效');
@@ -1039,7 +1039,7 @@ export function createAccountSystem({
           ? input.windowKeys.filter((key) => validId(key, 220)).slice(0, 128) : [])];
         purgeWindowLeases();
         // Window leases are telemetry/liveness records only. Account entitlement may
-        // enable GPTLock, but concurrent Chrome window count is intentionally unlimited.
+        // enable GPTWork, but concurrent Chrome window count is intentionally unlimited.
         const allowed = entitlement.active ? requested : [];
         const now = nowIso();
         db.prepare('DELETE FROM user_window_leases WHERE session_id=?').run(session.id);
@@ -1374,7 +1374,7 @@ export function createAccountSystem({
           if (fromEmail && !isEmail(fromEmail)) fail(400, 'INVALID_SMTP_FROM', '发件邮箱格式无效');
           setSetting('smtp_from_email', fromEmail);
         }
-        if (smtp.fromName !== undefined) setSetting('smtp_from_name', String(smtp.fromName || 'GPTLock').replace(/[\r\n]/g, ' ').slice(0, 120));
+        if (smtp.fromName !== undefined) setSetting('smtp_from_name', String(smtp.fromName || 'GPTWork').replace(/[\r\n]/g, ' ').slice(0, 120));
         if (smtp.password !== undefined && String(smtp.password)) setSecureSetting('smtp_password', String(smtp.password).slice(0, 512));
         if (smtp.clearPassword === true) setSecureSetting('smtp_password', '');
 
@@ -1399,10 +1399,10 @@ export function createAccountSystem({
         const email = normalizeEmail(input.email);
         if (!isEmail(email)) fail(400, 'INVALID_EMAIL', '请输入有效测试邮箱');
         if (TEST_EMAIL_MODE) {
-          testOutbox.push({ to: email, purpose: 'test', subject: 'GPTLock 邮箱配置测试', text: 'SMTP 配置测试成功。', createdAt: nowIso() });
+          testOutbox.push({ to: email, purpose: 'test', subject: 'GPTWork 邮箱配置测试', text: 'SMTP 配置测试成功。', createdAt: nowIso() });
         } else {
           if (!smtpConfigured()) fail(503, 'EMAIL_NOT_CONFIGURED', 'SMTP 尚未完整配置');
-          await sendSmtpMail(smtpConfig(), { to: email, subject: 'GPTLock 邮箱配置测试', text: '如果您收到这封邮件，说明 GPTLock SMTP 配置工作正常。' });
+          await sendSmtpMail(smtpConfig(), { to: email, subject: 'GPTWork 邮箱配置测试', text: '如果您收到这封邮件，说明 GPTWork SMTP 配置工作正常。' });
         }
         return json(res, 200, { ok: true }), true;
       }

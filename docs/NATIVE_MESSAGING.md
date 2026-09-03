@@ -1,6 +1,6 @@
 # 本地组件兼容接口 / Local Core Compatibility
 
-GPTLock 的浏览器端与本地组件通过版本化接口通信。
+GPTWork 的浏览器端与本地组件通过版本化接口通信。
 
 公开文档只保证以下兼容原则：
 
@@ -21,4 +21,4 @@ GPTLock 的浏览器端与本地组件通过版本化接口通信。
 
 ## English
 
-GPTLock exposes a versioned compatibility boundary between the browser client and the released local core. The public contract defines message identity, versioning, bounded inputs/outputs, and stable errors only. Internal policy, verification, learning, and detection algorithms are intentionally outside the public protocol documentation.
+GPTWork exposes a versioned compatibility boundary between the browser client and the released local core. The public contract defines message identity, versioning, bounded inputs/outputs, and stable errors only. Internal policy, verification, learning, and detection algorithms are intentionally outside the public protocol documentation.

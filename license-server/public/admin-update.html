@@ -3,18 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>GPTLock 管理 · 更新</title>
+  <title>GPTWork 管理 · 更新</title>
   <link rel="stylesheet" href="/admin.css">
 </head>
 <body data-admin-page="update">
 <div class="shell">
   <aside class="sidebar">
-    <div class="brand"><span>G</span><div><strong>GPTLock</strong><small>Control Center</small></div></div>
+    <div class="brand"><span>G</span><div><strong>GPTWork</strong><small>Control Center</small></div></div>
     <nav><a href="/admin/overview" data-page="overview">总览</a><a href="/admin/users" data-page="users">用户</a><a href="/admin/plans" data-page="plans">会员</a><a href="/admin/orders" data-page="orders">订单</a><a href="/admin/settings" data-page="settings">系统配置</a><a href="/admin/client-logs" data-page="client-logs">客户端运行日志</a><a href="/admin/server-logs" data-page="server-logs">服务端日志</a><a href="/admin/update" data-page="update" class="active" aria-current="page">更新</a></nav>
     <button id="logout" class="ghost" hidden>退出管理员</button>
   </aside>
   <main class="workspace">
-    <header class="topbar"><div><p>GPTLOCK ADMIN · UPDATE</p><h1>更新</h1></div><span class="security-pill">Account Control</span></header>
+    <header class="topbar"><div><p>GPTWORK ADMIN · UPDATE</p><h1>更新</h1></div><span class="security-pill">Account Control</span></header>
     <section id="login" class="card login-card">
       <h2>管理员登录</h2><p class="muted">后台仅使用独立管理员密码。建议通过 HTTPS + WAF / IP 白名单访问。</p>
       <div class="inline"><input id="password" type="password" autocomplete="current-password" placeholder="管理员密码"><button id="loginButton" class="primary">登录</button></div>
@@ -22,9 +22,9 @@
     </section>
     <div id="app" hidden>
       <section id="update" class="card update-card">
-        <div class="section-title"><div><h2>服务端一键更新</h2><p class="muted">直接从受信任的 GPTLock GitHub 仓库更新服务器：拉取目标分支后先隔离测试，再做 SQLite 在线备份、部署、重启与健康检查；失败会自动回滚。</p></div><button id="updateButton" class="primary">版本更新</button></div>
+        <div class="section-title"><div><h2>服务端一键更新</h2><p class="muted">直接从受信任的 GPTWork GitHub 仓库更新服务器：拉取目标分支后先隔离测试，再做 SQLite 在线备份、部署、重启与健康检查；失败会自动回滚。</p></div><button id="updateButton" class="primary">版本更新</button></div>
         <div class="update-meta"><span>控制面版本 <strong id="serverVersion">—</strong></span><span>提交 <code id="currentCommit">—</code></span><span>更新分支 <code id="targetRef">—</code></span></div>
-        <p class="muted">控制面版本来自 license-server 包版本，与 GPTLock 产品/客户端版本独立；是否已部署最新代码以“提交”SHA 为准。</p>
+        <p class="muted">控制面版本来自 license-server 包版本，与 GPTWork 产品/客户端版本独立；是否已部署最新代码以“提交”SHA 为准。</p>
         <div class="progress-track"><div id="updateProgress" class="progress-bar"></div></div>
         <div class="update-status-row"><strong id="updatePercent">0%</strong><span id="updateMessage">尚未执行版本更新</span></div>
         <p id="updateWarning" class="warning" hidden></p>
@@ -34,7 +34,7 @@
 
       <section id="releaseMirror" class="card update-card">
         <div class="section-title"><div><h2>客户端 Release 镜像</h2><p class="muted">GitHub 正式 Release 会先由服务端下载并校验，再发布到官网。客户端只从官网镜像检查和下载安装包。</p></div><button id="releaseSyncButton" class="primary">立即同步</button></div>
-        <div class="update-meta"><span>GPTLock 产品版本 <strong id="releaseProductVersion">—</strong></span><span>最新镜像 <strong id="releaseLatestVersion">—</strong></span><span>镜像状态 <strong id="releaseMirrorState">等待检查</strong></span><span>最近发布 <strong id="releaseMirroredAt">—</strong></span></div>
+        <div class="update-meta"><span>GPTWork 产品版本 <strong id="releaseProductVersion">—</strong></span><span>最新镜像 <strong id="releaseLatestVersion">—</strong></span><span>镜像状态 <strong id="releaseMirrorState">等待检查</strong></span><span>最近发布 <strong id="releaseMirroredAt">—</strong></span></div>
         <div class="progress-track"><div id="releaseMirrorProgress" class="progress-bar"></div></div>
         <div class="update-status-row"><strong id="releaseMirrorPercent">0%</strong><strong id="releaseSource">local</strong><span id="releaseMirrorMessage">正在读取 Release 镜像状态…</span></div>
         <p id="releaseMirrorWarning" class="warning" hidden></p>

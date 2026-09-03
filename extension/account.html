@@ -3,18 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>GPTLock 账户中心</title>
+  <title>GPTWork 账户中心</title>
   <link rel="stylesheet" href="account.css">
 </head>
 <body>
 <main>
   <header>
-    <div><p class="eyebrow">GPTLOCK ACCOUNT</p><h1>账户中心 <small>Account center</small></h1></div>
+    <div><p class="eyebrow">GPTWORK ACCOUNT</p><h1>账户中心 <small>Account center</small></h1></div>
     <button id="refresh">刷新</button>
   </header>
 
   <section id="notLogged" class="card" hidden>
-    <h2>尚未登录</h2><p>请先从 GPTLock 插件弹窗登录账号。</p>
+    <h2>尚未登录</h2><p>请先从 GPTWork 插件弹窗登录账号。</p>
   </section>
 
   <div id="app" hidden>
@@ -30,7 +30,7 @@
     </section>
 
     <section class="card">
-      <div class="section-title"><div><h2>会员方案</h2><p class="muted">价格与设备权益由服务端统一配置；GPTLock 同时窗口不限。</p></div></div>
+      <div class="section-title"><div><h2>会员方案</h2><p class="muted">价格与设备权益由服务端统一配置；GPTWork 同时窗口不限。</p></div></div>
       <div id="plans" class="plans"></div>
       <p id="orderMessage" class="message"></p>
     </section>
@@ -57,7 +57,7 @@
 
     <section class="card security-note">
       <h2>安全说明</h2>
-      <p>密码仅发送到 GPTLock 服务端验证；服务端使用带随机盐的 scrypt 保存密码摘要。登录会话令牌只保存在本机浏览器存储，不进入 Chrome 同步。</p>
+      <p>密码仅发送到 GPTWork 服务端验证；服务端使用带随机盐的 scrypt 保存密码摘要。登录会话令牌只保存在本机浏览器存储，不进入 Chrome 同步。</p>
     </section>
   </div>
 </main>

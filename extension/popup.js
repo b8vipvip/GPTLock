@@ -269,12 +269,12 @@ function render(state) {
     waiting: ['请求已锁，等待确认 / Waiting', '本次正式请求已进入发送流程，正在等待后端响应元数据确认。', 'wait'],
     preflight_mismatch: ['页面选择不同 / UI differs', '页面文字与策略不同，但页面状态只作辅助；正式请求仍会在网络层尝试锁定。', 'wait'],
     preflight_unknown: ['页面选择未知 / UI unknown', '页面没有暴露完整选择；页面状态不是后端模型证明。', 'wait'],
-    monitor_offline: ['请求锁定器离线 / Interceptor offline', '浏览器调试连接不可用；GPTLock 会告警但不会卡住聊天。', 'wait'],
+    monitor_offline: ['请求锁定器离线 / Interceptor offline', '浏览器调试连接不可用；GPTWork 会告警但不会卡住聊天。', 'wait'],
     verification_disabled: ['请求锁定已启用 / Lock only', '响应确认已关闭；正式请求仍会在发送前尝试锁定。', 'good'],
     core_offline: ['本地核心离线 / Core offline', '请求锁定仍由扩展执行；响应审计不可用，聊天不会被阻断。', 'wait'],
     error: ['响应确认错误 / Verification error', tab?.lastError || 'Verification failed; chat remains available.', 'wait'],
-    outside_scope: ['不适用 / Out of scope', 'GPTLock 仅作用于 chatgpt.com。', 'off'],
-    disabled: ['GPTLock 已关闭 / Disabled', '请求锁定与响应确认均已暂停。', 'off'],
+    outside_scope: ['不适用 / Out of scope', 'GPTWork 仅作用于 chatgpt.com。', 'off'],
+    disabled: ['GPTWork 已关闭 / Disabled', '请求锁定与响应确认均已暂停。', 'off'],
   };
   let [title, detail, tone] = states[guard?.status] || ['无活动状态 / No active state', '请打开 chatgpt.com 后重试。', 'off'];
   if (auto?.running) {
@@ -435,7 +435,7 @@ async function installUpdate() {
         installRoot: prepared?.installRoot ?? null,
       },
     });
-    elements.updateDetail.textContent = `正在后台安装 ${release.latestVersion}；GPTLock Core 会短暂断开并自动恢复`;
+    elements.updateDetail.textContent = `正在后台安装 ${release.latestVersion}；GPTWork Core 会短暂断开并自动恢复`;
     elements.message.textContent = '更新已启动，请保持此弹窗打开；完成后扩展会自动重新加载 / Installing…';
 
     const updatedState = await waitForInstalledCore(release.latestVersion);
@@ -473,10 +473,10 @@ elements.enabled.addEventListener('change', () => {
   elements.enabled.disabled = true;
   elements.message.textContent = elements.enabled.checked
     ? '正在启用请求锁定 / Enabling…'
-    : '正在关闭 GPTLock / Disabling…';
+    : '正在关闭 GPTWork / Disabling…';
   void sendMessage({ type: 'GPTLOCK_SET_ENABLED', enabled: elements.enabled.checked })
     .then(load)
-    .then(() => { elements.message.textContent = elements.enabled.checked ? 'GPTLock 已启用 / Enabled.' : 'GPTLock 已关闭 / Disabled.'; })
+    .then(() => { elements.message.textContent = elements.enabled.checked ? 'GPTWork 已启用 / Enabled.' : 'GPTWork 已关闭 / Disabled.'; })
     .catch((error) => { elements.message.textContent = error.message; })
     .finally(() => { void load(); window.dispatchEvent(new CustomEvent('gptlock-account-refresh')); });
 });

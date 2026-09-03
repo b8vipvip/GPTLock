@@ -77,7 +77,7 @@ function renderSecurity() {
     const copy = document.createElement('div');
     const title = document.createElement('strong'); title.textContent = session.platform || '未知会话';
     if (session.current) { const badge = document.createElement('span'); badge.className = 'mini-badge'; badge.textContent = '当前会话'; title.append(' ', badge); }
-    const meta = document.createElement('p'); meta.textContent = `GPTLock ${session.extensionVersion || '—'} · 最后 ${localDate(session.lastSeenAt)} · 到期 ${localDate(session.expiresAt)}`;
+    const meta = document.createElement('p'); meta.textContent = `GPTWork ${session.extensionVersion || '—'} · 最后 ${localDate(session.lastSeenAt)} · 到期 ${localDate(session.expiresAt)}`;
     copy.append(title, meta); row.append(copy);
     const action = document.createElement('button');
     if (session.current) { action.textContent = '当前会话'; action.disabled = true; }
@@ -125,7 +125,7 @@ async function load() {
 }
 
 async function releaseDevice(device, button) {
-  if (device.current || !confirm(`确认释放设备“${device.platform || '未知设备'}”？该设备上的 GPTLock 登录会话会立即失效。`)) return;
+  if (device.current || !confirm(`确认释放设备“${device.platform || '未知设备'}”？该设备上的 GPTWork 登录会话会立即失效。`)) return;
   const original = button.textContent; button.disabled = true; button.textContent = '释放中…';
   try {
     const data = await sendMessage({ type: 'GPTLOCK_ACCOUNT_RELEASE_DEVICE', deviceRecordId: device.id });
@@ -137,7 +137,7 @@ async function releaseDevice(device, button) {
 }
 
 async function revokeSession(session, button) {
-  if (session.current || !confirm('确认退出这个 GPTLock 登录会话？')) return;
+  if (session.current || !confirm('确认退出这个 GPTWork 登录会话？')) return;
   const original = button.textContent; button.disabled = true; button.textContent = '退出中…';
   try {
     const data = await sendMessage({ type: 'GPTLOCK_ACCOUNT_REVOKE_SESSION', sessionId: session.id });
@@ -165,7 +165,7 @@ async function createOrder(plan, method, button) {
 }
 
 el.revokeOtherSessions.addEventListener('click', () => {
-  if (!confirm('确认退出除当前会话外的全部 GPTLock 登录会话？')) return;
+  if (!confirm('确认退出除当前会话外的全部 GPTWork 登录会话？')) return;
   el.revokeOtherSessions.disabled = true;
   message(el.securityMessage, '正在退出其它会话…');
   void sendMessage({ type: 'GPTLOCK_ACCOUNT_REVOKE_OTHER_SESSIONS' })

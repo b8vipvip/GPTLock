@@ -13,7 +13,7 @@ curl_official() {
     "$@"
 }
 
-echo "正在从 GPTLock 官网检查更新 / Checking the GPTLock official update service…"
+echo "正在从 GPTWork 官网检查更新 / Checking the GPTWork official update service…"
 feed_json="$temp_dir/releases.json"
 curl_official -H 'Accept: application/json' "$feed_url" -o "$feed_json"
 
@@ -27,18 +27,21 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     feed = json.load(handle)
 releases = feed.get("releases") or []
 if not releases:
-    raise SystemExit("official GPTLock server does not currently expose a mirrored release")
+    raise SystemExit("official GPTWork server does not currently expose a mirrored release")
 release = releases[0]
 tag = str(release.get("tag") or "")
 if not re.fullmatch(r"v\d+(?:\.\d+){1,3}", tag):
     raise SystemExit("official release tag is invalid")
 version = tag[1:]
 assets = {str(item.get("name") or ""): item for item in release.get("assets") or []}
-preferred = f"gptlock_{version}_amd64.deb"
+preferred = f"gptwork_{version}_amd64.deb"
+legacy = f"gptlock_{version}_amd64.deb"
 if preferred in assets:
     name = preferred
+elif legacy in assets:
+    name = legacy
 else:
-    candidates = sorted(name for name in assets if name.startswith("gptlock_") and name.endswith("_amd64.deb"))
+    candidates = sorted(name for name in assets if (name.startswith("gptwork_") or name.startswith("gptlock_")) and name.endswith("_amd64.deb"))
     if not candidates:
         raise SystemExit("official mirrored release does not contain a Linux amd64 package")
     name = candidates[-1]
@@ -74,7 +77,7 @@ asset_url="${release_data[2]}"
 feed_digest="${release_data[3]}"
 checksums_url="${release_data[4]}"
 
-echo "正在从 GPTLock 服务端镜像下载 $asset / Downloading $asset from the GPTLock server mirror…"
+echo "正在从 GPTWork 服务端镜像下载 $asset / Downloading $asset from the GPTWork server mirror…"
 curl_official "$asset_url" -o "$temp_dir/$asset"
 curl_official "$checksums_url" -o "$temp_dir/SHA256SUMS.txt"
 
@@ -88,5 +91,5 @@ fi
 echo "校验通过，正在安装 $tag / Verification passed; installing $tag…"
 sudo dpkg -i "$temp_dir/$asset"
 systemctl --user daemon-reload 2>/dev/null || true
-systemctl --user try-restart gptlock-core.service 2>/dev/null || true
+systemctl --user try-restart gptwork-core.service 2>/dev/null || systemctl --user try-restart gptlock-core.service 2>/dev/null || true
 echo "更新完成；请完全重启浏览器 / Update complete; fully restart the browser."

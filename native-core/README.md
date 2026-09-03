@@ -1,10 +1,10 @@
-# GPTLock Local Core / 本地组件
+# GPTWork Local Core / 本地组件
 
-GPTLock 在 Windows 与 Linux 上安装一个本地组件，用于完成浏览器扩展单独不适合承担的本地能力。
+GPTWork 在 Windows 与 Linux 上安装一个本地组件，用于完成浏览器扩展单独不适合承担的本地能力。
 
 ## 用户需要知道什么
 
-- 本地组件应随正式 GPTLock 安装包一起安装和更新；
+- 本地组件应随正式 GPTWork 安装包一起安装和更新；
 - 插件显示“组件在线/正常”即可，不要求用户理解内部协议；
 - 本地组件不用于绕过 ChatGPT 套餐、额度、区域或模型限制；
 - 遇到离线或版本不一致时，优先使用正式安装器、修复入口或更新功能；
@@ -20,4 +20,4 @@ GPTLock 在 Windows 与 Linux 上安装一个本地组件，用于完成浏览�
 
 ## English
 
-GPTLock installs a local component on Windows and Linux. Users only need to know whether it is installed, online, compatible, and up to date. The current public `native-core` source is a frozen v0.5.x migration baseline. New proprietary implementation-sensitive behavior is moving to a privately built core artifact behind a stable public compatibility contract.
+GPTWork installs a local component on Windows and Linux. Users only need to know whether it is installed, online, compatible, and up to date. The current public `native-core` source is a frozen v0.5.x migration baseline. New proprietary implementation-sensitive behavior is moving to a privately built core artifact behind a stable public compatibility contract.

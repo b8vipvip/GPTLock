@@ -14,7 +14,7 @@ let lastMirrorDiagnostics = null;
 const WARNING_TEXT = {
   private_release_token_required: '服务进程未检测到 GPTLOCK_GITHUB_TOKEN / GH_TOKEN。请把只读 GitHub Token 配置到 gptlock-license.service 使用的环境文件并重启服务。',
   release_token_invalid: 'GitHub 已拒绝当前 Release Token（401）。请更换有效的只读 Token 后重启服务。',
-  release_token_forbidden: 'GitHub 已识别当前 Token，但它没有读取 GPTLock 私有 Release 的权限（403）。',
+  release_token_forbidden: 'GitHub 已识别当前 Token，但它没有读取 GPTWork 私有 Release 的权限（403）。',
   release_feed_unavailable: '尚未取得可发布的正式 Release。请查看下方同步阶段与 lastError；可能是 GitHub Release API、HTTPS 网络或资产下载不可用。',
   release_mirror_storage_unavailable: 'Release 镜像存储目录不可用。请检查持久化数据目录权限。',
   release_mirror_sync_failed: '本轮 Release 同步失败；如果已有完整镜像，客户端仍会继续使用上一次版本。',

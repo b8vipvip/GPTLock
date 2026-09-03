@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const source = await readFile(new URL('../model-catalog.js', import.meta.url), 'utf8');
 
-test('model indicator is independent, translucent, and anchored above GPTLock status', () => {
+test('model indicator is independent, translucent, and anchored above GPTWork status', () => {
   assert.match(source, /gptlock-model-indicator-host/);
   assert.match(source, /gptlock-indicator-host/);
   assert.match(source, /window\.innerHeight - anchor\.top \+ INDICATOR_GAP_PX/);

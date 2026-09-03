@@ -1,16 +1,16 @@
 # 浏览器扩展 / Browser Extension
 
-GPTLock 浏览器扩展面向官方 `chatgpt.com` 网页，支持 Chrome、Chromium 和 Edge Manifest V3。
+GPTWork 浏览器扩展面向官方 `chatgpt.com` 网页，支持 Chrome、Chromium 和 Edge Manifest V3。
 
 ## 用户侧职责
 
 扩展提供：
 
-- GPTLock 开关和状态显示；
+- GPTWork 开关和状态显示；
 - 模型与推理偏好设置入口；
 - 账户登录与权益状态；
 - 自动验证和诊断入口；
-- 与已安装 GPTLock 本地组件的兼容通信；
+- 与已安装 GPTWork 本地组件的兼容通信；
 - 更新与版本入口。
 
 ## public/private split
@@ -27,4 +27,4 @@ v0.5.x 仍保留一部分旧实现文件来维持现有发行版兼容。这些�
 
 ## English
 
-The GPTLock browser extension is being reduced to a thin public client shell for UI, account state, diagnostics, updates, and compatibility bridging. New proprietary decision, verification, detection, and learning logic belongs to the private core rather than readable public JavaScript. Legacy v0.5.x implementation files remain temporarily for release compatibility and are frozen during migration.
+The GPTWork browser extension is being reduced to a thin public client shell for UI, account state, diagnostics, updates, and compatibility bridging. New proprietary decision, verification, detection, and learning logic belongs to the private core rather than readable public JavaScript. Legacy v0.5.x implementation files remain temporarily for release compatibility and are frozen during migration.

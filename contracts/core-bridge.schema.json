@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://gptlock.mv3.cn/contracts/core-bridge.schema.json",
-  "title": "GPTLock Core Bridge Contract",
-  "description": "Public compatibility contract between the GPTLock client shell and a released core implementation. The contract intentionally does not describe internal decision algorithms.",
+  "title": "GPTWork Core Bridge Contract",
+  "description": "Public compatibility contract between the GPTWork client shell and a released core implementation. The contract intentionally does not describe internal decision algorithms.",
   "type": "object",
   "oneOf": [
     { "$ref": "#/$defs/request" },

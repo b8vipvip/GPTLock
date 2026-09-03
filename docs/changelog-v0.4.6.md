@@ -1,4 +1,4 @@
-# GPTLock v0.4.6
+# GPTWork v0.4.6
 
 用户可见改进：
 

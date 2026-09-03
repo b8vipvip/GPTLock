@@ -1,12 +1,12 @@
-# GPTLock License Server
+# GPTWork License Server
 
 授权服务用于 `https://gptlock.mv3.cn`。Node.js 22.16+，无第三方 npm 依赖，数据使用 Node 内置 SQLite 持久化。
 
 ## 功能
 
 - 管理员生成授权码；授权验证继续只使用 HMAC，完整授权码另以 `GPTLOCK_LICENSE_SECRET` 派生密钥进行 AES-256-GCM 加密保存，仅管理员登录后的单码读取接口可解密，用于授权列表“复制授权码”。升级前只保存 HMAC 的历史授权记录无法恢复原始授权码。
-- 每个授权码可设置设备上限、同时活跃 GPTLock 浏览器窗口上限、生效时间和到期时间。
-- 设备绑定按 GPTLock Native Core 提供的稳定 `deviceId` 统计。
+- 每个授权码可设置设备上限、同时活跃 GPTWork 浏览器窗口上限、生效时间和到期时间。
+- 设备绑定按 GPTWork Native Core 提供的稳定 `deviceId` 统计。
 - 窗口使用按心跳租约统计；默认 150 秒未续租自动释放。
 - 可停用/恢复授权、修改限制与有效期、释放设备绑定。
 - 客户端激活后使用随机 activation token，不在后续心跳重复传输授权码。
@@ -28,7 +28,7 @@ Web 服务本身以低权限用户运行，不直接获得 root 或任意 shell 
 首次启用需要在服务器上手工执行一次：
 
 ```bash
-cd /path/to/GPTLock/license-server
+cd /path/to/GPTWork/license-server
 sudo bash scripts/install-updater-systemd.sh
 ```
 
@@ -47,7 +47,7 @@ sudo -E bash scripts/install-updater-systemd.sh
 
 ### GitHub 网络不稳定时的自适应传输
 
-默认 `GPTLOCK_UPDATE_TRANSPORT=auto`。更新器不再固定依赖 `origin` 当前使用的协议，而是按以下顺序尝试受信任的 GPTLock 仓库：
+默认 `GPTLOCK_UPDATE_TRANSPORT=auto`。更新器不再固定依赖 `origin` 当前使用的协议，而是按以下顺序尝试受信任的 GPTWork 仓库：
 
 1. 已配置且受信任的 SSH origin（如果当前 origin 本来就是 SSH）。
 2. `git@github.com:b8vipvip/GPTLock.git`，GitHub SSH 22 端口。

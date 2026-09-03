@@ -50,7 +50,7 @@ test('ssh mode never falls back to HTTPS', () => {
 });
 
 test('untrusted origins are rejected before network access', () => {
-  const validate = run(['--validate-url', 'git@github.com:attacker/GPTLock.git']);
+  const validate = run(['--validate-url', 'git@github.com:attacker/GPTWork.git']);
   assert.notEqual(validate.status, 0);
 
   const plan = run(['--plan', 'https://example.com/b8vipvip/GPTLock.git', 'auto']);
@@ -67,7 +67,7 @@ test('successful fetch is recognized when helper runs outside repository cwd', a
     await mkdir(bin);
     assert.equal(runGit(['init', repo]).status, 0);
     assert.equal(runGit(['-C', repo, 'config', 'user.email', 'test@example.invalid']).status, 0);
-    assert.equal(runGit(['-C', repo, 'config', 'user.name', 'GPTLock Test']).status, 0);
+    assert.equal(runGit(['-C', repo, 'config', 'user.name', 'GPTWork Test']).status, 0);
     await writeFile(join(repo, 'README.md'), 'fetch test\n');
     assert.equal(runGit(['-C', repo, 'add', 'README.md']).status, 0);
     assert.equal(runGit(['-C', repo, 'commit', '-m', 'fixture']).status, 0);
@@ -126,7 +126,7 @@ test('HTTPS private-repo authentication uses an environment-backed credential he
     await mkdir(bin);
     assert.equal(runGit(['init', repo]).status, 0);
     assert.equal(runGit(['-C', repo, 'config', 'user.email', 'test@example.invalid']).status, 0);
-    assert.equal(runGit(['-C', repo, 'config', 'user.name', 'GPTLock Test']).status, 0);
+    assert.equal(runGit(['-C', repo, 'config', 'user.name', 'GPTWork Test']).status, 0);
     await writeFile(join(repo, 'README.md'), 'private fetch test\n');
     assert.equal(runGit(['-C', repo, 'add', 'README.md']).status, 0);
     assert.equal(runGit(['-C', repo, 'commit', '-m', 'fixture']).status, 0);

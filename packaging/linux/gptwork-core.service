@@ -1,10 +1,10 @@
 [Unit]
-Description=GPTLock 本地验证 API / GPTLock Local Verification API
+Description=GPTWork 本地验证 API / GPTWork Local Verification API
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/share/gptlock/bin/gptlock-core serve
+ExecStart=%h/.local/share/gptwork/bin/gptwork-core serve
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

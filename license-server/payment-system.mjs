@@ -391,7 +391,7 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
     for (const row of rows) {
       try { attachUsdtOrder(row.id); }
       catch (error) {
-        if (error?.code !== 'USDT_PRICE_NOT_CONFIGURED') logger.warn?.('GPTLock USDT order not attached:', row.id, error.message);
+        if (error?.code !== 'USDT_PRICE_NOT_CONFIGURED') logger.warn?.('GPTWork USDT order not attached:', row.id, error.message);
       }
     }
   }
@@ -478,7 +478,7 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
     ensureRuntimeTables();
     const config = okxConfig();
     pollTimer = setInterval(() => {
-      void runAutoSettlement().catch((error) => logger.warn?.('GPTLock OKX settlement check failed:', error.message));
+      void runAutoSettlement().catch((error) => logger.warn?.('GPTWork OKX settlement check failed:', error.message));
     }, config.pollSeconds * 1000);
     pollTimer.unref?.();
     startupTimer = setTimeout(() => void runAutoSettlement().catch(() => {}), 1000);

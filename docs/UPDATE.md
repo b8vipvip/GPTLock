@@ -1,15 +1,15 @@
 # 更新与发布 / Updates & Releases
 
-GPTLock 的正式客户端更新统一经过官网更新服务，不要求插件直接访问私有 GitHub 仓库。
+GPTWork 的正式客户端更新统一经过官网更新服务，不要求插件直接访问私有 GitHub 仓库。
 
 ## 用户更新
 
 正式链路为：
 
-`GitHub Release → GPTLock 服务端镜像并校验 → gptlock.mv3.cn 官网发布 → 插件后台收到版本变化 → 客户端更新`
+`GitHub Release → GPTWork 服务端镜像并校验 → gptlock.mv3.cn 官网发布 → 插件后台收到版本变化 → 客户端更新`
 
-- Windows：安装过具备安全更新能力的 GPTLock Core 后，插件后台会通过官网通知通道与定时兜底检查发现新版本，从官网镜像下载安装器，校验 SHA-256，再由本地 Core 启动静默安装并确认新 Core 已运行；
-- Linux：`gptlock-update` 只从 `gptlock.mv3.cn` 的服务端镜像下载 `.deb` 与 `SHA256SUMS.txt`，同时校验版本源中的 SHA-256 与校验文件。由于系统包安装需要系统权限，仍由操作系统的 `sudo/dpkg` 权限边界负责提权；
+- Windows：安装过具备安全更新能力的 GPTWork Core 后，插件后台会通过官网通知通道与定时兜底检查发现新版本，从官网镜像下载安装器，校验 SHA-256，再由本地 Core 启动静默安装并确认新 Core 已运行；
+- Linux：`gptwork-update` 只从 `gptlock.mv3.cn` 的服务端镜像下载 `.deb` 与 `SHA256SUMS.txt`，同时校验版本源中的 SHA-256 与校验文件。由于系统包安装需要系统权限，仍由操作系统的 `sudo/dpkg` 权限边界负责提权；
 - 官网版本页直接展示服务端已经完整镜像成功的正式版本与下载文件。镜像未完整校验成功的版本不会进入官网版本索引。
 
 更新完成后如果浏览器仍显示旧界面，完全退出并重新打开浏览器。
@@ -30,7 +30,7 @@ GPTLock 的正式客户端更新统一经过官网更新服务，不要求插件
 
 ## 服务端源码更新
 
-GPTLock 管理后台原有的服务端源码更新与 Release 镜像是两条独立链路：前者更新正在运行的服务端程序，后者同步并发布客户端发行资产。两者不共享浏览器端权限，也不改变现有的服务端特权边界。
+GPTWork 管理后台原有的服务端源码更新与 Release 镜像是两条独立链路：前者更新正在运行的服务端程序，后者同步并发布客户端发行资产。两者不共享浏览器端权限，也不改变现有的服务端特权边界。
 
 ## 正式发布
 
@@ -38,4 +38,4 @@ GPTLock 管理后台原有的服务端源码更新与 Release 镜像是两条独
 
 ## English
 
-GPTLock client updates use an official server-mirror channel: GitHub Release artifacts are downloaded and verified server-side, atomically published on `gptlock.mv3.cn`, and then discovered by the extension through a long-poll notification channel with periodic MV3 alarm fallback. Windows clients with a hardened Native Core can download the mirrored installer, verify SHA-256, install it silently, confirm the updated Core, and reload the extension. Linux updates also use only the official server mirror while preserving the operating system privilege boundary for package installation. Repository credentials remain server-side only.
+GPTWork client updates use an official server-mirror channel: GitHub Release artifacts are downloaded and verified server-side, atomically published on `gptlock.mv3.cn`, and then discovered by the extension through a long-poll notification channel with periodic MV3 alarm fallback. Windows clients with a hardened Native Core can download the mirrored installer, verify SHA-256, install it silently, confirm the updated Core, and reload the extension. Linux updates also use only the official server mirror while preserving the operating system privilege boundary for package installation. Repository credentials remain server-side only.

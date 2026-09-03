@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GPTLock</title>
+  <title>GPTWork</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <section id="authShell" class="auth-shell" aria-live="polite">
     <div class="auth-brand">
       <span class="auth-logo">G</span>
-      <div><p>GPTLOCK</p><h1>账号登录 <small>Account</small></h1></div>
+      <div><p>GPTWORK</p><h1>账号登录 <small>Account</small></h1></div>
     </div>
     <div class="auth-card">
       <div class="auth-tabs" role="tablist">
@@ -22,7 +22,7 @@
       <form id="loginForm" class="auth-panel">
         <label>邮箱<input id="loginEmail" type="email" autocomplete="email" placeholder="name@example.com" required></label>
         <label>密码<input id="loginPassword" type="password" autocomplete="current-password" minlength="10" required></label>
-        <button id="loginButton" class="primary auth-submit" type="submit">登录 GPTLock</button>
+        <button id="loginButton" class="primary auth-submit" type="submit">登录 GPTWork</button>
         <p class="auth-hint">登录后才能启用请求锁定。会话令牌仅保存在本机浏览器。</p>
       </form>
 
@@ -30,7 +30,7 @@
         <label>邮箱<input id="registerEmail" type="email" autocomplete="email" required></label>
         <label>密码<input id="registerPassword" type="password" autocomplete="new-password" minlength="10" required></label>
         <label>确认密码<input id="registerPassword2" type="password" autocomplete="new-password" minlength="10" required></label>
-        <button id="registerButton" class="primary auth-submit" type="submit">注册 GPTLock</button>
+        <button id="registerButton" class="primary auth-submit" type="submit">注册 GPTWork</button>
         <p class="auth-hint">是否需要邮箱验证码由服务端系统配置决定。密码不会通过同步存储保存。</p>
       </form>
 
@@ -58,7 +58,7 @@
 
       <form id="deviceReplaceForm" class="auth-panel" hidden>
         <p class="auth-title">设备数量已达上限</p>
-        <p id="deviceReplaceHint" class="auth-hint">请选择不再使用的旧设备。所选设备上的 GPTLock 登录会话会立即失效。</p>
+        <p id="deviceReplaceHint" class="auth-hint">请选择不再使用的旧设备。所选设备上的 GPTWork 登录会话会立即失效。</p>
         <div id="deviceReplaceList" class="device-replace-list"></div>
         <button class="primary auth-submit" type="submit">释放所选设备并登录</button>
         <button id="cancelDeviceReplace" type="button">返回登录</button>
@@ -70,7 +70,7 @@
   <main id="appShell" hidden>
     <header>
       <div>
-        <p class="eyebrow">GPTLOCK <span id="version"></span></p>
+        <p class="eyebrow">GPTWORK <span id="version"></span></p>
         <h1>请求锁定 <small>Request lock</small></h1>
       </div>
       <span id="verdict" class="verdict wait">检查中</span>
@@ -97,8 +97,8 @@
     </section>
 
     <section class="enable-row">
-      <span><strong>启用 GPTLock</strong><small>Enable request locking</small></span>
-      <label class="switch" title="启用或关闭 GPTLock / Enable or disable GPTLock">
+      <span><strong>启用 GPTWork</strong><small>Enable request locking</small></span>
+      <label class="switch" title="启用或关闭 GPTWork / Enable or disable GPTWork">
         <input id="enabled" type="checkbox">
         <span aria-hidden="true"></span>
       </label>
@@ -117,9 +117,9 @@
       <div><dt>响应确认 <small>Response evidence</small></dt><dd id="responseState">—</dd></div>
     </dl>
 
-    <p class="boundary">GPTLock 会在正式聊天 POST 发出前尝试锁定顶层模型/已有推理字段；响应元数据只用于附加确认。缺字段或验证异常不会中断聊天，只有已确认的模型不匹配才会在强制模式下阻断后续发送。<br><span>Formal chat POSTs are locked before send; response metadata is supplementary confirmation.</span></p>
+    <p class="boundary">GPTWork 会在正式聊天 POST 发出前尝试锁定顶层模型/已有推理字段；响应元数据只用于附加确认。缺字段或验证异常不会中断聊天，只有已确认的模型不匹配才会在强制模式下阻断后续发送。<br><span>Formal chat POSTs are locked before send; response metadata is supplementary confirmation.</span></p>
 
-    <div class="actions" aria-label="GPTLock 快捷操作">
+    <div class="actions" aria-label="GPTWork 快捷操作">
       <button id="autoVerify" type="button" class="primary auto" title="自动验证 / Auto verify">自动验证</button>
       <button id="reconnect" type="button" class="reconnect" title="重新连接 / Reconnect">重新连接</button>
       <button id="checkUpdate" type="button" title="打开设置中的版本更新中心">检查更新</button>

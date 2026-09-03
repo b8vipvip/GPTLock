@@ -3,10 +3,10 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-GPTLock Linux 安装器 / Linux installer
+GPTWork Linux 安装器 / Linux installer
 
 用法 / Usage:
-  ./install.sh [--extension-id <32位ID>] [--binary <gptlock-core>] [--browser all|chrome|chromium|edge]
+  ./install.sh [--extension-id <32位ID>] [--binary <gptwork-core>] [--browser all|chrome|chromium|edge]
 
 默认使用项目固定扩展 ID，并把扩展复制到 ~/.local/share/gptlock/extension。
 The stable project extension ID is used by default and the extension is copied to ~/.local/share/gptlock/extension.
@@ -51,7 +51,7 @@ fi
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/../.." && pwd)"
 if [[ -z "$binary_path" ]]; then
-  binary_path="$repo_root/native-core/target/release/gptlock-core"
+  binary_path="$repo_root/native-core/target/release/gptwork-core"
 fi
 if [[ ! -f "$binary_path" ]]; then
   echo "找不到二进制文件 / Binary not found: $binary_path" >&2
@@ -61,13 +61,22 @@ fi
 
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-install_dir="$data_home/gptlock/bin"
-installed_binary="$install_dir/gptlock-core"
-installed_updater="$install_dir/gptlock-update"
-installed_extension="$data_home/gptlock/extension"
+preferred_root="$data_home/gptwork"
+legacy_root="$data_home/gptlock"
+if [[ -d "$legacy_root" && ! -e "$preferred_root" ]]; then
+  product_root="$legacy_root"
+else
+  product_root="$preferred_root"
+fi
+install_dir="$product_root/bin"
+installed_binary="$install_dir/gptwork-core"
+installed_updater="$install_dir/gptwork-update"
+installed_extension="$product_root/extension"
 mkdir -p "$install_dir"
 install -m 0755 "$binary_path" "$installed_binary"
 install -m 0755 "$script_dir/update.sh" "$installed_updater"
+ln -sfn gptwork-core "$install_dir/gptlock-core"
+ln -sfn gptwork-update "$install_dir/gptlock-update"
 mkdir -p "$installed_extension"
 for file in background.js content.js diagnostics.css diagnostics.html diagnostics.js guard.js manifest.json native-status.js network-evidence.js network-monitor.js options.css options.html options.js policy.js popup.css popup.html popup.js runtime-log.js; do
   install -m 0644 "$repo_root/extension/$file" "$installed_extension/$file"
@@ -81,7 +90,7 @@ write_manifest() {
   cat >"$directory/com.gptlock.core.json" <<EOF
 {
   "name": "com.gptlock.core",
-  "description": "GPTLock 本地验证核心 / GPTLock Local Verification Core",
+  "description": "GPTWork 本地验证核心 / GPTWork Local Verification Core",
   "path": "$escaped_binary",
   "type": "stdio",
   "allowed_origins": ["chrome-extension://$extension_id/"]
@@ -113,9 +122,10 @@ esac
 
 systemd_dir="$config_home/systemd/user"
 mkdir -p "$systemd_dir"
-cat >"$systemd_dir/gptlock-core.service" <<EOF
+systemctl --user stop gptlock-core.service 2>/dev/null || true
+cat >"$systemd_dir/gptwork-core.service" <<EOF
 [Unit]
-Description=GPTLock 本地验证 API / GPTLock Local Verification API
+Description=GPTWork 本地验证 API / GPTWork Local Verification API
 
 [Service]
 Type=simple
@@ -131,10 +141,11 @@ LockPersonality=true
 [Install]
 WantedBy=default.target
 EOF
+ln -sfn gptwork-core.service "$systemd_dir/gptlock-core.service"
 
 if command -v systemctl >/dev/null 2>&1; then
-  if systemctl --user daemon-reload && systemctl --user enable --now gptlock-core.service; then
-    active_state="$(systemctl --user is-active gptlock-core.service 2>/dev/null || true)"
+  if systemctl --user daemon-reload && systemctl --user enable --now gptwork-core.service; then
+    active_state="$(systemctl --user is-active gptwork-core.service 2>/dev/null || true)"
     if [[ "$active_state" == "active" ]]; then
       echo "systemd 用户服务已启动 / systemd user service started."
     else
@@ -147,7 +158,7 @@ if command -v systemctl >/dev/null 2>&1; then
   fi
 fi
 
-echo "GPTLock Linux 安装完成 / Linux installation completed."
+echo "GPTWork Linux 安装完成 / Linux installation completed."
 echo "扩展目录 / Extension directory: $installed_extension"
 echo "更新命令 / Updater: $installed_updater"
 echo "请重新启动浏览器 / Restart the browser."

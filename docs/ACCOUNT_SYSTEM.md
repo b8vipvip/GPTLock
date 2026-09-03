@@ -1,6 +1,6 @@
 # 账户系统 / Account System
 
-GPTLock 账户用于统一管理用户登录、权益、设备、会话和会员状态。
+GPTWork 账户用于统一管理用户登录、权益、设备、会话和会员状态。
 
 ## 用户可见能力
 
@@ -27,4 +27,4 @@ GPTLock 账户用于统一管理用户登录、权益、设备、会话和会员
 
 ## English
 
-The GPTLock account system manages login, entitlements, devices, sessions, memberships, and orders. Public documentation covers user-facing behavior and general security expectations only. Password parameters, token internals, rate-limit rules, database structure, fraud controls, and other security-sensitive implementation details are intentionally not documented here.
+The GPTWork account system manages login, entitlements, devices, sessions, memberships, and orders. Public documentation covers user-facing behavior and general security expectations only. Password parameters, token internals, rate-limit rules, database structure, fraud controls, and other security-sensitive implementation details are intentionally not documented here.

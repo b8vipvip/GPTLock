@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GPTLock 设置 / Settings</title>
+  <title>GPTWork 设置 / Settings</title>
   <link rel="stylesheet" href="options.css">
 </head>
 <body data-settings-revision="v0519-license-ui-purge">
   <main class="shell">
     <header>
       <div>
-        <p class="eyebrow">GPTLOCK <span id="extensionVersion">—</span></p>
+        <p class="eyebrow">GPTWORK <span id="extensionVersion">—</span></p>
         <h1>请求模型锁定与响应确认</h1>
         <p class="subtitle">Request locking &amp; supplementary response verification</p>
       </div>
@@ -21,7 +21,7 @@
       <h2 id="globalHeading">总开关 <span>Global switch</span></h2>
       <label class="check-row wide">
         <input id="enabled" type="checkbox">
-        <span><strong>启用 GPTLock 请求锁定</strong><small>When disabled, request interception and response verification both pause.</small></span>
+        <span><strong>启用 GPTWork 请求锁定</strong><small>When disabled, request interception and response verification both pause.</small></span>
       </label>
     </section>
 
@@ -54,8 +54,8 @@
 
     <section class="card" aria-labelledby="modelHeading">
       <h2 id="modelHeading">锁定模型 <span>Locked models</span></h2>
-      <p class="help">可多选。正式聊天 POST 发出前，GPTLock 会检查顶层 model；若当前模型不在允许列表，则改写为第一个锁定模型的已知传输标识。</p>
-      <p class="permission-note">只有正式聊天请求或响应元数据确认的新模型才会加入“自动识别 / Discovered”；页面 DOM 文本只作为辅助观察，不会单独永久入库。新模型首次加入自动识别列表时会自动勾选并立即加入锁定策略；之后你仍可手动取消勾选并保存，GPTLock 不会因后续重复证据把它再次强制启用。</p>
+      <p class="help">可多选。正式聊天 POST 发出前，GPTWork 会检查顶层 model；若当前模型不在允许列表，则改写为第一个锁定模型的已知传输标识。</p>
+      <p class="permission-note">只有正式聊天请求或响应元数据确认的新模型才会加入“自动识别 / Discovered”；页面 DOM 文本只作为辅助观察，不会单独永久入库。新模型首次加入自动识别列表时会自动勾选并立即加入锁定策略；之后你仍可手动取消勾选并保存，GPTWork 不会因后续重复证据把它再次强制启用。</p>
       <div id="modelChoices" class="choices"></div>
       <label class="field" for="customModels">
         <span>自定义模型标识（逗号分隔）</span>
@@ -66,7 +66,7 @@
 
     <section class="card" aria-labelledby="reasoningHeading">
       <h2 id="reasoningHeading">允许的推理强度 <span>Allowed reasoning levels</span></h2>
-      <p class="help">若正式请求顶层已经存在可识别的推理强度字段，GPTLock 会把不允许的值改为优先推理强度；不会凭空添加网页当前没有发送的字段。</p>
+      <p class="help">若正式请求顶层已经存在可识别的推理强度字段，GPTWork 会把不允许的值改为优先推理强度；不会凭空添加网页当前没有发送的字段。</p>
       <div id="reasoningChoices" class="choices"></div>
       <label class="field" for="preferredReasoning">
         <span>优先推理强度</span>
@@ -81,12 +81,12 @@
         <input id="networkVerification" type="checkbox">
         <span><strong>启用响应元数据确认</strong><small>Read response metadata after a formal chat request. Missing metadata warns but does not block normal chat.</small></span>
       </label>
-      <p class="permission-note">请求锁定本身也需要 Chrome/Edge 的“调试程序”权限。打开同一标签页的 DevTools 可能抢占调试连接；此时 GPTLock 会告警，但不会把日常聊天卡死。</p>
-      <p class="permission-note en">The request interceptor also uses the browser debugger permission. DevTools may detach GPTLock from the same tab; GPTLock fails open with a warning.</p>
+      <p class="permission-note">请求锁定本身也需要 Chrome/Edge 的“调试程序”权限。打开同一标签页的 DevTools 可能抢占调试连接；此时 GPTWork 会告警，但不会把日常聊天卡死。</p>
+      <p class="permission-note en">The request interceptor also uses the browser debugger permission. DevTools may detach GPTWork from the same tab; GPTWork fails open with a warning.</p>
 
       <label class="check-row wide">
         <input id="autoAlignSelection" type="checkbox">
-        <span><strong>自动对齐页面选择（尽力而为）</strong><small>Convenience only. The network request lock is authoritative for what GPTLock sends.</small></span>
+        <span><strong>自动对齐页面选择（尽力而为）</strong><small>Convenience only. The network request lock is authoritative for what GPTWork sends.</small></span>
       </label>
     </section>
 

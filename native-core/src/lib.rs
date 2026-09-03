@@ -120,19 +120,19 @@ impl AppState {
                 .store
                 .root()
                 .to_str()
-                .context("GPTLock data path is not valid UTF-8")?
+                .context("GPTWork data path is not valid UTF-8")?
                 .to_owned(),
             policy_file: self
                 .store
                 .policy_path()
                 .to_str()
-                .context("GPTLock policy path is not valid UTF-8")?
+                .context("GPTWork policy path is not valid UTF-8")?
                 .to_owned(),
             audit_file: self
                 .audit
                 .path()
                 .to_str()
-                .context("GPTLock audit path is not valid UTF-8")?
+                .context("GPTWork audit path is not valid UTF-8")?
                 .to_owned(),
             native_host_name: NATIVE_HOST_NAME,
         })

@@ -217,7 +217,7 @@ export function createSiteAccountSystem({ db, env, publicOrigin, json, bodyJson,
           recordFailure(req, email);
           fail(401, 'LOGIN_FAILED', '邮箱或密码错误');
         }
-        if (!emailAccessSatisfied(user)) fail(403, 'EMAIL_NOT_VERIFIED', '邮箱尚未验证，请先在 GPTLock 插件中完成验证');
+        if (!emailAccessSatisfied(user)) fail(403, 'EMAIL_NOT_VERIFIED', '邮箱尚未验证，请先在 GPTWork 插件中完成验证');
         if (user.status === 'disabled') fail(403, 'ACCOUNT_DISABLED', '账号已被停用');
         clearFailures(req, email);
         const issued = issueSession(user, req);

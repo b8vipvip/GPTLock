@@ -1,10 +1,10 @@
-# GPTLock private-core distribution boundary
+# GPTWork private-core distribution boundary
 
-GPTLock now uses a **private monorepo**. Implementation-sensitive source may live in this repository, but it must not be shipped as readable source in client artifacts.
+GPTWork now uses a **private monorepo**. Implementation-sensitive source may live in this repository, but it must not be shipped as readable source in client artifacts.
 
 ## Private repository source
 
-The repository may contain all product source needed to build GPTLock, including proprietary detection, decision, verification, learning, correlation and context-budget logic.
+The repository may contain all product source needed to build GPTWork, including proprietary detection, decision, verification, learning, correlation and context-budget logic.
 
 Implementation-sensitive Rust source belongs under `private-engine/`. The browser extension and `native-core` act as integration/runtime shells and should continue moving sensitive decisions behind the versioned local engine bridge instead of duplicating them in JavaScript.
 
@@ -13,8 +13,8 @@ Implementation-sensitive Rust source belongs under `private-engine/`. The browse
 Release artifacts may contain:
 
 - browser extension runtime files required by Chrome/Edge;
-- `gptlock-core` / `gptlock-core.exe`;
-- the **compiled** `gptlock-engine` / `gptlock-engine.exe`;
+- `gptwork-core` / `gptwork-core.exe`;
+- the **compiled** `gptwork-engine` / `gptwork-engine.exe`;
 - installers, update helpers and user-facing assets.
 
 Release artifacts must not contain:

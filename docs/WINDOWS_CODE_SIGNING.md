@@ -1,8 +1,8 @@
 # Windows 代码签名 / Windows Code Signing
 
-GPTLock 的 Windows 一键更新会先验证 GitHub Release 元数据中公布的 SHA-256，再由本地 Core 启动安装器。浏览器下载的 EXE 会附带 Mark-of-the-Web（`Zone.Identifier`）；从 v0.5.6 起，一键更新仅在 SHA-256 完全匹配后移除该下载标记，以避免隐藏更新进程被 Attachment Manager / SmartScreen 的交互提示阻塞。
+GPTWork 的 Windows 一键更新会先验证 GitHub Release 元数据中公布的 SHA-256，再由本地 Core 启动安装器。浏览器下载的 EXE 会附带 Mark-of-the-Web（`Zone.Identifier`）；从 v0.5.6 起，一键更新仅在 SHA-256 完全匹配后移除该下载标记，以避免隐藏更新进程被 Attachment Manager / SmartScreen 的交互提示阻塞。
 
-手工从浏览器下载并双击 `GPTLockSetup-x64.exe` 时，Windows 是否显示“未知发布者”取决于 Authenticode 数字签名。SHA-256 校验不能替代发布者签名。要让手工安装也显示可信发布者，需要为 Release 配置受 Windows 信任的代码签名证书。
+手工从浏览器下载并双击 `GPTWorkSetup-x64.exe` 时，Windows 是否显示“未知发布者”取决于 Authenticode 数字签名。SHA-256 校验不能替代发布者签名。要让手工安装也显示可信发布者，需要为 Release 配置受 Windows 信任的代码签名证书。
 
 ## 首次引导升级 / Bootstrap Upgrade
 
@@ -22,10 +22,10 @@ Release 工作流支持以下仓库 Secrets：
 
 当证书配置存在时，Release 会：
 
-1. 构建 `gptlock-core.exe`；
-2. 对 `gptlock-core.exe` 执行 SHA-256 Authenticode 签名并校验 `Get-AuthenticodeSignature` 为 `Valid`；
+1. 构建 `gptwork-core.exe`；
+2. 对 `gptwork-core.exe` 执行 SHA-256 Authenticode 签名并校验 `Get-AuthenticodeSignature` 为 `Valid`；
 3. 使用已签名 Core 构建 Inno Setup；
-4. 对 `GPTLockSetup-x64.exe` 再次签名并验证；
+4. 对 `GPTWorkSetup-x64.exe` 再次签名并验证；
 5. 删除 Runner 上的临时 PFX 文件；
 6. 仅在上述步骤全部成功后上传正式 Release 资产。
 

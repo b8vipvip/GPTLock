@@ -58,8 +58,8 @@ test('latest release assets start concurrently and live status exposes download 
   const first = Buffer.from('first-release-asset');
   const second = Buffer.from('second-release-asset');
   const assets = [
-    asset('GPTLockSetup-x64.exe', 1001, first),
-    asset('gptlock-extension-0.5.30.zip', 1002, second),
+    asset('GPTWorkSetup-x64.exe', 1001, first),
+    asset('gptwork-extension-0.5.30.zip', 1002, second),
   ];
   const bytesByUrl = new Map([
     [assets[0].url, first],
@@ -84,7 +84,7 @@ test('latest release assets start concurrently and live status exposes download 
       if (target.includes('/releases?per_page=12')) {
         return new Response(JSON.stringify([{
           tag_name: 'v0.5.30',
-          name: 'GPTLock v0.5.30',
+          name: 'GPTWork v0.5.30',
           draft: false,
           prerelease: false,
           published_at: '2026-09-01T00:00:00Z',

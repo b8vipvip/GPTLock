@@ -58,7 +58,7 @@ function showPanel(name) {
 function renderDeviceReplacement(details) {
   deviceLimitDetails = details || {};
   const required = Math.max(1, Number(deviceLimitDetails.requiredReleaseCount || 1));
-  el.deviceReplaceHint.textContent = `当前最多允许 ${deviceLimitDetails.limit || '—'} 台设备。请选择至少 ${required} 台不再使用的旧设备；释放后这些设备上的 GPTLock 会话立即失效。`;
+  el.deviceReplaceHint.textContent = `当前最多允许 ${deviceLimitDetails.limit || '—'} 台设备。请选择至少 ${required} 台不再使用的旧设备；释放后这些设备上的 GPTWork 会话立即失效。`;
   el.deviceReplaceList.textContent = '';
   for (const device of deviceLimitDetails.devices || []) {
     const label = document.createElement('label');
@@ -110,7 +110,7 @@ function renderAccount(account) {
   el.accountUsage.textContent = `设备 ${usage.devices ?? 0}/${limits.devices ?? 0} · 窗口不限`;
   if (el.enabled) {
     if (!entitlement.active) el.enabled.title = '免费期或会员已到期，请在账户中心开通会员';
-    else el.enabled.title = '启用或关闭 GPTLock；窗口数量不受限制';
+    else el.enabled.title = '启用或关闭 GPTWork；窗口数量不受限制';
   }
   window.dispatchEvent(new CustomEvent('gptlock-entitlement-state', {
     detail: { authenticated, active: Boolean(entitlement.active) },
@@ -159,7 +159,7 @@ el.deviceReplaceForm.addEventListener('submit', (event) => {
     setMessage(`请至少选择 ${required} 台旧设备。`, 'bad');
     return;
   }
-  if (!confirm(`确认释放 ${selected.length} 台旧设备并在当前设备登录 GPTLock？`)) return;
+  if (!confirm(`确认释放 ${selected.length} 台旧设备并在当前设备登录 GPTWork？`)) return;
   setMessage('正在释放旧设备并登录…');
   void finishLogin(selected).catch((error) => {
     if (error.code === 'DEVICE_LIMIT' && Array.isArray(error.details?.devices)) {

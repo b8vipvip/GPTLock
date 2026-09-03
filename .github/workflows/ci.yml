@@ -47,22 +47,22 @@ jobs:
         run: |
           mkdir -p dist
           cd extension
-          zip -9 ../dist/gptlock-extension.zip *.js *.css *.html manifest.json icons/*.png
-          unzip -l ../dist/gptlock-extension.zip | grep -q 'account-client.js'
-          unzip -l ../dist/gptlock-extension.zip | grep -q 'auth-gate.js'
-          unzip -l ../dist/gptlock-extension.zip | grep -q 'account.html'
-          unzip -l ../dist/gptlock-extension.zip | grep -q 'icons/icon128.png'
+          zip -9 ../dist/gptwork-extension.zip *.js *.css *.html manifest.json icons/*.png
+          unzip -l ../dist/gptwork-extension.zip | grep -q 'account-client.js'
+          unzip -l ../dist/gptwork-extension.zip | grep -q 'auth-gate.js'
+          unzip -l ../dist/gptwork-extension.zip | grep -q 'account.html'
+          unzip -l ../dist/gptwork-extension.zip | grep -q 'icons/icon128.png'
       - name: Enforce extension distribution boundary
         run: |
-          listing="$(unzip -Z1 dist/gptlock-extension.zip)"
+          listing="$(unzip -Z1 dist/gptwork-extension.zip)"
           if grep -E '(^|/)(private-engine|private-source|private-core)/|\.rs$|Cargo\.toml$|Cargo\.lock$' <<<"$listing"; then
             echo 'Private implementation source leaked into the browser extension archive.' >&2
             exit 1
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: gptlock-extension
-          path: dist/gptlock-extension.zip
+          name: gptwork-extension
+          path: dist/gptwork-extension.zip
           if-no-files-found: error
 
   private-engine:
@@ -72,9 +72,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            executable: gptlock-private-engine
+            executable: gptwork-private-engine
           - os: windows-latest
-            executable: gptlock-private-engine.exe
+            executable: gptwork-private-engine.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -94,7 +94,7 @@ jobs:
         run: cargo build --release --manifest-path private-engine/Cargo.toml
       - uses: actions/upload-artifact@v4
         with:
-          name: gptlock-private-engine-${{ matrix.os }}
+          name: gptwork-private-engine-${{ matrix.os }}
           path: private-engine/target/release/${{ matrix.executable }}
           if-no-files-found: error
 
@@ -105,9 +105,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            executable: gptlock-core
+            executable: gptwork-core
           - os: windows-latest
-            executable: gptlock-core.exe
+            executable: gptwork-core.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -127,7 +127,7 @@ jobs:
         run: cargo build --locked --release --manifest-path native-core/Cargo.toml
       - uses: actions/upload-artifact@v4
         with:
-          name: gptlock-core-${{ matrix.os }}
+          name: gptwork-core-${{ matrix.os }}
           path: native-core/target/release/${{ matrix.executable }}
           if-no-files-found: error
 
@@ -144,9 +144,9 @@ jobs:
         shell: pwsh
         run: |
           foreach ($file in @(
-            'packaging/windows/Install-GPTLock.ps1',
-            'packaging/windows/Repair-GPTLock.ps1',
-            'packaging/windows/Update-GPTLock.ps1'
+            'packaging/windows/Install-GPTWork.ps1',
+            'packaging/windows/Repair-GPTWork.ps1',
+            'packaging/windows/Update-GPTWork.ps1'
           )) {
             $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $file))
             if ($bytes.Length -lt 3 -or $bytes[0] -ne 0xEF -or $bytes[1] -ne 0xBB -or $bytes[2] -ne 0xBF) {
@@ -170,22 +170,22 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content 'extension\manifest.json' -Raw | ConvertFrom-Json).version
-          $privateEngine = (Resolve-Path 'private-engine\target\release\gptlock-private-engine.exe').Path
+          $privateEngine = (Resolve-Path 'private-engine\target\release\gptwork-private-engine.exe').Path
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path -LiteralPath $iscc)) {
             choco install innosetup --yes --no-progress
           }
-          & $iscc "/DMyAppVersion=$version" "/DPrivateEnginePath=$privateEngine" 'packaging\windows\GPTLock.iss'
+          & $iscc "/DMyAppVersion=$version" "/DPrivateEnginePath=$privateEngine" 'packaging\windows\GPTWork.iss'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install and verify Setup registration
         shell: pwsh
         run: |
-          $root = Join-Path $env:RUNNER_TEMP 'GPTLock-Setup-Custom-Root'
-          & 'dist\windows\GPTLockSetup-x64.exe' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/DIR=$root"
+          $root = Join-Path $env:RUNNER_TEMP 'GPTWork-Setup-Custom-Root'
+          & 'dist\windows\GPTWorkSetup-x64.exe' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/DIR=$root"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $binary = Join-Path $root 'bin\gptlock-core.exe'
-          $privateEngine = Join-Path $root 'bin\gptlock-engine.exe'
-          $repair = Join-Path $root 'tools\Repair-GPTLock.ps1'
+          $binary = Join-Path $root 'bin\gptwork-core.exe'
+          $privateEngine = Join-Path $root 'bin\gptwork-engine.exe'
+          $repair = Join-Path $root 'tools\Repair-GPTWork.ps1'
           foreach ($path in @(
             $binary,
             $privateEngine,
@@ -220,9 +220,9 @@ jobs:
           }
           & $binary doctor
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $sourceInstallRoot = Join-Path $env:RUNNER_TEMP 'GPTLock-Source-Custom-Root'
-          & 'packaging\windows\Install-GPTLock.ps1' -BinaryPath $binary -InstallRoot $sourceInstallRoot
-          $sourceBinary = Join-Path $sourceInstallRoot 'bin\gptlock-core.exe'
+          $sourceInstallRoot = Join-Path $env:RUNNER_TEMP 'GPTWork-Source-Custom-Root'
+          & 'packaging\windows\Install-GPTWork.ps1' -BinaryPath $binary -InstallRoot $sourceInstallRoot
+          $sourceBinary = Join-Path $sourceInstallRoot 'bin\gptwork-core.exe'
           $sourceExtension = Join-Path $sourceInstallRoot 'extension\manifest.json'
           $sourceEvidence = Join-Path $sourceInstallRoot 'extension\page-model-evidence.js'
           $sourceContextBudget = Join-Path $sourceInstallRoot 'extension\context-budget.js'
@@ -241,8 +241,8 @@ jobs:
           if ($chromeManifest.path -ne $sourceBinary) { throw "Custom source root was not registered: $($chromeManifest.path)" }
       - uses: actions/upload-artifact@v4
         with:
-          name: gptlock-windows-setup
-          path: dist/windows/GPTLockSetup-x64.exe
+          name: gptwork-windows-setup
+          path: dist/windows/GPTWorkSetup-x64.exe
           if-no-files-found: error
 
   linux-package:
@@ -260,22 +260,22 @@ jobs:
         run: cargo build --release --manifest-path private-engine/Cargo.toml
       - name: Build and inspect deb
         run: |
-          chmod +x packaging/linux/build-deb.sh private-engine/target/release/gptlock-private-engine
-          package="$(GPTLOCK_PRIVATE_ENGINE="$PWD/private-engine/target/release/gptlock-private-engine" GPTLOCK_REQUIRE_PRIVATE_ENGINE=1 packaging/linux/build-deb.sh dist/linux | tail -n 1)"
+          chmod +x packaging/linux/build-deb.sh private-engine/target/release/gptwork-private-engine
+          package="$(GPTLOCK_PRIVATE_ENGINE="$PWD/private-engine/target/release/gptwork-private-engine" GPTLOCK_REQUIRE_PRIVATE_ENGINE=1 packaging/linux/build-deb.sh dist/linux | tail -n 1)"
           dpkg-deb --info "$package"
           contents="$(dpkg-deb --contents "$package")"
           printf '%s\n' "$contents"
-          grep -q '/usr/bin/gptlock-engine' <<<"$contents"
-          grep -q '/usr/share/gptlock/extension/account-client.js' <<<"$contents"
-          grep -q '/usr/share/gptlock/extension/auth-gate.js' <<<"$contents"
-          grep -q '/usr/share/gptlock/extension/account.html' <<<"$contents"
-          grep -q '/usr/share/gptlock/extension/context-budget.js' <<<"$contents"
+          grep -q '/usr/bin/gptwork-engine' <<<"$contents"
+          grep -q '/usr/share/gptwork/extension/account-client.js' <<<"$contents"
+          grep -q '/usr/share/gptwork/extension/auth-gate.js' <<<"$contents"
+          grep -q '/usr/share/gptwork/extension/account.html' <<<"$contents"
+          grep -q '/usr/share/gptwork/extension/context-budget.js' <<<"$contents"
           if grep -E '/private-engine/|\.rs$|Cargo\.toml$|Cargo\.lock$' <<<"$contents"; then
             echo 'Private implementation source leaked into Linux package.' >&2
             exit 1
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: gptlock-linux-deb
-          path: dist/linux/gptlock_*_amd64.deb
+          name: gptwork-linux-deb
+          path: dist/linux/gptwork_*_amd64.deb
           if-no-files-found: error

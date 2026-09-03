@@ -1,5 +1,5 @@
 [package]
-name = "gptlock-private-engine"
+name = "gptwork-private-engine"
 version = "0.1.0"
 edition = "2021"
 publish = false

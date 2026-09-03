@@ -123,7 +123,7 @@
       if (!values.some((item) => item.key === key)) values.push({ key, model, source });
     };
 
-    // The formal conversation POST is authoritative for what GPTLock actually sends.
+    // The formal conversation POST is authoritative for what GPTWork actually sends.
     add(state?.lastRequest?.model, 'network_request_metadata');
 
     const verification = state?.lastVerification;
@@ -318,7 +318,7 @@
         button[data-tone="mismatch"]{background:rgba(185,28,28,.74);border-color:rgba(254,202,202,.5)}
         button:focus{outline:3px solid rgba(191,219,254,.8);outline-offset:2px}
       </style>
-      <button type="button" data-tone="unknown" title="GPTLock 模型证据 / Model evidence">
+      <button type="button" data-tone="unknown" title="GPTWork 模型证据 / Model evidence">
         <span class="model-row" data-source="page" data-status="unknown"><span class="model-key">页面模型</span><span class="model-value">未识别</span></span>
         <span class="model-row" data-source="request" data-status="waiting"><span class="model-key">请求模型</span><span class="model-value">等待请求</span></span>
         <span class="model-row" data-source="response" data-status="waiting"><span class="model-key">响应模型</span><span class="model-value">等待响应</span></span>

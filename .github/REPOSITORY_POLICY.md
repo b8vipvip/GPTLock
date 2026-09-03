@@ -1,8 +1,8 @@
-# GPTLock repository governance
+# GPTWork repository governance
 
 ## Private monorepo role
 
-This repository is the authoritative private source repository for GPTLock. It may contain website/server source, browser-extension source, installers, packaging, native host code and proprietary private-engine source.
+This repository is the authoritative private source repository for GPTWork. It may contain website/server source, browser-extension source, installers, packaging, native host code and proprietary private-engine source.
 
 Repository privacy is **not** treated as the only source-protection control. Client artifacts remain inspectable after installation, so implementation-sensitive behavior should continue moving from shipped JavaScript into the compiled `private-engine/` component. CI must prevent private-engine Rust source and build metadata from entering extension archives or installer/package payloads.
 
@@ -31,7 +31,7 @@ GitHub-native branch protection/rulesets remain the preferred hard enforcement l
 Only built client/runtime artifacts may leave the private source repository. In particular:
 
 - extension archives contain only the browser runtime files selected by the packaging workflow;
-- Windows Setup and Linux deb packages include `gptlock-core` plus the compiled `gptlock-engine` artifact;
+- Windows Setup and Linux deb packages include `gptwork-core` plus the compiled `gptwork-engine` artifact;
 - `private-engine/src/**`, Rust source, Cargo manifests/locks and private development snapshots must never be distributed;
 - release/update credentials remain server- or Actions-side secrets and are never embedded in the extension or installer.
 

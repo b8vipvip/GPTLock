@@ -10,9 +10,9 @@ $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $installRoot = Split-Path -Parent $scriptDirectory
 $headers = @{
     Accept = 'application/vnd.github+json'
-    'User-Agent' = 'GPTLock-Updater'
+    'User-Agent' = 'GPTWork-Updater'
 }
-$temporaryDirectory = Join-Path $env:TEMP ("GPTLock-Update-" + [Guid]::NewGuid().ToString('N'))
+$temporaryDirectory = Join-Path $env:TEMP ("GPTWork-Update-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
 
 try {
@@ -21,7 +21,7 @@ try {
     # Windows PowerShell may already be using the system TLS defaults.
 }
 
-function Invoke-GptLockDownload {
+function Invoke-GptWorkDownload {
     param(
         [Parameter(Mandatory = $true)][string]$Uri,
         [Parameter(Mandatory = $true)][string]$OutFile
@@ -63,12 +63,12 @@ function Invoke-GptLockDownload {
 }
 
 try {
-    Write-Host '正在检查 GPTLock 更新 / Checking for GPTLock updates…'
+    Write-Host '正在检查 GPTWork 更新 / Checking for GPTWork updates…'
     $releaseJsonPath = Join-Path $temporaryDirectory 'release.json'
-    Invoke-GptLockDownload -Uri "https://api.github.com/repos/$repository/releases/latest" -OutFile $releaseJsonPath
+    Invoke-GptWorkDownload -Uri "https://api.github.com/repos/$repository/releases/latest" -OutFile $releaseJsonPath
     $release = Get-Content -LiteralPath $releaseJsonPath -Raw | ConvertFrom-Json
 
-    $installerAsset = $release.assets | Where-Object { $_.name -eq 'GPTLockSetup-x64.exe' } | Select-Object -First 1
+    $installerAsset = $release.assets | Where-Object { $_.name -eq 'GPTWorkSetup-x64.exe' } | Select-Object -First 1
     $checksumAsset = $release.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' } | Select-Object -First 1
     if ($null -eq $installerAsset -or $null -eq $checksumAsset) {
         throw '最新版本缺少安装器或校验和 / Latest release is missing the installer or checksums.'
@@ -77,8 +77,8 @@ try {
     $installerPath = Join-Path $temporaryDirectory $installerAsset.name
     $checksumPath = Join-Path $temporaryDirectory $checksumAsset.name
     Write-Host "正在下载 $($installerAsset.name)，网络失败会自动重试 / Downloading $($installerAsset.name) with automatic retries…"
-    Invoke-GptLockDownload -Uri $installerAsset.browser_download_url -OutFile $installerPath
-    Invoke-GptLockDownload -Uri $checksumAsset.browser_download_url -OutFile $checksumPath
+    Invoke-GptWorkDownload -Uri $installerAsset.browser_download_url -OutFile $installerPath
+    Invoke-GptWorkDownload -Uri $checksumAsset.browser_download_url -OutFile $checksumPath
 
     $escapedName = [Regex]::Escape($installerAsset.name)
     $line = Get-Content -LiteralPath $checksumPath | Where-Object { $_ -match "\s\*?$escapedName$" } | Select-Object -First 1

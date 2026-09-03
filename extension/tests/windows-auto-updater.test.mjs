@@ -6,7 +6,7 @@ test('Windows one-click updater coordinates Core shutdown outside the Native Mes
   const [updater, updateManager, installer] = await Promise.all([
     readFile(new URL('../../native-core/src/updater.rs', import.meta.url), 'utf8'),
     readFile(new URL('../update-manager.js', import.meta.url), 'utf8'),
-    readFile(new URL('../../packaging/windows/GPTLock.iss', import.meta.url), 'utf8'),
+    readFile(new URL('../../packaging/windows/GPTWork.iss', import.meta.url), 'utf8'),
   ]);
 
   assert.match(updater, /Win32_ProcessStartup/);
@@ -18,7 +18,7 @@ test('Windows one-click updater coordinates Core shutdown outside the Native Mes
   assert.match(updater, /Get-Process -Id \(\[int\]\$job\.currentPid\)/);
   assert.match(updater, /while \(-not \$installer\.HasExited\)/);
   assert.match(updater, /Stop-InstalledCoreProcesses/);
-  assert.match(updater, /Get-Process -Name 'gptlock-core'/);
+  assert.match(updater, /Get-Process -Name 'gptwork-core'/);
   assert.match(updater, /windows_shell_path/);
   assert.match(updater, /installed_core_version_output/);
   assert.match(updater, /UPDATE_INSTALLER_LOG_NAME/);

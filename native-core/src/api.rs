@@ -28,7 +28,7 @@ pub fn app(state: Arc<AppState>) -> Router {
 pub async fn serve(address: SocketAddr, state: Arc<AppState>) -> anyhow::Result<()> {
     if !address.ip().is_loopback() {
         anyhow::bail!(
-            "GPTLock refuses non-loopback listen address / GPTLock 拒绝监听非本机回环地址"
+            "GPTWork refuses non-loopback listen address / GPTWork 拒绝监听非本机回环地址"
         );
     }
     let listener = TcpListener::bind(address).await?;
@@ -183,8 +183,8 @@ impl ApiError {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
-            "GPTLock 本地核心处理失败，请查看审计日志",
-            "GPTLock local core failed to process the request; inspect the audit log",
+            "GPTWork 本地核心处理失败，请查看审计日志",
+            "GPTWork local core failed to process the request; inspect the audit log",
         )
     }
 }

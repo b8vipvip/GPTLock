@@ -2,8 +2,9 @@ import { appendRuntimeLog } from './runtime-log.js';
 
 export const RELEASE_API_URL = 'https://gptlock.mv3.cn/site/api/releases';
 export const RELEASES_URL = 'https://gptlock.mv3.cn/releases';
-export const WINDOWS_INSTALLER_NAME = 'GPTLockSetup-x64.exe';
-export const WINDOWS_DOWNLOAD_FILENAME = 'GPTLock/GPTLockSetup-x64.exe';
+export const WINDOWS_INSTALLER_NAME = 'GPTWorkSetup-x64.exe';
+export const LEGACY_WINDOWS_INSTALLER_NAME = 'GPTLockSetup-x64.exe';
+export const WINDOWS_DOWNLOAD_FILENAME = 'GPTWork/GPTWorkSetup-x64.exe';
 export const UPDATE_STATUS_KEY = 'gptlockUiUpdateStatus';
 export const RELIABLE_WINDOWS_UPDATER_MIN_CORE_VERSION = '0.5.24';
 const RELEASE_DOWNLOAD_PREFIX = '/downloads/releases/';
@@ -83,7 +84,7 @@ export function normalizeLatestReleasePayload(payload) {
 export function parseLatestRelease(rawRelease, currentVersion) {
   const release = normalizeLatestReleasePayload(rawRelease);
   if (!release || release.draft || release.prerelease) {
-    throw new Error('Latest GPTLock release is unavailable / 最新正式版本不可用');
+    throw new Error('Latest GPTWork release is unavailable / 最新正式版本不可用');
   }
   const latestVersion = normalizeVersion(release.tag_name);
   const normalizedCurrent = normalizeVersion(currentVersion);
@@ -91,7 +92,8 @@ export function parseLatestRelease(rawRelease, currentVersion) {
     throw new Error('Release version is invalid / 发布版本号无效');
   }
   const installerAsset = Array.isArray(release.assets)
-    ? release.assets.find((asset) => asset?.name === WINDOWS_INSTALLER_NAME)
+    ? (release.assets.find((asset) => asset?.name === WINDOWS_INSTALLER_NAME)
+      || release.assets.find((asset) => asset?.name === LEGACY_WINDOWS_INSTALLER_NAME))
     : null;
   const installerSha256 = sha256FromDigest(installerAsset?.digest);
   const installerUrl = secureServerDownloadUrl(installerAsset?.browser_download_url);
@@ -123,7 +125,7 @@ export async function fetchLatestRelease(currentVersion, fetchImpl = fetch) {
       headers: { Accept: 'application/json' },
     });
     if (!response.ok) {
-      throw new Error(`GPTLock update service failed (${response.status}) / GPTLock 更新服务不可用`);
+      throw new Error(`GPTWork update service failed (${response.status}) / GPTWork 更新服务不可用`);
     }
     const release = parseLatestRelease(await response.json(), currentVersion);
     logUpdate('info', 'update_check_completed', {

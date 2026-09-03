@@ -57,7 +57,7 @@ test('website account sessions are isolated from extension device quota', async 
   assert.match(source, /\/site\/api\/account\/devices\/release/);
 });
 
-test('extension release button is routed to the GPTLock product site', async () => {
+test('extension release button is routed to the GPTWork product site', async () => {
   const source = await readFile(new URL('../options-update.js', import.meta.url), 'utf8');
   assert.match(source, /GPTLOCK_PRODUCT_SITE_URL/);
   assert.match(source, /https:\/\/gptlock\.mv3\.cn\//);

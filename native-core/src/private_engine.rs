@@ -9,7 +9,8 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
-const PRIVATE_ENGINE_ENV: &str = "GPTLOCK_PRIVATE_ENGINE";
+const PRIVATE_ENGINE_ENV: &str = "GPTWORK_PRIVATE_ENGINE";
+const LEGACY_PRIVATE_ENGINE_ENV: &str = "GPTLOCK_PRIVATE_ENGINE";
 const PRIVATE_ENGINE_PROTOCOL: u64 = 2;
 
 struct EngineProcess {
@@ -92,6 +93,14 @@ fn state() -> &'static Mutex<EngineState> {
 
 fn executable_name() -> &'static str {
     if cfg!(windows) {
+        "gptwork-engine.exe"
+    } else {
+        "gptwork-engine"
+    }
+}
+
+fn legacy_executable_name() -> &'static str {
+    if cfg!(windows) {
         "gptlock-engine.exe"
     } else {
         "gptlock-engine"
@@ -101,16 +110,24 @@ fn executable_name() -> &'static str {
 fn default_engine_path() -> Result<PathBuf> {
     let current = env::current_exe().context("resolve current executable")?;
     let directory = current.parent().context("resolve executable directory")?;
-    Ok(directory.join(executable_name()))
+    let preferred = directory.join(executable_name());
+    let legacy = directory.join(legacy_executable_name());
+    Ok(if preferred.is_file() || !legacy.is_file() {
+        preferred
+    } else {
+        legacy
+    })
 }
 
 pub fn configured_path() -> Result<PathBuf> {
-    if let Some(value) = env::var_os(PRIVATE_ENGINE_ENV) {
-        let path = PathBuf::from(value);
-        if path.as_os_str().is_empty() {
-            anyhow::bail!("{PRIVATE_ENGINE_ENV} is empty");
+    for variable in [PRIVATE_ENGINE_ENV, LEGACY_PRIVATE_ENGINE_ENV] {
+        if let Some(value) = env::var_os(variable) {
+            let path = PathBuf::from(value);
+            if path.as_os_str().is_empty() {
+                anyhow::bail!("{variable} is empty");
+            }
+            return Ok(path);
         }
-        return Ok(path);
     }
     default_engine_path()
 }
@@ -323,6 +340,6 @@ mod tests {
 
     #[test]
     fn default_artifact_name_is_stable() {
-        assert!(executable_name().starts_with("gptlock-engine"));
+        assert!(executable_name().starts_with("gptwork-engine"));
     }
 }

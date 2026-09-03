@@ -8,7 +8,7 @@ import {
   shouldAutoInstall,
 } from '../background-update.js';
 
-test('release notifications come only from the official GPTLock server', () => {
+test('release notifications come only from the official GPTWork server', () => {
   assert.equal(RELEASE_NOTIFICATION_URL, 'https://gptlock.mv3.cn/site/api/releases/notifications');
   const url = new URL(releaseNotificationUrl('generation-123', 20_000));
   assert.equal(url.origin, 'https://gptlock.mv3.cn');

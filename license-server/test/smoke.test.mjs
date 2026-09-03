@@ -455,7 +455,7 @@ test('account system verifies email, enforces entitlements, manages membership, 
         sessionDays: 30,
         smtp: {
           host: 'smtp.example.com', port: 465, secure: true, username: 'mailer@example.com',
-          password: 'smtp-secret-should-not-be-plaintext', fromEmail: 'mailer@example.com', fromName: 'GPTLock',
+          password: 'smtp-secret-should-not-be-plaintext', fromEmail: 'mailer@example.com', fromName: 'GPTWork',
         },
         paymentMethods: [
           { code: 'wechat', enabled: true, payUrl: 'https://pay.example.com/wechat#ignored', instructions: '付款后等待确认' },

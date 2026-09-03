@@ -420,7 +420,7 @@ function renderSettings(data) {
   el.smtpUsername.value = smtp.username || '';
   el.smtpPassword.value = '';
   el.smtpFromEmail.value = smtp.fromEmail || '';
-  el.smtpFromName.value = smtp.fromName || 'GPTLock';
+  el.smtpFromName.value = smtp.fromName || 'GPTWork';
   el.smtpState.textContent = smtp.passwordConfigured ? 'SMTP 密码/授权码已加密保存；密码框留空不会覆盖。' : '尚未保存 SMTP 密码/授权码。';
   const wechat = methodByCode(settings, 'wechat');
   el.wechatEnabled.checked = Boolean(wechat.enabled); el.wechatUrl.value = wechat.payUrl || ''; el.wechatInstructions.value = wechat.instructions || '';
