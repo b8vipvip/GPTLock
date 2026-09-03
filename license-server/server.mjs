@@ -242,7 +242,7 @@ function staticFile(res, path) {
 const paymentSystem = createPaymentSystem({ db, publicOrigin: PUBLIC_ORIGIN, json, secret: SECRET, env });
 const accountSystem = createAccountSystem({
   db, env, secret: SECRET, publicOrigin: PUBLIC_ORIGIN, allowedExtensionIds: ALLOWED_EXTENSION_IDS,
-  windowTtlSeconds: WINDOW_TTL_SECONDS, json, bodyJson, clientIp,
+  windowTtlSeconds: WINDOW_TTL_SECONDS, json, bodyJson, clientIp, paymentSystem,
 });
 paymentSystem.attachSettlement((orderId, context) => accountSystem.markOrderPaidById(orderId, context));
 const siteAccounts = createSiteAccountSystem({

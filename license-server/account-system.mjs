@@ -114,6 +114,7 @@ export function createAccountSystem({
   json,
   bodyJson,
   clientIp,
+  paymentSystem = null,
 }) {
   db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -1072,7 +1073,8 @@ export function createAccountSystem({
         const frozenTerms = planSnapshotFromRow(plan);
         const result = db.prepare(`INSERT INTO membership_orders(user_id,plan_code,payment_method,amount_cents,status,pay_url,created_at,expires_at,plan_snapshot_json)
           VALUES(?,?,?,?, 'pending',?,?,?,?)`).run(session.user_id, plan.code, method.code, plan.price_cents, payUrl, nowIso(), expiresAt, JSON.stringify(frozenTerms));
-        const order = db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(result.lastInsertRowid));
+        let order = db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(result.lastInsertRowid));
+        if (paymentSystem) order = paymentSystem.prepareOrder(order, { clientIp: clientIp(req), userAgent: req.headers['user-agent'] || '' });
         audit('order_created', session.user_id, { orderId: order.id, planCode: plan.code, paymentMethod: method.code, amountCents: plan.price_cents });
         return json(res, 201, { ok: true, order: orderPublic(order), instructions: method.instructions }, cors), true;
       }
@@ -1456,11 +1458,18 @@ export function createAccountSystem({
     accountSummary,
     testOutbox,
     markOrderPaidById(orderId, context = {}) {
-      const paid = markOrderPaid(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(orderId)), { allowExpiredPending: context?.source === 'okx_auto' });
+      const autoSource = context?.source === 'okx_auto' || context?.source === 'zpay_auto';
+      const paid = markOrderPaid(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(orderId)), { allowExpiredPending: autoSource });
       if (context?.source === 'okx_auto') {
         audit('order_auto_paid_okx', paid.user_id, {
           orderId: paid.id, depositId: context.depositId || '', txId: context.txId || '',
           amount: context.amount || '', chain: context.chain || '', depositTs: context.depositTs || '',
+        });
+      }
+      if (context?.source === 'zpay_auto') {
+        audit('order_auto_paid_zpay', paid.user_id, {
+          orderId: paid.id, tradeNo: context.tradeNo || '', merchantTradeNo: context.merchantTradeNo || '',
+          channel: context.channel || '', amount: context.amount || '',
         });
       }
       return orderPublic(paid);

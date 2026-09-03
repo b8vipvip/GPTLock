@@ -193,7 +193,7 @@ export function createSiteAccountSystem({ db, env, publicOrigin, json, bodyJson,
     return { id: row.id, planCode: row.plan_code, paymentMethod: row.payment_method, amountCents: row.amount_cents,
       status: row.status, payUrl: row.pay_url || '', createdAt: row.created_at, expiresAt: row.expires_at,
       paidAt: row.paid_at, membershipId: row.membership_id, planSnapshot: snapshot,
-      payment: row.payment_method === 'usdt' ? paymentSystem.orderPaymentDetails(row.id) : null };
+      payment: row.payment_method === 'usdt' ? paymentSystem.orderPaymentDetails(row.id) : paymentSystem.zpayOrderDetails(row.id) };
   }
   function listOrders(userId) {
     return db.prepare('SELECT * FROM membership_orders WHERE user_id=? ORDER BY id DESC LIMIT 20').all(userId).map(orderPublic);
@@ -341,8 +341,9 @@ export function createSiteAccountSystem({ db, env, publicOrigin, json, bodyJson,
         const result = db.prepare(`INSERT INTO membership_orders(user_id,plan_code,payment_method,amount_cents,status,pay_url,created_at,expires_at,plan_snapshot_json)
           VALUES(?,?,?,?, 'pending',?,?,?,?)`).run(session.user_id, plan.code, method.code, plan.price_cents,
             method.pay_url || '', nowIso(), expiresAt, JSON.stringify(snapshot));
-        const order = db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(result.lastInsertRowid));
+        let order = db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(result.lastInsertRowid));
         if (usdtQuote) paymentSystem.attachUsdtOrder(order.id, usdtQuote);
+        order = paymentSystem.prepareOrder(order, { clientIp: clientIp(req), userAgent: req.headers['user-agent'] || '' });
         return json(res, 201, { ok: true, order: orderPublic(order), instructions: method.instructions || '' }), true;
       }
       const orderMatch = url.pathname.match(/^\/site\/api\/account\/orders\/(\d+)$/);
