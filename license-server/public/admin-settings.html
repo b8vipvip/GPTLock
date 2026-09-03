@@ -45,7 +45,7 @@
         </div>
         <p id="smtpState" class="muted"></p>
 
-        <div class="section-title"><div><h3>支付方式</h3><p class="muted">只有个人微信/支付宝收款码也可以使用：上传二维码后，用户创建订单并扫码付款，后台在“订单”中确认到账后自动开通权益。USDT 可填写欧易生成的 HTTPS 收款链接；也可记录链与地址用于人工核对。</p></div><button id="saveAdvancedPayments" type="button">保存支付配置</button></div>
+        <div class="section-title"><div><h3>支付方式</h3><p class="muted">微信/支付宝继续使用人工确认到账。USDT 可使用欧易收款链接，并通过只读 OKX API 自动核对到账与开通会员。</p></div><button id="saveAdvancedPayments" type="button">保存支付配置</button></div>
         <div class="payment-grid">
           <article>
             <label class="check"><input id="wechatEnabled" type="checkbox"> 启用微信支付</label>
@@ -66,8 +66,8 @@
           <article>
             <label class="check"><input id="usdtEnabled" type="checkbox"> 启用 USDT</label>
             <label>欧易收款链接 / HTTPS 支付链接<input id="usdtUrl" type="url" placeholder="https://..."></label>
-            <label>网络 / Chain<input id="usdtNetwork" placeholder="例如 USDT-TRC20 / X Layer"></label>
-            <label>收款地址（可选）<input id="usdtAddress" autocomplete="off" placeholder="链上地址"></label>
+            <label>网络 / Chain<input id="usdtNetwork" placeholder="例如 USDT-TRC20"></label>
+            <label>收款地址（链上收款时建议填写）<input id="usdtAddress" autocomplete="off" placeholder="链上地址"></label>
             <label>Memo / Tag（如需要）<input id="usdtMemo" autocomplete="off"></label>
             <label>付款说明<textarea id="usdtInstructions" rows="3"></textarea></label>
             <label>收款二维码（可选）<input id="usdtQrFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
@@ -75,7 +75,30 @@
             <p id="usdtQrState" class="muted">未检查二维码</p>
           </article>
         </div>
-        <p class="muted">静态个人收款码本身没有服务器支付回调，因此微信/支付宝当前采用“创建订单 → 扫码付款 → 管理员确认到账 → 开通会员”的可靠人工确认流程。不要根据用户点击“已付款”直接开通权益。</p>
+
+        <h3>USDT 套餐价格</h3>
+        <p class="muted">为每个会员套餐设置基础 USDT 价格。创建订单时服务端会冻结金额，并可加入不超过 0.000999 USDT 的订单识别尾数，避免多个相同套餐订单同时付款时误匹配。</p>
+        <div id="usdtPlanPrices" class="grid three"></div>
+
+        <div class="section-title"><div><h3>OKX 自动到账</h3><p class="muted">只使用“读取”权限 API Key。不要授予交易或提币权限。密钥会使用服务端主密钥加密保存，不会返回到浏览器。</p></div></div>
+        <div class="grid three">
+          <label class="check"><input id="okxAutoEnabled" type="checkbox"> 启用 USDT 自动核对并开通</label>
+          <label>检查间隔（秒）<input id="okxPollSeconds" type="number" min="10" max="300" value="15"></label>
+          <label>USDT 付款窗口（分钟）<input id="usdtOrderTtlMinutes" type="number" min="30" max="720" value="120"></label>
+          <label>OKX API Key<input id="okxApiKey" autocomplete="off" placeholder="留空表示不修改"></label>
+          <label>OKX Secret Key<input id="okxSecretKey" type="password" autocomplete="new-password" placeholder="留空表示不修改"></label>
+          <label>OKX Passphrase<input id="okxPassphrase" type="password" autocomplete="new-password" placeholder="留空表示不修改"></label>
+          <label class="check"><input id="okxAllowInternalTransfers" type="checkbox" checked> 允许识别欧易内部转账/收款链接到账</label>
+        </div>
+        <div class="inline">
+          <button id="saveOkxSettings" type="button" class="primary">保存 OKX 配置</button>
+          <button id="testOkxConnection" type="button">测试只读 API</button>
+          <button id="checkOkxNow" type="button">立即检查到账</button>
+          <button id="clearOkxCredentials" type="button" class="danger">清除 OKX 凭据</button>
+        </div>
+        <p id="okxState" class="muted">尚未读取 OKX 状态</p>
+        <p class="muted">自动流程只在金额、USDT 币种、订单时间窗口以及可用的网络/地址条件匹配，并且 OKX 充值状态达到最终成功时执行。存在多个候选订单时会停止自动开通并要求人工核对。</p>
+        <p class="muted">微信/支付宝静态个人收款码保持“创建订单 → 扫码付款 → 管理员确认实际到账 → 开通会员”，不会因为用户点击“已付款”而自动开通。</p>
         <p id="paymentSettingsMessage" class="message"></p>
         <p id="settingsMessage" class="message"></p>
       </section>
