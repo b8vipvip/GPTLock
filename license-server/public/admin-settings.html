@@ -22,7 +22,7 @@
     </section>
     <div id="app" hidden>
       <section id="settings" class="card">
-        <div class="section-title"><div><h2>账号系统配置</h2><p class="muted">免费权益、会话时长、SMTP 邮箱、微信/支付宝支付入口。</p></div><button id="saveSettings" class="primary">保存配置</button></div>
+        <div class="section-title"><div><h2>账号系统配置</h2><p class="muted">免费权益、会话时长、SMTP 邮箱，以及微信、支付宝、USDT 收款。</p></div><button id="saveSettings" class="primary">保存配置</button></div>
         <h3>免费用户</h3>
         <div class="grid four">
           <label>免费天数<input id="freeDays" type="number" min="0"></label>
@@ -44,16 +44,45 @@
           <button id="sendTestEmail" type="button">发送测试邮件</button>
         </div>
         <p id="smtpState" class="muted"></p>
-        <h3>支付方式</h3>
+
+        <div class="section-title"><div><h3>支付方式</h3><p class="muted">只有个人微信/支付宝收款码也可以使用：上传二维码后，用户创建订单并扫码付款，后台在“订单”中确认到账后自动开通权益。USDT 可填写欧易生成的 HTTPS 收款链接；也可记录链与地址用于人工核对。</p></div><button id="saveAdvancedPayments" type="button">保存支付配置</button></div>
         <div class="payment-grid">
-          <article><label class="check"><input id="wechatEnabled" type="checkbox"> 启用微信支付</label><label>HTTPS 支付页<input id="wechatUrl" type="url"></label><label>付款说明<textarea id="wechatInstructions" rows="2"></textarea></label></article>
-          <article><label class="check"><input id="alipayEnabled" type="checkbox"> 启用支付宝</label><label>HTTPS 支付页<input id="alipayUrl" type="url"></label><label>付款说明<textarea id="alipayInstructions" rows="2"></textarea></label></article>
+          <article>
+            <label class="check"><input id="wechatEnabled" type="checkbox"> 启用微信支付</label>
+            <label>HTTPS 支付页 / 二维码地址<input id="wechatUrl" type="url" placeholder="上传二维码后可自动生成"></label>
+            <label>付款说明<textarea id="wechatInstructions" rows="3"></textarea></label>
+            <label>收款二维码<input id="wechatQrFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
+            <div class="inline"><button id="wechatQrUpload" type="button">上传/替换二维码</button><button id="wechatQrDelete" type="button">删除二维码</button></div>
+            <p id="wechatQrState" class="muted">未检查二维码</p>
+          </article>
+          <article>
+            <label class="check"><input id="alipayEnabled" type="checkbox"> 启用支付宝</label>
+            <label>HTTPS 支付页 / 二维码地址<input id="alipayUrl" type="url" placeholder="上传二维码后可自动生成"></label>
+            <label>付款说明<textarea id="alipayInstructions" rows="3"></textarea></label>
+            <label>收款二维码<input id="alipayQrFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
+            <div class="inline"><button id="alipayQrUpload" type="button">上传/替换二维码</button><button id="alipayQrDelete" type="button">删除二维码</button></div>
+            <p id="alipayQrState" class="muted">未检查二维码</p>
+          </article>
+          <article>
+            <label class="check"><input id="usdtEnabled" type="checkbox"> 启用 USDT</label>
+            <label>欧易收款链接 / HTTPS 支付链接<input id="usdtUrl" type="url" placeholder="https://..."></label>
+            <label>网络 / Chain<input id="usdtNetwork" placeholder="例如 USDT-TRC20 / X Layer"></label>
+            <label>收款地址（可选）<input id="usdtAddress" autocomplete="off" placeholder="链上地址"></label>
+            <label>Memo / Tag（如需要）<input id="usdtMemo" autocomplete="off"></label>
+            <label>付款说明<textarea id="usdtInstructions" rows="3"></textarea></label>
+            <label>收款二维码（可选）<input id="usdtQrFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
+            <div class="inline"><button id="usdtQrUpload" type="button">上传/替换二维码</button><button id="usdtQrDelete" type="button">删除二维码</button></div>
+            <p id="usdtQrState" class="muted">未检查二维码</p>
+          </article>
         </div>
+        <p class="muted">静态个人收款码本身没有服务器支付回调，因此微信/支付宝当前采用“创建订单 → 扫码付款 → 管理员确认到账 → 开通会员”的可靠人工确认流程。不要根据用户点击“已付款”直接开通权益。</p>
+        <p id="paymentSettingsMessage" class="message"></p>
         <p id="settingsMessage" class="message"></p>
       </section>
     </div>
   </main>
 </div>
 <script type="module" src="/admin.js"></script>
+<script type="module" src="/payment-admin.js"></script>
 </body>
 </html>

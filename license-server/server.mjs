@@ -8,6 +8,7 @@ import { createRuntimeLogger } from './runtime-log.mjs';
 import { createUpdateManager } from './update-manager.mjs';
 import { createAccountSystem } from './account-system.mjs';
 import { createClientRuntimeLogManager } from './client-runtime-logs.mjs';
+import { createPaymentSystem } from './payment-system.mjs';
 import { createSiteAccountSystem } from './site-account.mjs';
 import { createSiteReleaseFeed } from './site-releases.mjs';
 
@@ -236,6 +237,9 @@ function staticFile(res, path) {
   } catch { res.writeHead(404).end('Not found'); }
 }
 
+// Payment schema migration must run before account-system initializes its legacy
+// payment tables, so existing WeChat/Alipay databases can safely add USDT.
+const paymentSystem = createPaymentSystem({ db, publicOrigin: PUBLIC_ORIGIN, json });
 const accountSystem = createAccountSystem({
   db, env, secret: SECRET, publicOrigin: PUBLIC_ORIGIN, allowedExtensionIds: ALLOWED_EXTENSION_IDS,
   windowTtlSeconds: WINDOW_TTL_SECONDS, json, bodyJson, clientIp,
@@ -270,6 +274,8 @@ async function handleSiteApi(req, res, url) {
     const result = await siteReleases.waitForChange(url.searchParams.get('since'), waitMs);
     return json(res, 200, siteReleases.notificationPayload(result));
   }
+  const paymentHandled = await paymentSystem.handleSite(req, res, url);
+  if (paymentHandled) return;
   const handled = await siteAccounts.handle(req, res, url);
   if (handled) return;
   return apiError(res, 404, 'NOT_FOUND', 'Not found');
@@ -293,6 +299,8 @@ async function handleAdmin(req, res, url) {
   }
   if (!isAdmin(req)) return apiError(res, 401, 'ADMIN_REQUIRED', '需要管理员登录');
   if (!['GET', 'HEAD'].includes(req.method || '') && !adminMutationOriginAllowed(req)) return apiError(res, 403, 'ADMIN_ORIGIN_MISMATCH', '后台写操作来源校验失败');
+  const paymentAdminHandled = await paymentSystem.handleAdmin(req, res, url);
+  if (paymentAdminHandled) return;
   const accountAdminHandled = await accountSystem.handleAdmin(req, res, url);
   if (accountAdminHandled) return;
   const clientLogAdminHandled = await clientRuntimeLogs.handleAdmin(req, res, url);
@@ -363,6 +371,7 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/site.css') return staticFile(res, join(PUBLIC, 'site.css'));
     if (url.pathname === '/site.js') return staticFile(res, join(PUBLIC, 'site.js'));
     if (url.pathname === '/admin.js') return staticFile(res, join(PUBLIC, 'admin.js'));
+    if (url.pathname === '/payment-admin.js') return staticFile(res, join(PUBLIC, 'payment-admin.js'));
     if (url.pathname === '/admin-release-mirror.js') return staticFile(res, join(PUBLIC, 'admin-release-mirror.js'));
     if (url.pathname === '/client-runtime-admin.js') return staticFile(res, join(PUBLIC, 'client-runtime-admin.js'));
     if (url.pathname === '/admin.css') return staticFile(res, join(PUBLIC, 'admin.css'));
