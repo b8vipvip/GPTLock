@@ -158,6 +158,10 @@ async function initAccount() {
     await refresh();
   });
   await refresh();
+  const accountPoll = setInterval(() => {
+    if (!document.hidden && !dashboard.classList.contains('hidden')) void refresh();
+  }, 10_000);
+  window.addEventListener('pagehide', () => clearInterval(accountPoll), { once: true });
 }
 
 function paymentMethodLabel(method) {
@@ -167,19 +171,31 @@ function paymentMethodLabel(method) {
   return method.name || method.code;
 }
 
+function usdtMatchText(payment) {
+  return ({
+    awaiting: '等待检测到账',
+    confirming: '已检测到付款，等待区块/OKX 最终确认',
+    ambiguous: '检测到重复匹配，需要管理员核对',
+    settled: 'OKX 已确认到账并自动开通',
+    error: '自动核对异常，等待重试或管理员处理',
+  })[payment?.matchStatus] || '';
+}
+
 function renderPaymentBox(result, method) {
   const box = document.getElementById('paymentBox');
   box.className = 'notice good payment-box';
   box.replaceChildren();
   box.append(node('strong', '', `订单 #${result.order.id} · ${paymentMethodLabel(method)}`));
-  if (result.instructions) box.append(node('p', '', result.instructions));
-  if (method.code === 'usdt' && method.crypto) {
+  if (method.code === 'usdt') {
+    const payment = result.order.payment || {};
+    if (payment.amount) box.append(node('div', 'plan-price', `${payment.amount} USDT`));
     const parts = [];
-    if (method.crypto.network) parts.push(`网络：${method.crypto.network}`);
-    if (method.crypto.address) parts.push(`地址：${method.crypto.address}`);
-    if (method.crypto.memo) parts.push(`Memo/Tag：${method.crypto.memo}`);
+    if (payment.network) parts.push(`网络：${payment.network}`);
+    if (payment.address) parts.push(`地址：${payment.address}`);
+    if (payment.memo) parts.push(`Memo/Tag：${payment.memo}`);
     if (parts.length) box.append(node('p', 'payment-crypto', parts.join('\n')));
   }
+  if (result.instructions) box.append(node('p', '', result.instructions));
   const qr = safeHttps(method.qrUrl);
   if (qr) {
     const image = document.createElement('img');
@@ -190,10 +206,16 @@ function renderPaymentBox(result, method) {
   }
   const pay = safeHttps(result.order.payUrl || method.payUrl);
   if (pay && pay !== qr) {
-    const link = node('a', 'btn btn-small btn-soft', method.code === 'usdt' ? '打开 USDT 收款链接 →' : '打开支付页面 →');
+    const link = node('a', 'btn btn-small btn-soft', method.code === 'usdt' ? '打开欧易 / OKX 收款链接 →' : '打开支付页面 →');
     link.href = pay; link.target = '_blank'; link.rel = 'noopener noreferrer'; box.append(link);
   }
-  box.append(node('small', '', '付款后订单仍会保持“待支付”，只有管理员核对实际到账并确认后才会开通会员。'));
+  if (method.code === 'usdt') {
+    box.append(node('small', '', method.autoConfirm
+      ? '请严格按上方数量、网络与地址付款。服务端会通过 OKX 只读 API 核对金额、网络/地址和订单时间窗口；仅在 OKX 充值状态达到最终成功后自动开通会员。'
+      : '当前尚未启用 OKX 自动到账核对；付款后需要管理员确认到账才能开通会员。'));
+  } else {
+    box.append(node('small', '', '微信/支付宝静态收款码没有可信服务器回调：付款后订单保持待支付，由管理员核对实际到账并确认后开通会员。'));
+  }
 }
 
 function renderAccount(data, config, refresh) {
@@ -233,15 +255,23 @@ function renderAccount(data, config, refresh) {
   if (!siteList.childElementCount) listEmpty(siteList, '暂无网页登录');
 
   const planList = document.getElementById('planList'); planList.replaceChildren();
+  const usdtMethod = (config.paymentMethods || []).find((item) => item.code === 'usdt');
   for (const plan of config.plans || []) {
     const card = node('div', 'plan');
     card.append(node('strong', '', plan.name), node('div', 'plan-price', money(plan.priceCents)), node('small', '', `${plan.durationDays} 天 · 最多 ${plan.limits?.devices || 1} 台设备`));
+    const usdtPrice = usdtMethod?.planPrices?.[plan.code] || '';
+    if (usdtPrice) card.append(node('small', '', `USDT：${usdtPrice} USDT`));
     if (config.paymentMethods?.length) {
       const select = document.createElement('select');
       select.className = 'payment-method-select';
       select.setAttribute('aria-label', '选择支付方式');
       for (const method of config.paymentMethods) {
-        const option = document.createElement('option'); option.value = method.code; option.textContent = paymentMethodLabel(method); select.append(option);
+        const option = document.createElement('option');
+        option.value = method.code;
+        const price = method.code === 'usdt' ? method.planPrices?.[plan.code] : '';
+        option.textContent = method.code === 'usdt' && price ? `USDT · ${price} USDT` : paymentMethodLabel(method);
+        if (method.code === 'usdt' && !price) { option.disabled = true; option.textContent = 'USDT · 该套餐未配置价格'; }
+        select.append(option);
       }
       card.append(select, actionButton('创建购买订单', async () => {
         const method = config.paymentMethods.find((item) => item.code === select.value) || config.paymentMethods[0];
@@ -261,10 +291,16 @@ function renderAccount(data, config, refresh) {
   const orderList = document.getElementById('orderList'); orderList.replaceChildren();
   for (const order of data.orders || []) {
     const row = node('div', 'list-row');
-    const main = node('div', 'list-main'); main.append(node('b', '', `#${order.id} · ${text(order.planSnapshot?.name, order.planCode)} · ${money(order.amountCents)}`), node('small', '', `${text(order.status)} · ${dateText(order.createdAt)}`));
+    const main = node('div', 'list-main');
+    const amountText = order.paymentMethod === 'usdt' && order.payment?.amount ? `${order.payment.amount} USDT` : money(order.amountCents);
+    const detail = [text(order.status), dateText(order.createdAt)];
+    const matchText = usdtMatchText(order.payment);
+    if (matchText) detail.push(matchText);
+    if (order.payment?.txId) detail.push(`TxID ${order.payment.txId}`);
+    main.append(node('b', '', `#${order.id} · ${text(order.planSnapshot?.name, order.planCode)} · ${amountText}`), node('small', '', detail.join(' · ')));
     row.append(main);
     const pay = safeHttps(order.payUrl);
-    if (order.status === 'pending' && pay) { const link = node('a', 'btn btn-small btn-soft', '继续支付'); link.href = pay; link.target = '_blank'; link.rel = 'noopener noreferrer'; row.append(link); }
+    if (order.status === 'pending' && pay) { const link = node('a', 'btn btn-small btn-soft', order.paymentMethod === 'usdt' ? '继续 USDT 支付' : '继续支付'); link.href = pay; link.target = '_blank'; link.rel = 'noopener noreferrer'; row.append(link); }
     orderList.append(row);
   }
   if (!orderList.childElementCount) listEmpty(orderList, '暂无订单');
