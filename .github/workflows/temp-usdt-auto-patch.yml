@@ -19,76 +19,67 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Apply correctness patches
+      - name: Apply final correctness patches
         shell: python
         run: |
           from pathlib import Path
 
           changed = False
 
-          def patch(path, old, new, marker):
+          def replace_required(path, old, new):
               global changed
               p = Path(path)
               text = p.read_text()
-              if marker in text:
+              if new in text:
                   return
               if old not in text:
-                  raise SystemExit(f'expected snippet not found in {path}: {marker}')
+                  raise SystemExit(f'expected snippet not found in {path}')
               p.write_text(text.replace(old, new, 1))
               changed = True
 
-          patch(
-              'license-server/payment-system.mjs',
-              """    db.exec(`\n      CREATE TABLE IF NOT EXISTS secure_settings (""",
-              """    db.exec(`\n      CREATE TABLE IF NOT EXISTS app_settings (\n        key TEXT PRIMARY KEY,\n        value TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT;\n      CREATE TABLE IF NOT EXISTS secure_settings (""",
-              'CREATE TABLE IF NOT EXISTS app_settings (\n        key TEXT PRIMARY KEY,\n        value TEXT NOT NULL,'
-          )
+          # Undo an earlier broad replacement that accidentally touched session expiry.
+          p = Path('license-server/account-system.mjs')
+          text = p.read_text()
+          bad_session = "if (!allowExpiredPending && Date.parse(row.expires_at) <= Date.now()) {\n      db.prepare('UPDATE user_sessions SET revoked_at=? WHERE id=?').run(nowIso(), row.id);"
+          good_session = "if (Date.parse(row.expires_at) <= Date.now()) {\n      db.prepare('UPDATE user_sessions SET revoked_at=? WHERE id=?').run(nowIso(), row.id);"
+          if bad_session in text:
+              text = text.replace(bad_session, good_session, 1)
+              p.write_text(text)
+              changed = True
 
-          patch(
-              'license-server/payment-system.mjs',
-              """    const price = quote || usdtQuote(order.plan_code);\n    const details = method('usdt');\n    const now = nowIso();\n    db.prepare(`INSERT INTO usdt_order_payments(order_id,expected_amount_micros,asset,network,address,memo,updated_at)\n      VALUES(?,?,?,?,?,?,?)`).run(order.id, price.amountMicros, 'USDT', details?.crypto_network || '', details?.crypto_address || '', details?.crypto_memo || '', now);""",
-              """    const price = quote || usdtQuote(order.plan_code);\n    const baseAmountMicros = Number(price.amountMicros);\n    const reserved = new Set(db.prepare(`SELECT d.expected_amount_micros FROM usdt_order_payments d\n      JOIN membership_orders o ON o.id=d.order_id\n      WHERE o.status='pending' AND o.payment_method='usdt' AND o.id<>?`).all(order.id).map((row) => Number(row.expected_amount_micros)));\n    let expectedAmountMicros = null;\n    for (let offset = 0; offset <= 999; offset += 1) {\n      const candidate = baseAmountMicros + offset;\n      if (!reserved.has(candidate)) { expectedAmountMicros = candidate; break; }\n    }\n    if (!expectedAmountMicros) throw Object.assign(new Error('当前待支付 USDT 订单过多，暂时无法分配唯一付款金额，请稍后重试'), { status: 409, code: 'USDT_AMOUNT_POOL_EXHAUSTED' });\n    const details = method('usdt');\n    const now = nowIso();\n    db.prepare(`INSERT INTO usdt_order_payments(order_id,expected_amount_micros,asset,network,address,memo,updated_at)\n      VALUES(?,?,?,?,?,?,?)`).run(order.id, expectedAmountMicros, 'USDT', details?.crypto_network || '', details?.crypto_address || '', details?.crypto_memo || '', now);""",
-              'USDT_AMOUNT_POOL_EXHAUSTED'
-          )
-
-          patch(
-              'license-server/payment-system.mjs',
-              """      const usedTxIds = new Set(db.prepare(\"SELECT okx_tx_id FROM usdt_order_payments WHERE okx_tx_id<>''\").all().map((row) => row.okx_tx_id));\n      let settled = 0;""",
-              """      const usedTxIds = new Set(db.prepare(\"SELECT okx_tx_id FROM usdt_order_payments WHERE okx_tx_id<>''\").all().map((row) => row.okx_tx_id));\n      const activeOrderIds = new Set(orders.map((row) => row.order_id));\n      let settled = 0;""",
-              'const activeOrderIds = new Set(orders.map((row) => row.order_id));'
-          )
-          patch(
-              'license-server/payment-system.mjs',
-              "const candidates = orders.filter((row) => depositMatchesOrder(deposit, row, config));",
-              "const candidates = orders.filter((row) => activeOrderIds.has(row.order_id) && depositMatchesOrder(deposit, row, config));",
-              'activeOrderIds.has(row.order_id) && depositMatchesOrder'
-          )
-          patch(
-              'license-server/payment-system.mjs',
-              """          status.lastMatchedOrderId = candidate.order_id;\n          settled += 1;""",
-              """          status.lastMatchedOrderId = candidate.order_id;\n          activeOrderIds.delete(candidate.order_id);\n          settled += 1;""",
-              'activeOrderIds.delete(candidate.order_id);'
-          )
-
-          patch(
+          replace_required(
               'license-server/account-system.mjs',
-              "function markOrderPaid(row) {",
-              "function markOrderPaid(row, { allowExpiredPending = false } = {}) {",
-              'function markOrderPaid(row, { allowExpiredPending = false } = {}) {'
-          )
-          patch(
-              'license-server/account-system.mjs',
-              "if (Date.parse(row.expires_at) <= Date.now()) {",
-              "if (!allowExpiredPending && Date.parse(row.expires_at) <= Date.now()) {",
-              '!allowExpiredPending && Date.parse(row.expires_at) <= Date.now()'
-          )
-          patch(
-              'license-server/account-system.mjs',
-              "const paid = markOrderPaid(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(orderId)));",
-              "const paid = markOrderPaid(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(orderId)), { allowExpiredPending: context?.source === 'okx_auto' });",
-              "allowExpiredPending: context?.source === 'okx_auto'"
+              """  function markOrderPaid(row, { allowExpiredPending = false } = {}) {\n    if (!row) fail(404, 'ORDER_NOT_FOUND', '订单不存在');\n    if (row.status === 'paid') return row;\n    if (row.status !== 'pending') fail(409, 'ORDER_NOT_PENDING', '订单当前状态无法确认付款');\n    if (Date.parse(row.expires_at) <= Date.now()) {""",
+              """  function markOrderPaid(row, { allowExpiredPending = false } = {}) {\n    if (!row) fail(404, 'ORDER_NOT_FOUND', '订单不存在');\n    if (row.status === 'paid') return row;\n    if (row.status !== 'pending') fail(409, 'ORDER_NOT_PENDING', '订单当前状态无法确认付款');\n    if (!allowExpiredPending && Date.parse(row.expires_at) <= Date.now()) {"""
           )
 
+          replace_required(
+              'license-server/payment-system.mjs',
+              """      WHERE o.status='pending' AND o.payment_method='usdt' AND o.id<>?`).all(order.id).map((row) => Number(row.expected_amount_micros)));""",
+              """      WHERE o.status='pending' AND o.payment_method='usdt' AND o.id<>? AND o.expires_at>=?`).all(order.id, order.created_at).map((row) => Number(row.expected_amount_micros)));"""
+          )
+
+          p = Path('license-server/payment-system.mjs')
+          text = p.read_text()
+          if 'let startupTimer = null;' not in text:
+              text = text.replace('  let pollTimer = null;\n  let checking = false;', '  let pollTimer = null;\n  let startupTimer = null;\n  let checking = false;', 1)
+              changed = True
+          old_stop = """  function stopPoller() {\n    if (pollTimer) clearInterval(pollTimer);\n    pollTimer = null;\n  }"""
+          new_stop = """  function stopPoller() {\n    if (pollTimer) clearInterval(pollTimer);\n    if (startupTimer) clearTimeout(startupTimer);\n    pollTimer = null;\n    startupTimer = null;\n  }"""
+          if new_stop not in text:
+              if old_stop not in text: raise SystemExit('stopPoller anchor missing')
+              text = text.replace(old_stop, new_stop, 1)
+              changed = True
+          old_start = "setTimeout(() => void runAutoSettlement().catch(() => {}), 1000).unref?.();"
+          new_start = "startupTimer = setTimeout(() => void runAutoSettlement().catch(() => {}), 1000);\n    startupTimer.unref?.();"
+          if new_start not in text:
+              if old_start not in text: raise SystemExit('startup timer anchor missing')
+              text = text.replace(old_start, new_start, 1)
+              changed = True
+          p.write_text(text)
+
+          # Keep USDT pending beyond the payment deadline so a payment made inside
+          # the deadline can still become state=2 after confirmations complete.
           for path in ['license-server/account-system.mjs', 'license-server/site-account.mjs']:
               p = Path(path)
               text = p.read_text()
@@ -98,18 +89,9 @@ jobs:
                   p.write_text(text.replace(old, new))
                   changed = True
 
-          p = Path('license-server/package.json')
-          text = p.read_text()
-          if 'node --check okx-client.mjs' not in text:
-              old = 'node --check server.mjs && node --check account-system.mjs'
-              if old not in text:
-                  raise SystemExit('package check script anchor not found')
-              p.write_text(text.replace(old, 'node --check server.mjs && node --check okx-client.mjs && node --check account-system.mjs', 1))
-              changed = True
-
           if changed:
               Path('/tmp/usdt-patch-changed').write_text('1')
-      - name: Commit correctness patches
+      - name: Commit final correctness patches
         shell: bash
         run: |
           if [ ! -f /tmp/usdt-patch-changed ]; then
@@ -118,6 +100,6 @@ jobs:
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add license-server/payment-system.mjs license-server/account-system.mjs license-server/site-account.mjs license-server/package.json
-          git commit -m 'fix: harden USDT automatic settlement matching'
+          git add license-server/account-system.mjs license-server/site-account.mjs license-server/payment-system.mjs
+          git commit -m 'fix: preserve session expiry and finalize USDT matching'
           git push origin HEAD:feat/usdt-okx-auto-settlement-20260903
