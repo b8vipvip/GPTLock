@@ -1,0 +1,28 @@
+name: Temporary GPTWork Rename Audit
+
+on:
+  push:
+    branches:
+      - refactor/gptwork-unified-brand-20260903
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find legacy GPTLock identifiers
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo '===== FILES ====='
+          git grep -I -l -E 'GPTLock|GPTLOCK|gptlock|GptLock|com\.gptlock' -- ':!*.png' ':!*.jpg' ':!*.jpeg' ':!*.gif' ':!*.ico' | sort || true
+          echo '===== COUNTS BY TOKEN ====='
+          for token in GPTLock GPTLOCK gptlock GptLock com.gptlock; do
+            count="$(git grep -I -o -F "$token" -- ':!*.png' ':!*.jpg' ':!*.jpeg' ':!*.gif' ':!*.ico' 2>/dev/null | wc -l | tr -d ' ')"
+            echo "$token=$count"
+          done
+          echo '===== MATCHES ====='
+          git grep -I -n -E 'GPTLock|GPTLOCK|gptlock|GptLock|com\.gptlock' -- ':!*.png' ':!*.jpg' ':!*.jpeg' ':!*.gif' ':!*.ico' || true
