@@ -139,6 +139,7 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
   let runtimeReady = false;
   let settleOrderById = null;
   let pollTimer = null;
+  let startupTimer = null;
   let checking = false;
   const status = { lastCheckAt: null, lastSuccessAt: null, lastError: '', lastMatchedOrderId: null };
   const CONFIG_KEY = secret ? createHmac('sha256', secret).update('gptlock-okx-payment-settings:v1').digest() : null;
@@ -299,7 +300,7 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
     const baseAmountMicros = Number(price.amountMicros);
     const reserved = new Set(db.prepare(`SELECT d.expected_amount_micros FROM usdt_order_payments d
       JOIN membership_orders o ON o.id=d.order_id
-      WHERE o.status='pending' AND o.payment_method='usdt' AND o.id<>?`).all(order.id).map((row) => Number(row.expected_amount_micros)));
+      WHERE o.status='pending' AND o.payment_method='usdt' AND o.id<>? AND o.expires_at>=?`).all(order.id, order.created_at).map((row) => Number(row.expected_amount_micros)));
     let expectedAmountMicros = null;
     for (let offset = 0; offset <= 999; offset += 1) {
       const candidate = baseAmountMicros + offset;
@@ -468,7 +469,9 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
 
   function stopPoller() {
     if (pollTimer) clearInterval(pollTimer);
+    if (startupTimer) clearTimeout(startupTimer);
     pollTimer = null;
+    startupTimer = null;
   }
   function startPoller() {
     stopPoller();
@@ -478,7 +481,8 @@ export function createPaymentSystem({ db, publicOrigin, json, secret = '', env =
       void runAutoSettlement().catch((error) => logger.warn?.('GPTLock OKX settlement check failed:', error.message));
     }, config.pollSeconds * 1000);
     pollTimer.unref?.();
-    setTimeout(() => void runAutoSettlement().catch(() => {}), 1000).unref?.();
+    startupTimer = setTimeout(() => void runAutoSettlement().catch(() => {}), 1000);
+    startupTimer.unref?.();
   }
   function attachSettlement(handler) {
     ensureRuntimeTables();

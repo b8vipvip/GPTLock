@@ -528,7 +528,7 @@ export function createAccountSystem({
       FROM user_sessions s JOIN users u ON u.id=s.user_id
       WHERE s.token_hash=? AND s.revoked_at IS NULL`).get(sha256(token));
     if (!row) return null;
-    if (!allowExpiredPending && Date.parse(row.expires_at) <= Date.now()) {
+    if (Date.parse(row.expires_at) <= Date.now()) {
       db.prepare('UPDATE user_sessions SET revoked_at=? WHERE id=?').run(nowIso(), row.id);
       return null;
     }
@@ -803,7 +803,7 @@ export function createAccountSystem({
     if (!row) fail(404, 'ORDER_NOT_FOUND', '订单不存在');
     if (row.status === 'paid') return row;
     if (row.status !== 'pending') fail(409, 'ORDER_NOT_PENDING', '订单当前状态无法确认付款');
-    if (Date.parse(row.expires_at) <= Date.now()) {
+    if (!allowExpiredPending && Date.parse(row.expires_at) <= Date.now()) {
       db.prepare(`UPDATE membership_orders SET status='expired' WHERE id=? AND status='pending'`).run(row.id);
       fail(409, 'ORDER_EXPIRED', '订单已过期，请让用户重新创建订单');
     }
