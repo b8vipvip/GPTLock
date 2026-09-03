@@ -92,6 +92,10 @@ async function initAccount() {
   const loginCard = document.getElementById('loginCard');
   let config = { plans: [], paymentMethods: [] };
   try { config = await api('/site/api/account/config'); } catch {}
+  try {
+    const paymentConfig = await api('/site/api/payments');
+    config.paymentMethods = paymentConfig.paymentMethods || config.paymentMethods || [];
+  } catch {}
 
   async function refresh() {
     loading.classList.remove('hidden');
@@ -156,6 +160,42 @@ async function initAccount() {
   await refresh();
 }
 
+function paymentMethodLabel(method) {
+  if (method.code === 'wechat') return '微信支付';
+  if (method.code === 'alipay') return '支付宝';
+  if (method.code === 'usdt') return 'USDT';
+  return method.name || method.code;
+}
+
+function renderPaymentBox(result, method) {
+  const box = document.getElementById('paymentBox');
+  box.className = 'notice good payment-box';
+  box.replaceChildren();
+  box.append(node('strong', '', `订单 #${result.order.id} · ${paymentMethodLabel(method)}`));
+  if (result.instructions) box.append(node('p', '', result.instructions));
+  if (method.code === 'usdt' && method.crypto) {
+    const parts = [];
+    if (method.crypto.network) parts.push(`网络：${method.crypto.network}`);
+    if (method.crypto.address) parts.push(`地址：${method.crypto.address}`);
+    if (method.crypto.memo) parts.push(`Memo/Tag：${method.crypto.memo}`);
+    if (parts.length) box.append(node('p', 'payment-crypto', parts.join('\n')));
+  }
+  const qr = safeHttps(method.qrUrl);
+  if (qr) {
+    const image = document.createElement('img');
+    image.className = 'payment-qr';
+    image.src = `${qr}${qr.includes('?') ? '&' : '?'}t=${Date.now()}`;
+    image.alt = `${paymentMethodLabel(method)} 收款二维码`;
+    box.append(image);
+  }
+  const pay = safeHttps(result.order.payUrl || method.payUrl);
+  if (pay && pay !== qr) {
+    const link = node('a', 'btn btn-small btn-soft', method.code === 'usdt' ? '打开 USDT 收款链接 →' : '打开支付页面 →');
+    link.href = pay; link.target = '_blank'; link.rel = 'noopener noreferrer'; box.append(link);
+  }
+  box.append(node('small', '', '付款后订单仍会保持“待支付”，只有管理员核对实际到账并确认后才会开通会员。'));
+}
+
 function renderAccount(data, config, refresh) {
   const account = data.account || {};
   const entitlement = account.entitlement || {};
@@ -196,19 +236,24 @@ function renderAccount(data, config, refresh) {
   for (const plan of config.plans || []) {
     const card = node('div', 'plan');
     card.append(node('strong', '', plan.name), node('div', 'plan-price', money(plan.priceCents)), node('small', '', `${plan.durationDays} 天 · 最多 ${plan.limits?.devices || 1} 台设备`));
-    if (config.paymentMethods?.length) card.append(actionButton('创建购买订单', async () => {
-      const method = config.paymentMethods[0];
-      try {
-        const result = await api('/site/api/account/orders', { method: 'POST', body: JSON.stringify({ planCode: plan.code, paymentMethod: method.code }) });
-        const box = document.getElementById('paymentBox'); box.className = 'notice good'; box.replaceChildren();
-        box.append(document.createTextNode(`订单 #${result.order.id} 已创建。${result.instructions ? ` ${result.instructions}` : ''} `));
-        const pay = safeHttps(result.order.payUrl);
-        if (pay) { const link = node('a', '', '打开支付页面 →'); link.href = pay; link.target = '_blank'; link.rel = 'noopener noreferrer'; box.append(link); }
-        await refresh();
-      } catch (error) {
-        const box = document.getElementById('paymentBox'); notice(box, error.message, 'error');
+    if (config.paymentMethods?.length) {
+      const select = document.createElement('select');
+      select.className = 'payment-method-select';
+      select.setAttribute('aria-label', '选择支付方式');
+      for (const method of config.paymentMethods) {
+        const option = document.createElement('option'); option.value = method.code; option.textContent = paymentMethodLabel(method); select.append(option);
       }
-    }));
+      card.append(select, actionButton('创建购买订单', async () => {
+        const method = config.paymentMethods.find((item) => item.code === select.value) || config.paymentMethods[0];
+        try {
+          const result = await api('/site/api/account/orders', { method: 'POST', body: JSON.stringify({ planCode: plan.code, paymentMethod: method.code }) });
+          renderPaymentBox(result, method);
+          await refresh();
+        } catch (error) {
+          const box = document.getElementById('paymentBox'); notice(box, error.message, 'error');
+        }
+      }));
+    }
     planList.append(card);
   }
   if (!planList.childElementCount) listEmpty(planList, '当前没有可购买的会员方案');
