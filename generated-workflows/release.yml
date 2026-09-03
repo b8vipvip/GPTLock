@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: gptlock-release-${{ github.repository }}
+  group: gptwork-release-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:

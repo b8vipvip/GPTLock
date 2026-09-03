@@ -10,7 +10,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: gptlock-repository-housekeeping
+  group: gptwork-repository-housekeeping
   cancel-in-progress: false
 
 jobs:
