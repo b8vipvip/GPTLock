@@ -1,0 +1,36 @@
+name: Temporary GPTWork v0.5.37 Lock Refresh
+
+on:
+  push:
+    branches:
+      - fix/gptwork-assets-chat-length-v0537-20260903
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    if: github.event.head_commit.message == 'chore: refresh GPTWork v0.5.37 lockfile'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/gptwork-assets-chat-length-v0537-20260903
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Refresh native core lockfile
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cargo generate-lockfile --manifest-path native-core/Cargo.toml
+          cargo metadata --locked --no-deps --manifest-path native-core/Cargo.toml >/dev/null
+      - name: Commit lockfile
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add native-core/Cargo.lock
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'release: refresh GPTWork v0.5.37 Cargo.lock'
+          git push origin HEAD:fix/gptwork-assets-chat-length-v0537-20260903
