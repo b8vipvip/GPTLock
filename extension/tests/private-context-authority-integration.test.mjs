@@ -26,7 +26,7 @@ test('send-time guard continues to delegate exact private decisions to the priva
 });
 
 test('chat-length display is decoupled from private remainingPercent and keeps the public verified estimator', () => {
-  assert.doesNotMatch(authorityText, /domHistorySnapshot|dom-visible-fallback/);
+  assert.match(authorityText, /privateHistorySnapshot\?\.\(\)/);
   assert.match(indicatorText, /estimateTextTokens/);
   assert.match(indicatorText, /computeLocalBudget/);
   assert.match(indicatorText, /learned-chatgpt-thread-boundary/);
