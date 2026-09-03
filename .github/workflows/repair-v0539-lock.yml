@@ -1,0 +1,48 @@
+name: Repair v0.5.39 Cargo lock
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair-lock:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Synchronize native-core Cargo.lock package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('native-core/Cargo.lock')
+          text = p.read_text()
+          old = 'name = "gptwork-core"\nversion = "0.5.38"'
+          new = 'name = "gptwork-core"\nversion = "0.5.39"'
+          if old not in text:
+              if new in text:
+                  print('Cargo.lock already synchronized')
+                  raise SystemExit(0)
+              raise SystemExit('expected gptwork-core v0.5.38 entry not found')
+          p.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+          git diff -- native-core/Cargo.lock
+      - name: Commit synchronized lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- native-core/Cargo.lock; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add native-core/Cargo.lock
+          git commit -m "fix: synchronize v0.5.39 Cargo lock"
+          git push origin HEAD:main
