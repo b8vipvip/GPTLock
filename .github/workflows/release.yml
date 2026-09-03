@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: gptlock-release-${{ github.repository }}
+  group: gptwork-release-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -152,7 +152,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           cargo build --release --manifest-path private-engine/Cargo.toml
-          engine="$GITHUB_WORKSPACE/private-engine/target/release/gptlock-private-engine"
+          engine="$GITHUB_WORKSPACE/private-engine/target/release/gptwork-private-engine"
           test -x "$engine"
           echo "GPTLOCK_PRIVATE_ENGINE=$engine" >> "$GITHUB_ENV"
           echo "GPTLOCK_REQUIRE_PRIVATE_ENGINE=1" >> "$GITHUB_ENV"
@@ -163,27 +163,36 @@ jobs:
           cargo build --locked --release --manifest-path native-core/Cargo.toml
           chmod +x packaging/linux/build-deb.sh
           GPTLOCK_VERSION="$RELEASE_VERSION" packaging/linux/build-deb.sh dist
-          tar_files=(gptlock-core)
+          tar_files=(gptwork-core)
           if [[ -n "${GPTLOCK_PRIVATE_ENGINE:-}" ]]; then
-            cp "$GPTLOCK_PRIVATE_ENGINE" native-core/target/release/gptlock-engine
-            chmod 0755 native-core/target/release/gptlock-engine
-            tar_files+=(gptlock-engine)
+            cp "$GPTLOCK_PRIVATE_ENGINE" native-core/target/release/gptwork-engine
+            chmod 0755 native-core/target/release/gptwork-engine
+            tar_files+=(gptwork-engine)
           fi
-          tar -C native-core/target/release -czf "dist/gptlock-core-${RELEASE_VERSION}-linux-x64.tar.gz" "${tar_files[@]}"
+          tar -C native-core/target/release -czf "dist/gptwork-core-${RELEASE_VERSION}-linux-x64.tar.gz" "${tar_files[@]}"
           cd extension
-          zip -9 "../dist/gptlock-extension-${RELEASE_VERSION}.zip" *.js *.css *.html manifest.json icons/*.png
-          unzip -l "../dist/gptlock-extension-${RELEASE_VERSION}.zip" | grep -q 'account-client.js'
-          unzip -l "../dist/gptlock-extension-${RELEASE_VERSION}.zip" | grep -q 'auth-gate.js'
-          unzip -l "../dist/gptlock-extension-${RELEASE_VERSION}.zip" | grep -q 'account.html'
-          unzip -l "../dist/gptlock-extension-${RELEASE_VERSION}.zip" | grep -q 'icons/icon128.png'
+          zip -9 "../dist/gptwork-extension-${RELEASE_VERSION}.zip" *.js *.css *.html manifest.json icons/*.png
+          unzip -l "../dist/gptwork-extension-${RELEASE_VERSION}.zip" | grep -q 'account-client.js'
+          unzip -l "../dist/gptwork-extension-${RELEASE_VERSION}.zip" | grep -q 'auth-gate.js'
+          unzip -l "../dist/gptwork-extension-${RELEASE_VERSION}.zip" | grep -q 'account.html'
+          unzip -l "../dist/gptwork-extension-${RELEASE_VERSION}.zip" | grep -q 'icons/icon128.png'
+      - name: Add legacy download aliases for pre-GPTWork clients
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cp "dist/gptwork-core-${RELEASE_VERSION}-linux-x64.tar.gz" "dist/gptlock-core-${RELEASE_VERSION}-linux-x64.tar.gz"
+          cp "dist/gptwork-extension-${RELEASE_VERSION}.zip" "dist/gptlock-extension-${RELEASE_VERSION}.zip"
+          cp "dist/gptwork_${RELEASE_VERSION}_amd64.deb" "dist/gptlock_${RELEASE_VERSION}_amd64.deb"
       - name: Enforce Linux release distribution boundary
         shell: bash
         run: |
           set -Eeuo pipefail
           version="$(python -c 'import json; print(json.load(open("extension/manifest.json"))["version"])')"
-          extension_zip="dist/gptlock-extension-${version}.zip"
-          core_tar="dist/gptlock-core-${version}-linux-x64.tar.gz"
-          deb="$(find dist -maxdepth 1 -type f -name 'gptlock_*_amd64.deb' -print -quit)"
+          extension_zip="dist/gptwork-extension-${version}.zip"
+          core_tar="dist/gptwork-core-${version}-linux-x64.tar.gz"
+          deb="$(find dist -maxdepth 1 -type f -name 'gptwork_*_amd64.deb' -print -quit)"
           test -f "$extension_zip"
           test -f "$core_tar"
           test -n "$deb" && test -f "$deb"
@@ -192,14 +201,14 @@ jobs:
             exit 1
           fi
           entries="$(tar -tzf "$core_tar")"
-          grep -qx 'gptlock-core' <<<"$entries"
-          grep -qx 'gptlock-engine' <<<"$entries"
+          grep -qx 'gptwork-core' <<<"$entries"
+          grep -qx 'gptwork-engine' <<<"$entries"
           if grep -Eq '(^|/)(private-engine|Cargo\.(toml|lock)|[^/]+\.rs)(/|$)' <<<"$entries"; then
             echo 'Private engine source leaked into Linux core archive.' >&2
             exit 1
           fi
           deb_entries="$(dpkg-deb --contents "$deb")"
-          grep -q '/usr/bin/gptlock-engine$' <<<"$deb_entries"
+          grep -q '/usr/bin/gptwork-engine$' <<<"$deb_entries"
           if grep -Eq 'private-engine|Cargo\.(toml|lock)|\.rs($|[[:space:]])' <<<"$deb_entries"; then
             echo 'Private engine source leaked into Linux deb.' >&2
             exit 1
@@ -229,7 +238,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           cargo build --release --manifest-path private-engine/Cargo.toml
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $engine = (Resolve-Path 'private-engine\target\release\gptlock-private-engine.exe').Path
+          $engine = (Resolve-Path 'private-engine\target\release\gptwork-private-engine.exe').Path
           if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) { throw 'Private engine build output is missing.' }
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "GPTLOCK_PRIVATE_ENGINE=$engine"
           Add-Content -LiteralPath $env:GITHUB_ENV -Value 'GPTLOCK_REQUIRE_PRIVATE_ENGINE=1'
@@ -264,7 +273,7 @@ jobs:
             return $tool.FullName
           }
 
-          function Sign-GPTLockFile([string]$Path, [string]$SignTool) {
+          function Sign-GPTWorkFile([string]$Path, [string]$SignTool) {
             & $SignTool sign /fd SHA256 /td SHA256 /tr $timestampUrl /f $certPath /p $env:GPTLOCK_CODESIGN_PFX_PASSWORD $Path
             if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed: $Path" }
             $signature = Get-AuthenticodeSignature -LiteralPath $Path
@@ -291,9 +300,9 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
             if ($signingEnabled) {
-              Sign-GPTLockFile 'native-core\target\release\gptlock-core.exe' $signTool
+              Sign-GPTWorkFile 'native-core\target\release\gptwork-core.exe' $signTool
               if (-not [string]::IsNullOrWhiteSpace($env:GPTLOCK_PRIVATE_ENGINE) -and (Test-Path -LiteralPath $env:GPTLOCK_PRIVATE_ENGINE)) {
-                Sign-GPTLockFile $env:GPTLOCK_PRIVATE_ENGINE $signTool
+                Sign-GPTWorkFile $env:GPTLOCK_PRIVATE_ENGINE $signTool
               }
             }
 
@@ -306,12 +315,12 @@ jobs:
               if (-not (Test-Path -LiteralPath $env:GPTLOCK_PRIVATE_ENGINE)) { throw 'Configured private engine path does not exist.' }
               $isccArgs += "/DPrivateEnginePath=$($env:GPTLOCK_PRIVATE_ENGINE)"
             }
-            $isccArgs += 'packaging\windows\GPTLock.iss'
+            $isccArgs += 'packaging\windows\GPTWork.iss'
             & $iscc @isccArgs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
             if ($signingEnabled) {
-              Sign-GPTLockFile 'dist\windows\GPTLockSetup-x64.exe' $signTool
+              Sign-GPTWorkFile 'dist\windows\GPTWorkSetup-x64.exe' $signTool
             }
           }
           finally {
@@ -319,18 +328,21 @@ jobs:
               Remove-Item -LiteralPath $certPath -Force
             }
           }
+      - name: Add legacy Windows installer alias for pre-GPTWork clients
+        shell: pwsh
+        run: Copy-Item -LiteralPath 'dist\windows\GPTWorkSetup-x64.exe' -Destination 'dist\windows\GPTLockSetup-x64.exe' -Force
       - name: Enforce Windows release distribution boundary
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $setup = (Resolve-Path 'dist\windows\GPTLockSetup-x64.exe').Path
-          $root = Join-Path $env:RUNNER_TEMP 'GPTLock-Release-Boundary-Inspect'
+          $setup = (Resolve-Path 'dist\windows\GPTWorkSetup-x64.exe').Path
+          $root = Join-Path $env:RUNNER_TEMP 'GPTWork-Release-Boundary-Inspect'
           Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
           & $setup /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/DIR=$root"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           foreach ($required in @(
-            (Join-Path $root 'bin\gptlock-core.exe'),
-            (Join-Path $root 'bin\gptlock-engine.exe'),
+            (Join-Path $root 'bin\gptwork-core.exe'),
+            (Join-Path $root 'bin\gptwork-engine.exe'),
             (Join-Path $root 'extension\manifest.json')
           )) {
             if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing release payload: $required" }
@@ -345,7 +357,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: release-windows
-          path: dist/windows/GPTLockSetup-x64.exe
+          path: |
+            dist/windows/GPTWorkSetup-x64.exe
+            dist/windows/GPTLockSetup-x64.exe
           if-no-files-found: error
 
   publish:
@@ -384,4 +398,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             "${tag_arguments[@]}" \
             --generate-notes \
-            --title "GPTLock $RELEASE_TAG"
+            --title "GPTWork $RELEASE_TAG"
