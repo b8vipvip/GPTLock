@@ -33,12 +33,12 @@ test('release mirror falls back from failed Node fetch to injected curl transpor
   const assetUrl = 'https://api.github.com/repos/b8vipvip/GPTLock/releases/assets/9001';
   const releases = [{
     tag_name: 'v0.5.30',
-    name: 'GPTLock v0.5.30',
+    name: 'GPTWork v0.5.30',
     draft: false,
     prerelease: false,
     published_at: '2026-09-01T00:00:00Z',
     assets: [{
-      name: 'GPTLockSetup-x64.exe',
+      name: 'GPTWorkSetup-x64.exe',
       url: assetUrl,
       size: installer.length,
       digest,

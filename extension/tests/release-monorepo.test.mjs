@@ -21,7 +21,7 @@ test('release builds the private engine from the same private monorepo commit', 
   assert.match(text, /Build private engine from this commit/);
   assert.match(text, /Enforce Linux release distribution boundary/);
   assert.match(text, /Enforce Windows release distribution boundary/);
-  assert.match(text, /gptlock-engine/);
+  assert.match(text, /gptwork-engine/);
 });
 
 test('release jobs cache both native runtime crates', async () => {

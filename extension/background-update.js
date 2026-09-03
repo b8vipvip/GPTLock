@@ -123,15 +123,15 @@ async function setActionUpdateState({ available, version, installing = false, er
   if (!chromeApi.action) return;
   if (!available) {
     await chromeApi.action.setBadgeText({ text: '' }).catch(() => {});
-    await chromeApi.action.setTitle({ title: 'GPTLock' }).catch(() => {});
+    await chromeApi.action.setTitle({ title: 'GPTWork' }).catch(() => {});
     return;
   }
   const badge = error ? 'ERR' : installing ? 'UPD' : 'NEW';
   const title = error
-    ? `GPTLock ${version || ''} 自动更新失败，点击查看`
+    ? `GPTWork ${version || ''} 自动更新失败，点击查看`
     : installing
-      ? `GPTLock 正在自动更新到 ${version || '新版本'}`
-      : `GPTLock ${version || '新版本'} 已由服务端发布`;
+      ? `GPTWork 正在自动更新到 ${version || '新版本'}`
+      : `GPTWork ${version || '新版本'} 已由服务端发布`;
   await chromeApi.action.setBadgeText({ text: badge }).catch(() => {});
   await chromeApi.action.setTitle({ title }).catch(() => {});
 }
@@ -218,7 +218,7 @@ async function autoInstallWindows(release, nativeStatus, chromeApi = globalThis.
     phase: 'verifying', percent: 55,
     targetVersion,
     nativeVersion: nativeStatus?.version ?? null,
-    message: '安装包已从 GPTLock 服务端下载，正在校验 SHA-256…',
+    message: '安装包已从 GPTWork 服务端下载，正在校验 SHA-256…',
     downloadId,
   }, chromeApi);
   const prepared = await nativeRequest('prepare_update', {
@@ -233,7 +233,7 @@ async function autoInstallWindows(release, nativeStatus, chromeApi = globalThis.
     phase: 'installing', percent: 70,
     targetVersion,
     nativeVersion: nativeStatus?.version ?? null,
-    message: `正在后台安装 ${targetVersion}，GPTLock Core 会短暂重启…`,
+    message: `正在后台安装 ${targetVersion}，GPTWork Core 会短暂重启…`,
     launcherStrategy: prepared?.launcherStrategy ?? null,
     launcherProcessId: prepared?.launcherProcessId ?? null,
   }, chromeApi);
@@ -271,7 +271,7 @@ async function checkAndMaybeInstall(reason = 'scheduled', chromeApi = globalThis
       await setUpdateStatus({
         phase: 'ready', percent: 12,
         targetVersion: release.latestVersion,
-        message: `服务端已发布 GPTLock ${release.latestVersion}，正在准备自动更新…`,
+        message: `服务端已发布 GPTWork ${release.latestVersion}，正在准备自动更新…`,
       }, chromeApi);
       logUpdate('info', 'server_release_notification_received', {
         reason,
@@ -288,8 +288,8 @@ async function checkAndMaybeInstall(reason = 'scheduled', chromeApi = globalThis
         nativeVersion: nativeStatus?.version,
       })) {
         const message = platform?.os === 'win'
-          ? `发现 ${release.latestVersion}；本地 Core 暂不满足安全自动更新条件，点击 GPTLock 查看`
-          : `发现 ${release.latestVersion}；已通知客户端，当前系统更新包从 GPTLock 官网提供`;
+          ? `发现 ${release.latestVersion}；本地 Core 暂不满足安全自动更新条件，点击 GPTWork 查看`
+          : `发现 ${release.latestVersion}；已通知客户端，当前系统更新包从 GPTWork 官网提供`;
         await setUpdateStatus({
           phase: 'ready', percent: 12,
           targetVersion: release.latestVersion,

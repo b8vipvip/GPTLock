@@ -11,7 +11,7 @@ import { createSiteReleaseFeed } from '../site-releases.mjs';
 const SERVER_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const TOKEN = 'github_pat_private_release_read_only_test_secret';
 const ORIGIN = 'https://gptlock.mv3.cn';
-const INSTALLER = 'GPTLockSetup-x64.exe';
+const INSTALLER = 'GPTWorkSetup-x64.exe';
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -20,7 +20,7 @@ function sha256(bytes) {
 function releaseRow({ tag = 'v0.5.30', assets }) {
   return [{
     tag_name: tag,
-    name: `GPTLock ${tag}`,
+    name: `GPTWork ${tag}`,
     body: `Release notes for ${tag}`,
     draft: false,
     prerelease: false,
@@ -76,18 +76,18 @@ function testFeed({ mirrorRoot, currentRelease }) {
 function fixture(tag = 'v0.5.30', idBase = 100) {
   const installer = Buffer.from(`installer-${tag}`);
   const extension = Buffer.from(`extension-${tag}`);
-  const sums = Buffer.from(`${sha256(installer)}  ${INSTALLER}\n${sha256(extension)}  gptlock-extension-${tag.slice(1)}.zip\n`);
+  const sums = Buffer.from(`${sha256(installer)}  ${INSTALLER}\n${sha256(extension)}  gptwork-extension-${tag.slice(1)}.zip\n`);
   const rows = releaseRow({
     tag,
     assets: [
       asset(INSTALLER, idBase + 1, installer, tag),
-      asset(`gptlock-extension-${tag.slice(1)}.zip`, idBase + 2, extension, tag),
+      asset(`gptwork-extension-${tag.slice(1)}.zip`, idBase + 2, extension, tag),
       asset('SHA256SUMS.txt', idBase + 3, sums, tag),
     ],
   });
   rows.bytesByName = {
     [INSTALLER]: installer,
-    [`gptlock-extension-${tag.slice(1)}.zip`]: extension,
+    [`gptwork-extension-${tag.slice(1)}.zip`]: extension,
     'SHA256SUMS.txt': sums,
   };
   rows.bytesByUrl = Object.fromEntries(rows[0].assets.map((item) => [item.url, rows.bytesByName[item.name]]));

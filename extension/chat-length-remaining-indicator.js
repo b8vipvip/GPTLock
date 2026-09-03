@@ -78,7 +78,7 @@
       return `聊天长度剩余：${formatPercent(state.percent)}\n根据当前聊天状态计算；检测到 ChatGPT 真实长度上限提示时会直接显示 0%。${suffix}`;
     }
     if (state.status === 'unavailable') {
-      return '聊天长度剩余：暂不可用\n当前本地计算暂不可用；GPTLock 会自动重试，且不会因此阻止正常聊天。';
+      return '聊天长度剩余：暂不可用\n当前本地计算暂不可用；GPTWork 会自动重试，且不会因此阻止正常聊天。';
     }
     return '聊天长度剩余：计算中\n正在读取当前聊天状态并等待本地计算结果。';
   }

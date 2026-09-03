@@ -1,27 +1,27 @@
-# GPTLock
+# GPTWork
 
-GPTLock 是面向 ChatGPT 官方网页聊天的模型与推理偏好管理工具，支持 Windows / Linux 上的 Chrome、Chromium 和 Edge。
+GPTWork 是面向 ChatGPT 官方网页聊天的模型与推理偏好管理工具，支持 Windows / Linux 上的 Chrome、Chromium 和 Edge。
 
 当前正式版本：**0.5.28**。
 
 ## 用户可以做什么
 
 - 保存常用模型与推理强度偏好；
-- 在 ChatGPT 网页聊天中启用 GPTLock，并获得清晰的当前状态提示；
+- 在 ChatGPT 网页聊天中启用 GPTWork，并获得清晰的当前状态提示；
 - 需要时运行自动验证和导出诊断信息；
-- 使用 GPTLock 账户管理权益、设备和会话；
+- 使用 GPTWork 账户管理权益、设备和会话；
 - 通过正式发布页获取 Windows、Linux 和扩展安装文件；
 - 使用产品内更新能力保持客户端和服务端版本更新。
 
-GPTLock 不使用 OpenAI API，也不会绕过 ChatGPT 套餐、额度、区域、账号或模型可用性限制。实际可使用的模型最终仍由 ChatGPT 平台和用户账户决定。
+GPTWork 不使用 OpenAI API，也不会绕过 ChatGPT 套餐、额度、区域、账号或模型可用性限制。实际可使用的模型最终仍由 ChatGPT 平台和用户账户决定。
 
 ## 最短使用流程
 
-1. 从正式 Release 或 GPTLock 官网下载对应平台版本；
+1. 从正式 Release 或 GPTWork 官网下载对应平台版本；
 2. 完成安装并启用浏览器扩展；
-3. 登录 GPTLock 账户；
+3. 登录 GPTWork 账户；
 4. 在设置中选择首选模型与推理偏好；
-5. 开启 GPTLock 后正常使用 ChatGPT；
+5. 开启 GPTWork 后正常使用 ChatGPT；
 6. 只有遇到异常时才使用自动验证、诊断或运行日志。
 
 详细步骤见 [安装说明](docs/INSTALL.md) 和 [使用说明](docs/USAGE.md)。
@@ -35,9 +35,9 @@ GPTLock 不使用 OpenAI API，也不会绕过 ChatGPT 套餐、额度、区域�
 
 ## 源码与发布边界
 
-本仓库是 GPTLock 的**公开发行仓库**，用于官网、用户界面、安装/打包、发布元数据、兼容性接口和必要的客户端壳层。
+本仓库是 GPTWork 的**公开发行仓库**，用于官网、用户界面、安装/打包、发布元数据、兼容性接口和必要的客户端壳层。
 
-GPTLock 正在迁移到 public/private split-source 架构。实现敏感的判断、验证、学习和特权运行逻辑不作为公共源码接口继续演进。当前树中仍存在一部分 v0.5.x 兼容构建所需的旧实现源码，它们已经冻结，只用于迁移期间维持现有安装与发布链路；后续由私有构建产物替代后会从当前公开树删除。
+GPTWork 正在迁移到 public/private split-source 架构。实现敏感的判断、验证、学习和特权运行逻辑不作为公共源码接口继续演进。当前树中仍存在一部分 v0.5.x 兼容构建所需的旧实现源码，它们已经冻结，只用于迁移期间维持现有安装与发布链路；后续由私有构建产物替代后会从当前公开树删除。
 
 更多边界说明见 [PRIVATE_CORE_BOUNDARY.md](PRIVATE_CORE_BOUNDARY.md)。该文件只说明仓库职责，不公开内部实现方式。
 
@@ -55,6 +55,6 @@ GPTLock 正在迁移到 public/private split-source 架构。实现敏感的判�
 
 ## English
 
-GPTLock manages model and reasoning preferences for official ChatGPT web chats on Windows and Linux. It provides a browser extension, account/device management, diagnostics, and signed/packaged release workflows without using the OpenAI API or bypassing ChatGPT account limits.
+GPTWork manages model and reasoning preferences for official ChatGPT web chats on Windows and Linux. It provides a browser extension, account/device management, diagnostics, and signed/packaged release workflows without using the OpenAI API or bypassing ChatGPT account limits.
 
 This repository is the public distribution surface. Proprietary implementation-sensitive behavior is moving to a private core and is exposed to public components only through stable compatibility contracts and released artifacts. Legacy v0.5.x core source that remains here is frozen for migration compatibility and is not the location for new proprietary development.

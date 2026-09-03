@@ -132,9 +132,9 @@ export async function sendSmtpMail(config, message) {
   const username = String(config?.username || '').trim();
   const password = String(config?.password || '');
   const fromEmail = String(config?.fromEmail || username).trim();
-  const fromName = sanitizeHeader(config?.fromName || 'GPTLock');
+  const fromName = sanitizeHeader(config?.fromName || 'GPTWork');
   const to = String(message?.to || '').trim();
-  const subject = sanitizeHeader(message?.subject || 'GPTLock');
+  const subject = sanitizeHeader(message?.subject || 'GPTWork');
   const text = String(message?.text || '');
   const timeoutMs = Math.max(3000, Number(config?.timeoutMs || 12000));
 
@@ -172,7 +172,7 @@ export async function sendSmtpMail(config, message) {
       'MIME-Version: 1.0',
       'Content-Type: text/plain; charset=UTF-8',
       'Content-Transfer-Encoding: 8bit',
-      'X-Mailer: GPTLock',
+      'X-Mailer: GPTWork',
     ].join('\r\n');
     smtp.socket.write(`${headers}\r\n\r\n${dotStuff(text)}\r\n.\r\n`);
     await smtp.expect(250);

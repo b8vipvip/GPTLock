@@ -1,11 +1,11 @@
-#define MyAppName "GPTLock"
+#define MyAppName "GPTWork"
 #ifndef MyAppVersion
   #define MyAppVersion "0.4.4"
 #endif
 #ifndef PrivateEnginePath
   #define PrivateEnginePath ""
 #endif
-#define MyAppPublisher "GPTLock Maintainers"
+#define MyAppPublisher "GPTWork Maintainers"
 #define MyAppURL "https://github.com/b8vipvip/GPTLock"
 #define ExtensionId "bhchcpeodphgjfjoookncemnamdbfcof"
 
@@ -17,22 +17,22 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
-DefaultDirName={localappdata}\GPTLock
-DefaultGroupName=GPTLock
+DefaultDirName={localappdata}\GPTWork
+DefaultGroupName=GPTWork
 DisableDirPage=no
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\..\dist\windows
-OutputBaseFilename=GPTLockSetup-x64
+OutputBaseFilename=GPTWorkSetup-x64
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayName=GPTLock
+UninstallDisplayName=GPTWork
 VersionInfoVersion={#MyAppVersion}
-VersionInfoProductName=GPTLock
-VersionInfoDescription=GPTLock Installer
+VersionInfoProductName=GPTWork
+VersionInfoDescription=GPTWork Installer
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -41,15 +41,19 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 ; Extension UI files are code, not user data. Remove the old snapshot before copying the
 ; new release so deleted/renamed legacy files can never survive an in-place update.
 Type: filesandordirs; Name: "{app}\extension"
+Type: files; Name: "{app}\bin\gptlock-core.exe"
+Type: files; Name: "{app}\bin\gptlock-engine.exe"
+Type: files; Name: "{app}\tools\Update-GPTLock.ps1"
+Type: files; Name: "{app}\tools\Repair-GPTLock.ps1"
 
 [Files]
-Source: "..\..\native-core\target\release\gptlock-core.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "..\..\native-core\target\release\gptwork-core.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
 #if PrivateEnginePath != ""
-Source: "{#PrivateEnginePath}"; DestDir: "{app}\bin"; DestName: "gptlock-engine.exe"; Flags: ignoreversion
+Source: "{#PrivateEnginePath}"; DestDir: "{app}\bin"; DestName: "gptwork-engine.exe"; Flags: ignoreversion
 #endif
 Source: "..\..\extension\*"; DestDir: "{app}\extension"; Excludes: "tests\*,README.md,package.json"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "Update-GPTLock.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
-Source: "Repair-GPTLock.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "Update-GPTWork.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "Repair-GPTWork.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
 
 [Dirs]
 Name: "{app}\native-messaging"
@@ -59,13 +63,13 @@ Root: HKCU; Subkey: "Software\Google\Chrome\NativeMessagingHosts\com.gptlock.cor
 Root: HKCU; Subkey: "Software\Microsoft\Edge\NativeMessagingHosts\com.gptlock.core"; ValueType: string; ValueName: ""; ValueData: "{app}\native-messaging\edge.json"; Flags: uninsdeletekey
 
 [Icons]
-Name: "{group}\GPTLock 扩展目录"; Filename: "{sys}\explorer.exe"; Parameters: """{app}\extension"""
-Name: "{group}\检查 GPTLock 更新"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\Update-GPTLock.ps1"""; WorkingDir: "{app}\tools"
-Name: "{group}\修复 GPTLock 浏览器连接"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\Repair-GPTLock.ps1"""; WorkingDir: "{app}\tools"
-Name: "{group}\卸载 GPTLock"; Filename: "{uninstallexe}"
+Name: "{group}\GPTWork 扩展目录"; Filename: "{sys}\explorer.exe"; Parameters: """{app}\extension"""
+Name: "{group}\检查 GPTWork 更新"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\Update-GPTWork.ps1"""; WorkingDir: "{app}\tools"
+Name: "{group}\修复 GPTWork 浏览器连接"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\Repair-GPTWork.ps1"""; WorkingDir: "{app}\tools"
+Name: "{group}\卸载 GPTWork"; Filename: "{uninstallexe}"
 
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\Repair-GPTLock.ps1"""; Description: "验证浏览器连接 / Verify browser connection"; Flags: postinstall runhidden waituntilterminated
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\Repair-GPTWork.ps1"""; Description: "验证浏览器连接 / Verify browser connection"; Flags: postinstall runhidden waituntilterminated
 
 [Code]
 function JsonEscape(Value: String): String;
@@ -85,24 +89,28 @@ function StopInstalledCoreProcesses(): Boolean;
 var
   CorePath: String;
   EnginePath: String;
+  LegacyCorePath: String;
+  LegacyEnginePath: String;
   Script: String;
   Params: String;
   ResultCode: Integer;
 begin
-  CorePath := PowerShellSingleQuote(ExpandConstant('{app}\bin\gptlock-core.exe'));
-  EnginePath := PowerShellSingleQuote(ExpandConstant('{app}\bin\gptlock-engine.exe'));
+  CorePath := PowerShellSingleQuote(ExpandConstant('{app}\bin\gptwork-core.exe'));
+  EnginePath := PowerShellSingleQuote(ExpandConstant('{app}\bin\gptwork-engine.exe'));
+  LegacyCorePath := PowerShellSingleQuote(ExpandConstant('{app}\bin\gptlock-core.exe'));
+  LegacyEnginePath := PowerShellSingleQuote(ExpandConstant('{app}\bin\gptlock-engine.exe'));
   Script :=
     '$ErrorActionPreference=''Stop''; ' +
-    '$targets=@([IO.Path]::GetFullPath(''' + CorePath + '''),[IO.Path]::GetFullPath(''' + EnginePath + ''')); ' +
+    '$targets=@([IO.Path]::GetFullPath(''' + CorePath + '''),[IO.Path]::GetFullPath(''' + EnginePath + '''),[IO.Path]::GetFullPath(''' + LegacyCorePath + '''),[IO.Path]::GetFullPath(''' + LegacyEnginePath + ''')); ' +
     '$deadline=(Get-Date).AddSeconds(8); ' +
     'do { ' +
-    '$matches=@(Get-Process -Name ''gptlock-core'',''gptlock-engine'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ($targets -contains [IO.Path]::GetFullPath($_.Path)) } catch { $false } }); ' +
+    '$matches=@(Get-Process -Name ''gptwork-core'',''gptwork-engine'',''gptlock-core'',''gptlock-engine'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ($targets -contains [IO.Path]::GetFullPath($_.Path)) } catch { $false } }); ' +
     'foreach ($p in $matches) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }; ' +
     'Start-Sleep -Milliseconds 150; ' +
-    '$remaining=@(Get-Process -Name ''gptlock-core'',''gptlock-engine'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ($targets -contains [IO.Path]::GetFullPath($_.Path)) } catch { $false } }); ' +
+    '$remaining=@(Get-Process -Name ''gptwork-core'',''gptwork-engine'',''gptlock-core'',''gptlock-engine'' -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ($targets -contains [IO.Path]::GetFullPath($_.Path)) } catch { $false } }); ' +
     'if ($remaining.Count -eq 0) { exit 0 } ' +
     '} while ((Get-Date) -lt $deadline); ' +
-    'throw ''GPTLock core processes still running after retry window''';
+    'throw ''GPTWork core processes still running after retry window''';
   Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + Script + '"';
   Result := Exec(
     ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
@@ -117,11 +125,13 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
-  if FileExists(ExpandConstant('{app}\bin\gptlock-core.exe')) or
+  if FileExists(ExpandConstant('{app}\bin\gptwork-core.exe')) or
+     FileExists(ExpandConstant('{app}\bin\gptwork-engine.exe')) or
+     FileExists(ExpandConstant('{app}\bin\gptlock-core.exe')) or
      FileExists(ExpandConstant('{app}\bin\gptlock-engine.exe')) then
   begin
     if not StopInstalledCoreProcesses() then
-      Result := '无法停止正在运行的 GPTLock 本地核心，请完全退出浏览器后重试 / Could not stop the running GPTLock core; fully exit the browser and retry.';
+      Result := '无法停止正在运行的 GPTWork 本地核心，请完全退出浏览器后重试 / Could not stop the running GPTWork core; fully exit the browser and retry.';
   end;
 end;
 
@@ -130,10 +140,10 @@ var
   Json: String;
   BinaryPath: String;
 begin
-  BinaryPath := JsonEscape(ExpandConstant('{app}\bin\gptlock-core.exe'));
+  BinaryPath := JsonEscape(ExpandConstant('{app}\bin\gptwork-core.exe'));
   Json := '{' + #13#10 +
     '  "name": "com.gptlock.core",' + #13#10 +
-    '  "description": "GPTLock Local Verification Core",' + #13#10 +
+    '  "description": "GPTWork Local Verification Core",' + #13#10 +
     '  "path": "' + BinaryPath + '",' + #13#10 +
     '  "type": "stdio",' + #13#10 +
     '  "allowed_origins": ["chrome-extension://{#ExtensionId}/"]' + #13#10 +

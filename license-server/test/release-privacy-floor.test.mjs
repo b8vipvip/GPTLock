@@ -18,7 +18,7 @@ function digest(bytes) {
 function row(tag, id, bytes) {
   return {
     tag_name: tag,
-    name: `GPTLock ${tag}`,
+    name: `GPTWork ${tag}`,
     draft: false,
     prerelease: false,
     published_at: '2026-09-02T00:00:00Z',

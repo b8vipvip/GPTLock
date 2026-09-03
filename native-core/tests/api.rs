@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
-use gptlock_core::api;
-use gptlock_core::config::ConfigStore;
-use gptlock_core::verifier::{EvidenceSource, VerificationRequest};
-use gptlock_core::AppState;
+use gptwork_core::api;
+use gptwork_core::config::ConfigStore;
+use gptwork_core::verifier::{EvidenceSource, VerificationRequest};
+use gptwork_core::AppState;
 use tower::ServiceExt;
 
 fn test_state() -> (tempfile::TempDir, Arc<AppState>) {

@@ -24,7 +24,7 @@ pub struct AuditLogger {
 
 impl AuditLogger {
     pub fn new(logs_dir: PathBuf) -> Result<Self> {
-        fs::create_dir_all(&logs_dir).context("create GPTLock audit directory")?;
+        fs::create_dir_all(&logs_dir).context("create GPTWork audit directory")?;
         Ok(Self {
             path: logs_dir.join(AUDIT_FILE_NAME),
             write_lock: Arc::new(Mutex::new(())),
@@ -68,7 +68,7 @@ impl AuditLogger {
         let contents = match fs::read_to_string(&self.path) {
             Ok(contents) => contents,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error).context("read GPTLock audit log"),
+            Err(error) => return Err(error).context("read GPTWork audit log"),
         };
         let limit = limit.clamp(1, 500);
         let mut records = contents
@@ -91,12 +91,12 @@ impl AuditLogger {
         let mut options = OpenOptions::new();
         options.create(true).append(true);
         set_private_file_options(&mut options);
-        let mut file = options.open(&self.path).context("open GPTLock audit log")?;
+        let mut file = options.open(&self.path).context("open GPTWork audit log")?;
         set_private_file_permissions(&file)?;
-        serde_json::to_writer(&mut file, record).context("serialize GPTLock audit record")?;
+        serde_json::to_writer(&mut file, record).context("serialize GPTWork audit record")?;
         file.write_all(b"\n")
-            .context("append GPTLock audit record")?;
-        file.flush().context("flush GPTLock audit log")?;
+            .context("append GPTWork audit record")?;
+        file.flush().context("flush GPTWork audit log")?;
         Ok(())
     }
 
@@ -110,9 +110,9 @@ impl AuditLogger {
 
         let rotated = self.path.with_file_name(ROTATED_AUDIT_FILE_NAME);
         if rotated.exists() {
-            fs::remove_file(&rotated).context("remove old GPTLock audit archive")?;
+            fs::remove_file(&rotated).context("remove old GPTWork audit archive")?;
         }
-        fs::rename(&self.path, &rotated).context("rotate GPTLock audit log")?;
+        fs::rename(&self.path, &rotated).context("rotate GPTWork audit log")?;
         Ok(())
     }
 }
@@ -158,7 +158,7 @@ fn set_private_file_options(_options: &mut OpenOptions) {}
 fn set_private_file_permissions(file: &std::fs::File) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     file.set_permissions(fs::Permissions::from_mode(0o600))
-        .context("secure GPTLock audit log")
+        .context("secure GPTWork audit log")
 }
 
 #[cfg(not(unix))]

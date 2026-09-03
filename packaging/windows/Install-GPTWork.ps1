@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
     [ValidatePattern('^[a-p]{32}$')]
@@ -20,14 +20,14 @@ $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = (Resolve-Path (Join-Path $scriptDirectory '..\..')).Path
 
 if ([string]::IsNullOrWhiteSpace($BinaryPath)) {
-    $BinaryPath = Join-Path $repositoryRoot 'native-core\target\release\gptlock-core.exe'
+    $BinaryPath = Join-Path $repositoryRoot 'native-core\target\release\gptwork-core.exe'
 }
 if (-not (Test-Path -LiteralPath $BinaryPath -PathType Leaf)) {
     throw "找不到二进制文件 / Binary not found: $BinaryPath`n请先运行 / Build first: cargo build --release --manifest-path native-core/Cargo.toml"
 }
 
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
-    $InstallRoot = Join-Path $env:LOCALAPPDATA 'GPTLock'
+    $InstallRoot = Join-Path $env:LOCALAPPDATA 'GPTWork'
 }
 $InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
 
@@ -36,7 +36,7 @@ $manifestDirectory = Join-Path $InstallRoot 'native-messaging'
 $extensionDirectory = Join-Path $InstallRoot 'extension'
 $toolsDirectory = Join-Path $InstallRoot 'tools'
 $extensionSource = Join-Path $repositoryRoot 'extension'
-$installedBinary = Join-Path $installDirectory 'gptlock-core.exe'
+$installedBinary = Join-Path $installDirectory 'gptwork-core.exe'
 New-Item -ItemType Directory -Force -Path $installDirectory, $manifestDirectory, $extensionDirectory, $toolsDirectory | Out-Null
 
 function Copy-FileIfDifferent {
@@ -59,9 +59,9 @@ $runtimeFiles = Get-ChildItem -LiteralPath $extensionSource -File | Where-Object
 foreach ($file in $runtimeFiles) {
     Copy-FileIfDifferent -Source $file.FullName -Destination (Join-Path $extensionDirectory $file.Name)
 }
-$installedRepair = Join-Path $toolsDirectory 'Repair-GPTLock.ps1'
-Copy-FileIfDifferent -Source (Join-Path $scriptDirectory 'Repair-GPTLock.ps1') -Destination $installedRepair
-Copy-FileIfDifferent -Source (Join-Path $scriptDirectory 'Update-GPTLock.ps1') -Destination (Join-Path $toolsDirectory 'Update-GPTLock.ps1')
+$installedRepair = Join-Path $toolsDirectory 'Repair-GPTWork.ps1'
+Copy-FileIfDifferent -Source (Join-Path $scriptDirectory 'Repair-GPTWork.ps1') -Destination $installedRepair
+Copy-FileIfDifferent -Source (Join-Path $scriptDirectory 'Update-GPTWork.ps1') -Destination (Join-Path $toolsDirectory 'Update-GPTWork.ps1')
 
 function Install-NativeManifest {
     param(
@@ -72,7 +72,7 @@ function Install-NativeManifest {
     $manifestPath = Join-Path $manifestDirectory "$Name.json"
     $manifest = [ordered]@{
         name = 'com.gptlock.core'
-        description = 'GPTLock 本地验证核心 / GPTLock Local Verification Core'
+        description = 'GPTWork 本地验证核心 / GPTWork Local Verification Core'
         path = $installedBinary
         type = 'stdio'
         allowed_origins = @("chrome-extension://$ExtensionId/")
@@ -96,7 +96,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Native Messaging 安装后验证失败 / post-install verification failed with exit code $LASTEXITCODE"
 }
 
-Write-Host 'GPTLock Windows Native Messaging 安装完成 / installation completed.' -ForegroundColor Green
+Write-Host 'GPTWork Windows Native Messaging 安装完成 / installation completed.' -ForegroundColor Green
 Write-Host '请完全退出并重新启动 Chrome/Edge / Fully restart Chrome or Edge.'
 Write-Host "扩展目录 / Extension directory: $extensionDirectory"
 Write-Host "安装根目录 / Install root: $InstallRoot"

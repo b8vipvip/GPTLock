@@ -14,7 +14,7 @@
   const CONTEXT_STATE_STORAGE_PREFIX = 'gptlock.context-state.v1:';
   const PENDING_BYPASS_STORAGE_PREFIX = 'gptlock.context-pending-bypass.v1:';
   const CONTEXT_CHECKPOINT_PERSIST_DEBOUNCE_MS = 800;
-  const AUTO_PROBE_PREFIX = 'GPTLock 自动验证';
+  const AUTO_PROBE_PREFIX = 'GPTWork 自动验证';
   const PRIVATE_CONTEXT_PROFILE_MESSAGE_TYPE = 'GPTLOCK_PRIVATE_CONTEXT_PROFILE';
   const COMPOSER_SELECTORS = [
     '#prompt-textarea',
@@ -1030,12 +1030,12 @@
         button{border:0;border-radius:9px;padding:8px 11px;font:700 12px/1 system-ui,sans-serif;cursor:pointer}.cancel{background:#fef3c7;color:#78350f}.send{background:#b45309;color:#fff}
       </style>
       <div class="card" role="alertdialog" aria-live="assertive">
-        <strong>GPTLock 上下文预警：本次发送已拦截</strong>
+        <strong>GPTWork 上下文预警：本次发送已拦截</strong>
         <div class="detail"></div>
-        <div class="learn">如果你选择“仍然发送一次”，并且 ChatGPT 确实成功完成新答案，GPTLock 会把本次完整聊天长度记为该 ChatGPT 账户/模型的实测成功下限，并实时提高后续自适应发送预算。</div>
+        <div class="learn">如果你选择“仍然发送一次”，并且 ChatGPT 确实成功完成新答案，GPTWork 会把本次完整聊天长度记为该 ChatGPT 账户/模型的实测成功下限，并实时提高后续自适应发送预算。</div>
         <div class="actions"><button class="cancel" type="button">取消</button><button class="send" type="button">仍然发送一次</button></div>
       </div>`;
-    const limitLabel = snapshot.adaptiveActive ? '当前账户自适应预算' : 'GPTLock 默认安全预算';
+    const limitLabel = snapshot.adaptiveActive ? '当前账户自适应预算' : 'GPTWork 默认安全预算';
     root.querySelector('.detail').textContent = `当前完整聊天约 ${formatCompactTokens(snapshot.fullConversationTokens)} tokens（${formatCompactNumber(snapshot.fullConversationCharacters)} 字符），加入这条提示并预留回复后预计 ${snapshot.projectedPercent.toFixed(1)}%，将越过${limitLabel} ${formatCompactTokens(snapshot.safeLimitTokens)}。该计数为本地完整聊天估算，不是 ChatGPT 官方实时 token 计数。`;
     root.querySelector('.cancel').addEventListener('click', closeWarning);
     root.querySelector('.send').addEventListener('click', sendAfterExplicitBypass);
@@ -1543,7 +1543,7 @@
           box-shadow:0 12px 30px rgba(6,95,70,.16);font:650 12px/1.45 system-ui,sans-serif}
       </style>
       <div class="toast"></div>`;
-    root.querySelector('.toast').textContent = `GPTLock 已学习本次成功超限聊天：${profile.model} 实测成功下限约 ${formatCompactTokens(profile.confirmedConversationTokens)}，该账户后续自适应发送预算已提高到约 ${formatCompactTokens(profile.adaptiveSafeLimitTokens)} tokens。`;
+    root.querySelector('.toast').textContent = `GPTWork 已学习本次成功超限聊天：${profile.model} 实测成功下限约 ${formatCompactTokens(profile.confirmedConversationTokens)}，该账户后续自适应发送预算已提高到约 ${formatCompactTokens(profile.adaptiveSafeLimitTokens)} tokens。`;
     document.documentElement.append(host);
     window.setTimeout(() => host.remove(), 6_000);
   }
@@ -1560,8 +1560,8 @@
       <div class="toast"></div>`;
     const upper = storedMetric(profile?.hardLimitUpperBoundTokens);
     root.querySelector('.toast').textContent = upper
-      ? `GPTLock 已捕获 ChatGPT 真实“对话长度上限”提示，并记录该账户/模型的实测上界 ≤ ${formatCompactTokens(upper)} tokens。后续发送预算会同时受成功下限与该上界约束。`
-      : 'GPTLock 已捕获 ChatGPT 真实“对话长度上限”提示。当前会话历史只能从 DOM 回退估算，数据不完整，因此不会把这个不完整 token 数误写成最大上限；事件已记录，后续会继续对账。';
+      ? `GPTWork 已捕获 ChatGPT 真实“对话长度上限”提示，并记录该账户/模型的实测上界 ≤ ${formatCompactTokens(upper)} tokens。后续发送预算会同时受成功下限与该上界约束。`
+      : 'GPTWork 已捕获 ChatGPT 真实“对话长度上限”提示。当前会话历史只能从 DOM 回退估算，数据不完整，因此不会把这个不完整 token 数误写成最大上限；事件已记录，后续会继续对账。';
     document.documentElement.append(host);
     window.setTimeout(() => host.remove(), 7_000);
   }

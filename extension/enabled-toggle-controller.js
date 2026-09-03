@@ -50,9 +50,9 @@ function syncAvailability() {
   const explicitlyDenied = entitlement.authenticated === false
     || (entitlement.authenticated === true && entitlement.active === false);
   toggle.disabled = busy || explicitlyDenied;
-  if (busy) toggle.title = '正在切换 GPTLock，请稍候 / Updating GPTLock…';
+  if (busy) toggle.title = '正在切换 GPTWork，请稍候 / Updating GPTWork…';
   else if (explicitlyDenied) toggle.title = '免费期或会员已到期，请在账户中心开通会员';
-  else toggle.title = '启用或关闭 GPTLock；窗口数量不受限制';
+  else toggle.title = '启用或关闭 GPTWork；窗口数量不受限制';
 }
 
 async function refreshState() {
@@ -97,14 +97,14 @@ if (toggle) {
     syncAvailability();
     if (message) message.textContent = desired
       ? '正在启用请求锁定 / Enabling…'
-      : '正在关闭 GPTLock / Disabling…';
+      : '正在关闭 GPTWork / Disabling…';
 
     void persistEnabled(desired)
       .then(() => {
         toggle.checked = desired;
         if (message) message.textContent = desired
-          ? 'GPTLock 已启用 / Enabled.'
-          : 'GPTLock 已关闭 / Disabled.';
+          ? 'GPTWork 已启用 / Enabled.'
+          : 'GPTWork 已关闭 / Disabled.';
       })
       .catch((error) => {
         toggle.checked = previous;

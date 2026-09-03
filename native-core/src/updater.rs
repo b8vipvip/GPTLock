@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-const INSTALLER_FILE_NAME: &str = "GPTLockSetup-x64.exe";
+const INSTALLER_FILE_NAME: &str = "GPTWorkSetup-x64.exe";
 #[cfg(windows)]
 const UPDATE_HELPER_LOG_NAME: &str = "update-helper.log";
 #[cfg(windows)]
@@ -78,17 +78,17 @@ fn validate_installer_path(path: &Path) -> Result<PathBuf> {
 
 fn install_root_from_current_exe() -> Result<PathBuf> {
     let executable = std::env::current_exe()
-        .context("cannot determine GPTLock executable path / 无法确定 GPTLock 程序路径")?
+        .context("cannot determine GPTWork executable path / 无法确定 GPTWork 程序路径")?
         .canonicalize()
-        .context("cannot resolve GPTLock executable path / 无法解析 GPTLock 程序路径")?;
+        .context("cannot resolve GPTWork executable path / 无法解析 GPTWork 程序路径")?;
     let parent = executable
         .parent()
-        .context("GPTLock executable has no parent directory")?;
+        .context("GPTWork executable has no parent directory")?;
     if parent.file_name().and_then(|value| value.to_str()) == Some("bin") {
         return parent
             .parent()
             .map(Path::to_path_buf)
-            .context("GPTLock bin directory has no install root");
+            .context("GPTWork bin directory has no install root");
     }
     Ok(parent.to_path_buf())
 }
@@ -174,7 +174,7 @@ fn unblock_verified_download(path: &Path) -> Result<bool> {
     // an unsigned MOTW file from a hidden updater can strand the update behind an
     // interactive Attachment Manager/SmartScreen prompt. We remove MOTW only *after* the
     // file has matched the exact SHA-256 published by the trusted GitHub Release metadata.
-    // Manual downloads are never modified by GPTLock.
+    // Manual downloads are never modified by GPTWork.
     let output = Command::new("powershell.exe")
         .args([
             "-NoProfile",
@@ -231,7 +231,7 @@ function Write-HelperLog([string]$Message) {
 
 function Get-InstalledCoreProcesses {
   $target = [IO.Path]::GetFullPath([string]$job.corePath)
-  return @(Get-Process -Name 'gptlock-core' -ErrorAction SilentlyContinue | Where-Object {
+  return @(Get-Process -Name 'gptwork-core','gptlock-core' -ErrorAction SilentlyContinue | Where-Object {
     try { $_.Path -and ([IO.Path]::GetFullPath([string]$_.Path) -ieq $target) } catch { $false }
   })
 }
@@ -305,7 +305,7 @@ fn write_update_coordinator_files(
 
     let script_path = install_root.join(UPDATE_COORDINATOR_SCRIPT_NAME);
     let job_path = install_root.join(UPDATE_COORDINATOR_JOB_NAME);
-    let core_path = install_root.join("bin").join("gptlock-core.exe");
+    let core_path = install_root.join("bin").join("gptwork-core.exe");
     let job = UpdateCoordinatorJob {
         current_pid,
         installer_path: windows_shell_path(installer)?,
@@ -353,7 +353,7 @@ fn launch_coordinator_via_wmi(
 
     // The coordinator is created by WMI with CREATE_BREAKAWAY_FROM_JOB, so it survives the
     // Native Messaging host that prepared the update. It waits for that host to exit before
-    // starting Setup, then continuously terminates only the installed gptlock-core.exe while
+    // starting Setup, then continuously terminates only the installed gptwork-core.exe while
     // Setup is running. This prevents Chrome's automatic Native Messaging reconnects and the
     // update page's probes from re-locking the executable that Setup is trying to replace.
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
@@ -517,11 +517,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn formats_silent_installer_arguments() {
-        let install_root = Path::new(r"C:\Users\test\AppData\Local\GPTLock");
+        let install_root = Path::new(r"C:\Users\test\AppData\Local\GPTWork");
         let installer_log = install_root.join(UPDATE_INSTALLER_LOG_NAME);
         let arguments = windows_installer_arguments(install_root, &installer_log).unwrap();
         assert!(arguments.contains("/VERYSILENT"));
-        assert!(arguments.contains("/DIR=\"C:\\Users\\test\\AppData\\Local\\GPTLock\""));
+        assert!(arguments.contains("/DIR=\"C:\\Users\\test\\AppData\\Local\\GPTWork\""));
         assert!(arguments.contains("update-installer.log"));
     }
 
@@ -529,12 +529,12 @@ mod tests {
     #[test]
     fn normalizes_extended_windows_paths_for_powershell_and_wmi() {
         assert_eq!(
-            windows_shell_path(Path::new(r"\\?\D:\AI\GPTLock")).unwrap(),
-            r"D:\AI\GPTLock"
+            windows_shell_path(Path::new(r"\\?\D:\AI\GPTWork")).unwrap(),
+            r"D:\AI\GPTWork"
         );
         assert_eq!(
-            windows_shell_path(Path::new(r"\\?\UNC\server\share\GPTLock")).unwrap(),
-            r"\\server\share\GPTLock"
+            windows_shell_path(Path::new(r"\\?\UNC\server\share\GPTWork")).unwrap(),
+            r"\\server\share\GPTWork"
         );
     }
 
@@ -547,7 +547,7 @@ mod tests {
         assert!(!script.contains("Timed out waiting for preparing Native Messaging host to exit"));
         assert!(script.contains("Stop-InstalledCoreProcesses"));
         assert!(script.contains("while (-not $installer.HasExited)"));
-        assert!(script.contains("Get-Process -Name 'gptlock-core'"));
+        assert!(script.contains("Get-Process -Name 'gptwork-core'"));
         assert!(script.contains("installed_core_version_output"));
     }
 

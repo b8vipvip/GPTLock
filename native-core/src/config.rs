@@ -135,20 +135,28 @@ pub struct ConfigStore {
 
 impl ConfigStore {
     pub fn discover() -> Result<Self> {
-        if let Some(override_root) = env::var_os("GPTLOCK_HOME") {
-            if override_root.is_empty() {
-                bail!("GPTLOCK_HOME is empty");
+        for variable in ["GPTWORK_HOME", "GPTLOCK_HOME"] {
+            if let Some(override_root) = env::var_os(variable) {
+                if override_root.is_empty() {
+                    bail!("{variable} is empty");
+                }
+                return Ok(Self::at(PathBuf::from(override_root)));
             }
-            return Ok(Self::at(PathBuf::from(override_root)));
         }
-
         let home = if cfg!(windows) {
             env::var_os("USERPROFILE").or_else(|| env::var_os("HOME"))
         } else {
             env::var_os("HOME")
         }
         .context("cannot determine the current user's home directory")?;
-        Ok(Self::at(PathBuf::from(home).join(".gptlock")))
+        let home = PathBuf::from(home);
+        let preferred = home.join(".gptwork");
+        let legacy = home.join(".gptlock");
+        Ok(Self::at(if preferred.exists() || !legacy.exists() {
+            preferred
+        } else {
+            legacy
+        }))
     }
 
     pub fn at(root: PathBuf) -> Self {
@@ -180,9 +188,9 @@ impl ConfigStore {
 
     pub fn initialize(&self) -> Result<()> {
         fs::create_dir_all(&self.root)
-            .with_context(|| format!("create GPTLock directory {}", self.root.display()))?;
+            .with_context(|| format!("create GPTWork directory {}", self.root.display()))?;
         set_private_directory_permissions(&self.root)?;
-        fs::create_dir_all(self.logs_dir()).context("create GPTLock logs directory")?;
+        fs::create_dir_all(self.logs_dir()).context("create GPTWork logs directory")?;
         set_private_directory_permissions(&self.logs_dir())?;
 
         if self.policy_path().exists() {
@@ -197,11 +205,11 @@ impl ConfigStore {
     pub fn load_policy(&self) -> Result<Policy> {
         let mut content = String::new();
         File::open(self.policy_path())
-            .context("open GPTLock policy")?
+            .context("open GPTWork policy")?
             .read_to_string(&mut content)
-            .context("read GPTLock policy")?;
+            .context("read GPTWork policy")?;
         serde_json::from_str::<Policy>(&content)
-            .context("parse GPTLock policy")?
+            .context("parse GPTWork policy")?
             .normalized()
     }
 
@@ -211,7 +219,7 @@ impl ConfigStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("policy write lock is poisoned"))?;
         let policy = policy.normalized()?;
-        let mut content = serde_json::to_vec_pretty(&policy).context("serialize GPTLock policy")?;
+        let mut content = serde_json::to_vec_pretty(&policy).context("serialize GPTWork policy")?;
         content.push(b'\n');
         atomic_private_write(&self.policy_path(), &content)?;
         Ok(policy)
@@ -221,7 +229,7 @@ impl ConfigStore {
         match fs::read(self.status_path()) {
             Ok(content) => Ok(serde_json::from_slice(&content).ok()),
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error).context("read GPTLock status snapshot"),
+            Err(error) => Err(error).context("read GPTWork status snapshot"),
         }
     }
 
@@ -231,7 +239,7 @@ impl ConfigStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("status write lock is poisoned"))?;
         let mut content =
-            serde_json::to_vec_pretty(result).context("serialize GPTLock status snapshot")?;
+            serde_json::to_vec_pretty(result).context("serialize GPTWork status snapshot")?;
         content.push(b'\n');
         atomic_private_write(&self.status_path(), &content)
     }
@@ -243,7 +251,7 @@ impl ConfigStore {
                 validate_api_token(token.trim())
             }
             Err(error) if error.kind() == ErrorKind::NotFound => self.create_api_token(),
-            Err(error) => Err(error).context("read GPTLock API token"),
+            Err(error) => Err(error).context("read GPTWork API token"),
         }
     }
 
@@ -261,23 +269,23 @@ impl ConfigStore {
 
         match options.open(self.token_path()) {
             Ok(mut file) => {
-                writeln!(file, "{token}").context("write GPTLock API token")?;
-                file.sync_all().context("sync GPTLock API token")?;
+                writeln!(file, "{token}").context("write GPTWork API token")?;
+                file.sync_all().context("sync GPTWork API token")?;
                 Ok(token)
             }
             Err(error) if error.kind() == ErrorKind::AlreadyExists => {
                 let existing = fs::read_to_string(self.token_path())
-                    .context("read concurrently created GPTLock API token")?;
+                    .context("read concurrently created GPTWork API token")?;
                 validate_api_token(existing.trim())
             }
-            Err(error) => Err(error).context("create GPTLock API token"),
+            Err(error) => Err(error).context("create GPTWork API token"),
         }
     }
 }
 
 fn validate_api_token(token: &str) -> Result<String> {
     if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        bail!("GPTLock API token file is invalid");
+        bail!("GPTWork API token file is invalid");
     }
     Ok(token.to_owned())
 }
@@ -286,7 +294,7 @@ fn atomic_private_write(path: &Path, content: &[u8]) -> Result<()> {
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .context("invalid GPTLock file name")?;
+        .context("invalid GPTWork file name")?;
     let temporary = path.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()));
 
     let mut options = OpenOptions::new();
@@ -296,12 +304,12 @@ fn atomic_private_write(path: &Path, content: &[u8]) -> Result<()> {
         .open(&temporary)
         .with_context(|| format!("create temporary file {}", temporary.display()))?;
     file.write_all(content)
-        .context("write temporary GPTLock file")?;
-    file.sync_all().context("sync temporary GPTLock file")?;
+        .context("write temporary GPTWork file")?;
+    file.sync_all().context("sync temporary GPTWork file")?;
     drop(file);
 
     fs::rename(&temporary, path)
-        .with_context(|| format!("commit GPTLock file {}", path.display()))?;
+        .with_context(|| format!("commit GPTWork file {}", path.display()))?;
     Ok(())
 }
 

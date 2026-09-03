@@ -26,7 +26,7 @@ export function nativeHelp(errorCode) {
   const messages = {
     host_not_installed: {
       title: '尚未安装本地核心 / Local Core is not installed',
-      detail: '只加载浏览器扩展还不够。请运行 GPTLock Windows Setup 或安装 Linux deb，再完全重启浏览器。',
+      detail: '只加载浏览器扩展还不够。请运行 GPTWork Windows Setup 或安装 Linux deb，再完全重启浏览器。',
     },
     origin_not_allowed: {
       title: '扩展 ID 未获授权 / Extension ID is not allowed',
@@ -38,7 +38,7 @@ export function nativeHelp(errorCode) {
     },
     protocol_error: {
       title: '本地通信协议失败 / Native protocol failed',
-      detail: '浏览器已找到并启动核心，但协议握手失败。请更新 GPTLock Core 后运行“修复浏览器连接”。',
+      detail: '浏览器已找到并启动核心，但协议握手失败。请更新 GPTWork Core 后运行“修复浏览器连接”。',
     },
     connection_failed: {
       title: '本地核心连接失败 / Local Core connection failed',

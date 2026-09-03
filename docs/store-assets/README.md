@@ -1,4 +1,4 @@
-# GPTLock Store Assets / 商店资源
+# GPTWork Store Assets / 商店资源
 
 The browser-store artwork in this directory is prepared for Chrome Web Store and Microsoft Edge Add-ons.
 
@@ -10,4 +10,4 @@ The browser-store artwork in this directory is prepared for Chrome Web Store and
 
 Manifest icons are under `extension/icons/`: 16×16, 32×32, 48×48 and 128×128 PNG.
 
-These are project-owned demonstration assets. They show the GPTLock model-preference lock and status workflow and must not be described as endorsements by OpenAI, Google, or Microsoft.
+These are project-owned demonstration assets. They show the GPTWork model-preference lock and status workflow and must not be described as endorsements by OpenAI, Google, or Microsoft.

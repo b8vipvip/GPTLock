@@ -6,7 +6,7 @@ use std::io::{self, ErrorKind, Read, Write};
 
 use context_budget::{evaluate_context_budget, ContextBudgetInput};
 use context_profile::{evaluate_context_profile, ContextProfileEvaluationInput};
-use gptlock_private_engine::{
+use gptwork_private_engine::{
     evaluate_request, evaluate_response, RequestDecision, RequestEnvelope, ResponseEnvelope,
 };
 use serde_json::{json, Value};

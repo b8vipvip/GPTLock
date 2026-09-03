@@ -2,10 +2,10 @@
 
 ## 日常使用
 
-1. 安装 GPTLock 并启用浏览器扩展；
-2. 登录 GPTLock 账户；
+1. 安装 GPTWork 并启用浏览器扩展；
+2. 登录 GPTWork 账户；
 3. 在设置中选择首选模型和推理偏好；
-4. 确认 GPTLock 状态正常并开启；
+4. 确认 GPTWork 状态正常并开启；
 5. 回到 ChatGPT 正常聊天。
 
 通常不需要在每轮聊天前重复设置或验证。
@@ -23,11 +23,11 @@
 
 ## 自动验证
 
-当你怀疑状态不正确时，可以点击“自动验证”。GPTLock 会自动完成产品能够执行的检查，并把结果显示在界面和诊断信息中。自动验证可能在当前 ChatGPT 对话中产生可见测试消息，因此应在你允许的对话中使用。
+当你怀疑状态不正确时，可以点击“自动验证”。GPTWork 会自动完成产品能够执行的检查，并把结果显示在界面和诊断信息中。自动验证可能在当前 ChatGPT 对话中产生可见测试消息，因此应在你允许的对话中使用。
 
 ## 运行日志与诊断
 
-遇到无法判断的问题时，优先导出 GPTLock 运行日志/诊断文件并保留问题发生时间。诊断文件可能包含用于排障的技术信息，分享给第三方前请按敏感文件处理。
+遇到无法判断的问题时，优先导出 GPTWork 运行日志/诊断文件并保留问题发生时间。诊断文件可能包含用于排障的技术信息，分享给第三方前请按敏感文件处理。
 
 ## 账户中心
 
@@ -39,4 +39,4 @@
 
 ## English
 
-Install GPTLock, sign in, choose your preferred model/reasoning settings, enable GPTLock, and use ChatGPT normally. Auto verification and diagnostics are intended for troubleshooting rather than as a prerequisite for every chat. Internal detection and decision algorithms are not part of the public usage documentation.
+Install GPTWork, sign in, choose your preferred model/reasoning settings, enable GPTWork, and use ChatGPT normally. Auto verification and diagnostics are intended for troubleshooting rather than as a prerequisite for every chat. Internal detection and decision algorithms are not part of the public usage documentation.

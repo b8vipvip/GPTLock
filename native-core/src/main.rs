@@ -2,15 +2,15 @@ use std::env;
 use std::net::SocketAddr;
 
 use anyhow::{bail, Context, Result};
-use gptlock_core::config::ConfigStore;
-use gptlock_core::{api, bridge, AppState};
+use gptwork_core::config::ConfigStore;
+use gptwork_core::{api, bridge, AppState};
 
 const DEFAULT_LISTEN_ADDRESS: &str = "127.0.0.1:17856";
 
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
-        eprintln!("GPTLock 启动失败 / failed to start: {error:#}");
+        eprintln!("GPTWork 启动失败 / failed to start: {error:#}");
         std::process::exit(1);
     }
 }
@@ -24,7 +24,7 @@ async fn run() -> Result<()> {
         return Ok(());
     }
     if matches!(command, "--version" | "-V" | "version") {
-        println!("gptlock-core {}", env!("CARGO_PKG_VERSION"));
+        println!("gptwork-core {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
 
@@ -89,7 +89,7 @@ fn parse_listen_address(arguments: Vec<String>) -> Result<SocketAddr> {
     let value = match arguments.as_slice() {
         [] => DEFAULT_LISTEN_ADDRESS,
         [flag, value] if flag == "--listen" => value,
-        _ => bail!("usage / 用法: gptlock-core serve [--listen 127.0.0.1:17856]"),
+        _ => bail!("usage / 用法: gptwork-core serve [--listen 127.0.0.1:17856]"),
     };
     let address: SocketAddr = value
         .parse()
@@ -102,12 +102,12 @@ fn parse_listen_address(arguments: Vec<String>) -> Result<SocketAddr> {
 
 fn print_help() {
     println!(
-        "GPTLock 本地核心 / Local Core\n\n\
+        "GPTWork 本地核心 / Local Core\n\n\
          用法 / Usage:\n  \
-         gptlock-core native                 启动浏览器 Native Messaging（默认）\n  \
-         gptlock-core serve [--listen ADDR]  启动本机 API（默认 127.0.0.1:17856）\n  \
-         gptlock-core doctor                 输出脱敏诊断信息\n  \
-         gptlock-core --version              输出版本"
+         gptwork-core native                 启动浏览器 Native Messaging（默认）\n  \
+         gptwork-core serve [--listen ADDR]  启动本机 API（默认 127.0.0.1:17856）\n  \
+         gptwork-core doctor                 输出脱敏诊断信息\n  \
+         gptwork-core --version              输出版本"
     );
 }
 

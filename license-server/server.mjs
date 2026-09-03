@@ -264,7 +264,7 @@ async function handleApi(req, res, url) {
   if (accountHandled) return;
   const clientLogHandled = await clientRuntimeLogs.handleApi(req, res, url, cors);
   if (clientLogHandled) return;
-  if (url.pathname.startsWith('/api/v1/licenses/')) return apiError(res, 410, 'LICENSE_API_REMOVED', '授权码验证已停用，请使用 GPTLock 账号登录');
+  if (url.pathname.startsWith('/api/v1/licenses/')) return apiError(res, 410, 'LICENSE_API_REMOVED', '授权码验证已停用，请使用 GPTWork 账号登录');
   return apiError(res, 404, 'NOT_FOUND', 'Not found');
 }
 
@@ -389,6 +389,6 @@ server.on('close', () => { siteReleases.stop(); paymentSystem.close(); });
 server.listen(PORT, HOST, () => {
   runtimeLogger.log('info', 'server_started', { pid: process.pid, host: HOST, port: PORT, publicOrigin: PUBLIC_ORIGIN,
     database: DB_PATH, runtimeLog: runtimeLogger.path, releaseMirror: siteReleases.mirrorRoot, windowLeaseTtlSeconds: WINDOW_TTL_SECONDS });
-  console.log(`GPTLock server listening on http://${HOST}:${PORT}`);
+  console.log(`GPTWork server listening on http://${HOST}:${PORT}`);
   console.log(`Public origin: ${PUBLIC_ORIGIN}`);
 });

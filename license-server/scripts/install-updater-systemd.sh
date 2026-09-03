@@ -82,7 +82,7 @@ chmod 640 "$KNOWN_HOSTS" || true
 
 cat > /etc/systemd/system/gptlock-license-update.service <<EOF
 [Unit]
-Description=GPTLock License Server GitHub Update
+Description=GPTWork License Server GitHub Update
 After=network-online.target
 Wants=network-online.target
 
@@ -104,7 +104,7 @@ EOF
 
 cat > /etc/systemd/system/gptlock-license-update.path <<EOF
 [Unit]
-Description=Watch GPTLock License Server update requests
+Description=Watch GPTWork License Server update requests
 
 [Path]
 PathExists=$REQUEST_FILE
@@ -117,7 +117,7 @@ EOF
 systemctl daemon-reload
 systemctl enable --now gptlock-license-update.path
 
-echo "GPTLock updater installed."
+echo "GPTWork updater installed."
 echo "  repository: $REPO_DIR"
 echo "  server dir: $SERVER_DIR"
 echo "  target ref: $REF"

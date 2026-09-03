@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-test('legacy License cannot become active and window count cannot gate GPTLock', async () => {
+test('legacy License cannot become active and window count cannot gate GPTWork', async () => {
   const [background, auth, accountSystem, manifestText] = await Promise.all([
     readFile(new URL('../background.js', import.meta.url), 'utf8'),
     readFile(new URL('../auth-gate.js', import.meta.url), 'utf8'),

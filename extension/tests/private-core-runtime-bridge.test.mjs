@@ -6,7 +6,7 @@ const root = new URL('../../', import.meta.url);
 
 test('public native bridge stays generic and contains no private decision rules', async () => {
   const bridge = await readFile(new URL('native-core/src/private_engine.rs', root), 'utf8');
-  assert.match(bridge, /gptlock-engine/);
+  assert.match(bridge, /gptwork-engine/);
   for (const operation of ['evaluate_request', 'evaluate_response', 'evaluate_context']) {
     assert.match(bridge, new RegExp(operation));
   }

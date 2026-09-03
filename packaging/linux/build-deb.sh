@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/../.." && pwd)"
 output_dir="${1:-$repo_root/dist/linux}"
-binary_path="${GPTLOCK_BINARY:-$repo_root/native-core/target/release/gptlock-core}"
+binary_path="${GPTLOCK_BINARY:-$repo_root/native-core/target/release/gptwork-core}"
 private_engine_path="${GPTLOCK_PRIVATE_ENGINE:-}"
 require_private_engine="${GPTLOCK_REQUIRE_PRIVATE_ENGINE:-0}"
 version="${GPTLOCK_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_root/native-core/Cargo.toml" | head -n 1)}"
@@ -42,28 +42,33 @@ chmod 0755 "$package_root"
 mkdir -p \
   "$package_root/DEBIAN" \
   "$package_root/usr/bin" \
-  "$package_root/usr/share/gptlock/extension" \
+  "$package_root/usr/share/gptwork/extension" \
   "$package_root/usr/lib/systemd/user" \
   "$package_root/etc/opt/chrome/native-messaging-hosts" \
   "$package_root/etc/chromium/native-messaging-hosts" \
   "$package_root/etc/opt/edge/native-messaging-hosts"
 
-install -m 0755 "$binary_path" "$package_root/usr/bin/gptlock-core"
+install -m 0755 "$binary_path" "$package_root/usr/bin/gptwork-core"
 if [[ -n "$private_engine_path" ]]; then
-  install -m 0755 "$private_engine_path" "$package_root/usr/bin/gptlock-engine"
+  install -m 0755 "$private_engine_path" "$package_root/usr/bin/gptwork-engine"
 fi
-install -m 0755 "$script_dir/update.sh" "$package_root/usr/bin/gptlock-update"
-install -m 0644 "$script_dir/gptlock-core.deb.service" "$package_root/usr/lib/systemd/user/gptlock-core.service"
+install -m 0755 "$script_dir/update.sh" "$package_root/usr/bin/gptwork-update"
+ln -s gptwork-core "$package_root/usr/bin/gptlock-core"
+if [[ -n "$private_engine_path" ]]; then ln -s gptwork-engine "$package_root/usr/bin/gptlock-engine"; fi
+ln -s gptwork-update "$package_root/usr/bin/gptlock-update"
+install -m 0644 "$script_dir/gptwork-core.deb.service" "$package_root/usr/lib/systemd/user/gptwork-core.service"
+ln -s gptwork-core.service "$package_root/usr/lib/systemd/user/gptlock-core.service"
+ln -s gptwork "$package_root/usr/share/gptlock"
 while IFS= read -r file; do
-  install -m 0644 "$file" "$package_root/usr/share/gptlock/extension/$(basename "$file")"
+  install -m 0644 "$file" "$package_root/usr/share/gptwork/extension/$(basename "$file")"
 done < <(find "$repo_root/extension" -maxdepth 1 -type f \
   \( -name '*.js' -o -name '*.css' -o -name '*.html' -o -name 'manifest.json' \) -print | sort)
 
 manifest_content=$(cat <<EOF
 {
   "name": "com.gptlock.core",
-  "description": "GPTLock 本地验证核心 / GPTLock Local Verification Core",
-  "path": "/usr/bin/gptlock-core",
+  "description": "GPTWork 本地验证核心 / GPTWork Local Verification Core",
+  "path": "/usr/bin/gptwork-core",
   "type": "stdio",
   "allowed_origins": ["chrome-extension://$extension_id/"]
 }
@@ -84,12 +89,12 @@ Version: $version
 Section: utils
 Priority: optional
 Architecture: $architecture
-Maintainer: GPTLock Maintainers <noreply@github.com>
+Maintainer: GPTWork Maintainers <noreply@github.com>
 Installed-Size: $installed_size
 Depends: libc6
 Homepage: https://github.com/b8vipvip/GPTLock
 Description: ChatGPT model policy guard and evidence verifier
- GPTLock 为 chatgpt.com 提供模型策略、响应元数据验证、发送守卫和本地审计。
+ GPTWork 为 chatgpt.com 提供模型策略、响应元数据验证、发送守卫和本地审计。
  It provides model policy enforcement, response-metadata verification, a send guard,
  and a local privacy-conscious audit trail for official ChatGPT web chats.
 EOF
@@ -97,6 +102,6 @@ chmod 0755 "$package_root/DEBIAN"
 chmod 0644 "$package_root/DEBIAN/control"
 
 mkdir -p "$output_dir"
-output="$output_dir/gptlock_${version}_${architecture}.deb"
+output="$output_dir/gptwork_${version}_${architecture}.deb"
 dpkg-deb --root-owner-group --build "$package_root" "$output"
 echo "$output"

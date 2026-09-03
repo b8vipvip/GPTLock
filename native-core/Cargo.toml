@@ -1,8 +1,8 @@
 [package]
-name = "gptlock-core"
+name = "gptwork-core"
 version = "0.5.35"
 edition = "2021"
-description = "Cross-platform local policy and verification core for GPTLock"
+description = "Cross-platform local policy and verification core for GPTWork"
 repository = "https://github.com/b8vipvip/GPTLock"
 publish = false
 

@@ -33,7 +33,7 @@
     'button[aria-label*="Stop" i]',
     'button[aria-label*="停止"]',
   ];
-  const AUTO_PROBE_TEXT = 'GPTLock 自动验证测试：请只回复“验证完成”。';
+  const AUTO_PROBE_TEXT = 'GPTWork 自动验证测试：请只回复“验证完成”。';
 
   let reportTimer = null;
   let alignTimer = null;
@@ -176,7 +176,7 @@
       reasoning_not_allowed: '响应推理强度与策略不一致；仅告警 / Response reasoning mismatches policy; warning only',
       evidence_source_insufficient: '证据来源不足 / Evidence source is insufficient',
       evidence_stale: '响应证据已过期 / Response evidence is stale',
-      gptlock_disabled: 'GPTLock 已关闭 / GPTLock is disabled',
+      gptlock_disabled: 'GPTWork 已关闭 / GPTWork is disabled',
       policy_mismatch: '响应元数据与策略不匹配 / Response metadata mismatches policy',
       verification_error: '响应确认发生错误；聊天保持可用 / Response verification failed; chat remains available',
     };
@@ -197,7 +197,7 @@
         button[data-tone="wait"]{background:#b45309} button[data-tone="lock"]{background:#2563eb}
         button:focus{outline:3px solid #bfdbfe}
       </style>
-      <button type="button" title="打开 GPTLock 设置 / Open GPTLock settings">GPTLock · 检查中</button>`;
+      <button type="button" title="打开 GPTWork 设置 / Open GPTWork settings">GPTWork · 检查中</button>`;
     root.querySelector('button').addEventListener('click', () => {
       void sendMessage({ type: 'GPTLOCK_OPEN_OPTIONS' }).catch(() => {});
     });
@@ -212,7 +212,7 @@
     const guard = cachedState?.guard;
     const auto = cachedState?.autoVerification;
     if (auto?.running) {
-      button.textContent = `GPTLock · 自动验证 ${auto.attempt || 1}/${auto.maxAttempts || 2}`;
+      button.textContent = `GPTWork · 自动验证 ${auto.attempt || 1}/${auto.maxAttempts || 2}`;
       button.dataset.tone = 'wait';
       button.title = `自动验证正在进行；证据不足时会自动重试 / Auto verification is running and will retry incomplete evidence.`;
       return;
@@ -232,7 +232,7 @@
       disabled: ['已关闭', 'off'],
     };
     const [label, tone] = labels[guard?.status] || ['检查中', 'wait'];
-    button.textContent = `GPTLock · ${label}`;
+    button.textContent = `GPTWork · ${label}`;
     button.dataset.tone = tone;
     const autoReason = auto?.outcome === 'model_verified_reasoning_unconfirmed'
       ? '自动验证已重试：模型已确认，但 ChatGPT 未暴露推理强度元数据。'
@@ -255,7 +255,7 @@
           color:#7f1d1d;background:#fff7f7;box-shadow:0 12px 36px rgba(127,29,29,.2);font:600 13px/1.55 system-ui,sans-serif}
         strong{display:block;margin-bottom:2px;color:#991b1b;font-size:14px}
       </style>
-      <div role="alert"><strong>GPTLock 已阻止发送 / Send blocked</strong><span></span></div>`;
+      <div role="alert"><strong>GPTWork 已阻止发送 / Send blocked</strong><span></span></div>`;
     root.querySelector('span').textContent = reasonText(guard);
     document.documentElement.append(host);
     window.setTimeout(() => host.remove(), 6500);
@@ -533,7 +533,7 @@
         : AUTO_PROBE_TEXT;
       const probeMarker = typeof options.probeMarker === 'string' && options.probeMarker.trim()
         ? options.probeMarker.trim().slice(0, 120)
-        : 'GPTLock 自动验证';
+        : 'GPTWork 自动验证';
 
       setComposerText(composer, probeText);
       const filled = await waitUntil(() => composerText(composer).includes(probeMarker), 2500, 80);

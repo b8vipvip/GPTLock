@@ -36,6 +36,6 @@ test('private response evidence normalizer requires complete conflict-free model
 });
 
 test('base64 response decoding uses UTF-8', () => {
-  const encoded = btoa(unescape(encodeURIComponent('你好 GPTLock')));
-  assert.equal(decodePrivateResponseBody(encoded, true), '你好 GPTLock');
+  const encoded = btoa(unescape(encodeURIComponent('你好 GPTWork')));
+  assert.equal(decodePrivateResponseBody(encoded, true), '你好 GPTWork');
 });

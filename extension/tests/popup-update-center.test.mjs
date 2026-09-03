@@ -5,7 +5,7 @@ import test from 'node:test';
 const manifestUrl = new URL('../manifest.json', import.meta.url);
 const popupCss = new URL('../popup-v0513.css', import.meta.url);
 const optionsUpdate = new URL('../options-update.js', import.meta.url);
-const installer = new URL('../../packaging/windows/GPTLock.iss', import.meta.url);
+const installer = new URL('../../packaging/windows/GPTWork.iss', import.meta.url);
 
 test('popup exposes only the four user-facing actions and keeps reconnect/log controls hidden', async () => {
   const manifest = JSON.parse(await readFile(manifestUrl, 'utf8'));
@@ -54,5 +54,5 @@ test('Windows installer removes stale UI and stops the installed core before rep
   assert.match(source, /Type:\s*filesandordirs;\s*Name:\s*"\{app\}\\extension"/);
   assert.match(source, /function StopInstalledCoreProcesses\(\): Boolean/);
   assert.match(source, /function PrepareToInstall\(var NeedsRestart: Boolean\): String/);
-  assert.match(source, /Get-Process -Name ''gptlock-core''/);
+  assert.match(source, /Get-Process -Name ''gptwork-core''/);
 });

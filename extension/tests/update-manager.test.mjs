@@ -17,7 +17,7 @@ import {
   WINDOWS_INSTALLER_NAME,
 } from '../update-manager.js';
 
-const mirroredInstaller = (tag = 'v0.5.30') => `https://gptlock.mv3.cn/downloads/releases/${tag}/GPTLockSetup-x64.exe`;
+const mirroredInstaller = (tag = 'v0.5.30') => `https://gptlock.mv3.cn/downloads/releases/${tag}/GPTWorkSetup-x64.exe`;
 
 test('normalizes and compares release versions', () => {
   assert.equal(normalizeVersion('v0.4.0'), '0.4.0');
@@ -27,12 +27,12 @@ test('normalizes and compares release versions', () => {
   assert.equal(compareVersions('bad', '0.4.0'), null);
 });
 
-test('private repository update checks use only the official GPTLock service', () => {
+test('private repository update checks use only the official GPTWork service', () => {
   assert.equal(RELEASE_API_URL, 'https://gptlock.mv3.cn/site/api/releases');
   assert.equal(RELEASES_URL, 'https://gptlock.mv3.cn/releases');
   assert.equal(secureServerDownloadUrl(mirroredInstaller()), mirroredInstaller());
   assert.equal(secureServerDownloadUrl('https://release-assets.githubusercontent.com/private/signed'), null);
-  assert.equal(secureServerDownloadUrl('https://github.com/b8vipvip/GPTLock/releases/download/v0.5.30/GPTLockSetup-x64.exe'), null);
+  assert.equal(secureServerDownloadUrl('https://github.com/b8vipvip/GPTLock/releases/download/v0.5.30/GPTWorkSetup-x64.exe'), null);
 });
 
 test('requires the hardened updater core baseline for Windows one-click installs', () => {
@@ -53,7 +53,7 @@ test('normalizes the server mirror feed into update metadata', () => {
     source: 'server-mirror',
     releases: [{
       tag: 'v0.5.30',
-      name: 'GPTLock v0.5.30',
+      name: 'GPTWork v0.5.30',
       publishedAt: '2026-09-01T00:00:00Z',
       assets: [{
         name: WINDOWS_INSTALLER_NAME,
@@ -97,7 +97,7 @@ test('parses the official site mirror feed directly', () => {
     source: 'server-mirror',
     releases: [{
       tag: 'v0.5.30',
-      name: 'GPTLock v0.5.30',
+      name: 'GPTWork v0.5.30',
       publishedAt: '2026-09-01T00:00:00Z',
       assets: [{
         name: WINDOWS_INSTALLER_NAME,

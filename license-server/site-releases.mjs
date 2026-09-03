@@ -261,7 +261,7 @@ export function createSiteReleaseFeed({
   function githubHeaders(accept = 'application/vnd.github+json') {
     const headers = {
       Accept: accept,
-      'User-Agent': 'GPTLock-release-mirror/1.0',
+      'User-Agent': 'GPTWork-release-mirror/1.0',
       'X-GitHub-Api-Version': '2022-11-28',
     };
     if (token) headers.Authorization = `Bearer ${token}`;

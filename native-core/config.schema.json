@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "GPTLock Policy",
-  "description": "GPTLock 模型锁定策略 / GPTLock model-lock policy",
+  "title": "GPTWork Policy",
+  "description": "GPTWork 模型锁定策略 / GPTWork model-lock policy",
   "type": "object",
   "required": ["lockedModels", "allowedReasoningLevels", "strictMode"],
   "additionalProperties": false,

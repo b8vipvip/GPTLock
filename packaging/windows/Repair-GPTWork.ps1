@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
     [ValidatePattern('^[a-p]{32}$')]
@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $installRoot = Split-Path -Parent $scriptDirectory
-$binaryPath = Join-Path $installRoot 'bin\gptlock-core.exe'
+$binaryPath = Join-Path $installRoot 'bin\gptwork-core.exe'
 $manifestDirectory = Join-Path $installRoot 'native-messaging'
 
 if (-not (Test-Path -LiteralPath $binaryPath -PathType Leaf)) {
@@ -111,7 +111,7 @@ function Repair-NativeManifest {
     $manifestPath = Join-Path $manifestDirectory "$Name.json"
     $manifest = [ordered]@{
         name = 'com.gptlock.core'
-        description = 'GPTLock 本地验证核心 / GPTLock Local Verification Core'
+        description = 'GPTWork 本地验证核心 / GPTWork Local Verification Core'
         path = $binaryPath
         type = 'stdio'
         allowed_origins = @("chrome-extension://$ExtensionId/")
@@ -146,5 +146,5 @@ if ($LASTEXITCODE -ne 0) {
 
 Test-NativeMessagingRoundTrip
 
-Write-Host 'GPTLock 浏览器连接及 Native Messaging 往返通信已修复并验证 / browser connection and round trip verified.' -ForegroundColor Green
+Write-Host 'GPTWork 浏览器连接及 Native Messaging 往返通信已修复并验证 / browser connection and round trip verified.' -ForegroundColor Green
 Write-Host '请完全退出所有 Chrome/Edge 进程后重新打开 / Fully exit and restart every Chrome/Edge process.'

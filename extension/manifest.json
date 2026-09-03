@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "GPTLock",
+  "name": "GPTWork",
   "version": "0.5.35",
   "description": "ChatGPT 正式聊天请求模型锁定与响应证据确认 / Formal chat request locking and evidence-based response verification.",
   "minimum_chrome_version": "110",
@@ -53,7 +53,7 @@
     "open_in_tab": true
   },
   "action": {
-    "default_title": "GPTLock",
+    "default_title": "GPTWork",
     "default_popup": "popup-v0513.html"
   }
 }

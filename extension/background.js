@@ -202,7 +202,7 @@ function ensureTabState(tabId, url = '') {
 
 function accountAllowsState(_state) {
   // Account entitlement controls access, but the number of Chrome windows never does.
-  // Window keys remain heartbeat telemetry only and must not disable GPTLock.
+  // Window keys remain heartbeat telemetry only and must not disable GPTWork.
   return Boolean(accountState?.authenticated && accountState?.entitlement?.active);
 }
 function effectiveSettingsForState(state) {
@@ -883,13 +883,13 @@ async function waitForAttemptVerification(tabId, startedAtMs) {
 
 function probeText(attempt) {
   if (attempt === 1) {
-    return 'GPTLock 自动验证 1/2：请计算 37×41，并只回复结果。';
+    return 'GPTWork 自动验证 1/2：请计算 37×41，并只回复结果。';
   }
-  return 'GPTLock 自动验证 2/2：请计算 137×29，并只回复结果。';
+  return 'GPTWork 自动验证 2/2：请计算 137×29，并只回复结果。';
 }
 
 async function autoVerify(tabId) {
-  if (!currentSettings.enabled) throw new Error('GPTLock is disabled / GPTLock 已关闭');
+  if (!currentSettings.enabled) throw new Error('GPTWork is disabled / GPTWork 已关闭');
   const tab = await chrome.tabs.get(tabId);
   if (!isChatGptUrl(tab.url ?? '')) throw new Error('Open chatgpt.com first / 请先打开 chatgpt.com');
   const state = ensureTabState(tabId, tab.url);
@@ -951,7 +951,7 @@ async function autoVerify(tabId) {
         type: 'GPTLOCK_AUTO_SEND_PROBE',
         preferredReasoning: currentSettings.preferredReasoning,
         probeText: probeText(attempt),
-        probeMarker: `GPTLock 自动验证 ${attempt}/2`,
+        probeMarker: `GPTWork 自动验证 ${attempt}/2`,
       });
     } catch (error) {
       sendError = errorText(error);
@@ -1297,11 +1297,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           accountRequired: true,
           licenseRequired: false,
           license: null,
-          lastError: '授权码系统已移除；请使用 GPTLock 账号权益。若仍看到授权码界面，请关闭旧页面并从扩展重新打开设置。',
+          lastError: '授权码系统已移除；请使用 GPTWork 账号权益。若仍看到授权码界面，请关闭旧页面并从扩展重新打开设置。',
         };
       case 'GPTLOCK-LICENSE-ACTIVATE':
       case 'GPTLOCK_LICENSE_ACTIVATE':
-        throw Object.assign(new Error('授权码验证已停用；GPTLock 当前使用账号登录。检测到旧版弹窗资源，请关闭弹窗并重新打开，必要时完全重启浏览器。'), { code: 'LICENSE_UI_STALE' });
+        throw Object.assign(new Error('授权码验证已停用；GPTWork 当前使用账号登录。检测到旧版弹窗资源，请关闭弹窗并重新打开，必要时完全重启浏览器。'), { code: 'LICENSE_UI_STALE' });
       case 'GPTLOCK-LICENSE-CLEAR':
       case 'GPTLOCK_LICENSE_CLEAR':
         return { cleared: true, legacyUi: true, accountRequired: true, licenseRequired: false };
