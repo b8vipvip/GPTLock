@@ -1,7 +1,13 @@
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto';
+import { createOkxClient, OKX_DEFAULT_BASE_URL } from './okx-client.mjs';
+
 const MAX_QR_BYTES = 1024 * 1024;
 const MAX_PAYMENT_BODY = 2 * 1024 * 1024;
 const PAYMENT_CODES = new Set(['wechat', 'alipay', 'usdt']);
 const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const USDT_SCALE = 1_000_000;
+const MATCH_CLOCK_SKEW_MS = 2 * 60 * 1000;
+const MATCH_COMPLETION_GRACE_MS = 15 * 60 * 1000;
 
 function nowIso() { return new Date().toISOString(); }
 function normalizeHttpsUrl(value) {
@@ -16,6 +22,26 @@ function normalizeHttpsUrl(value) {
   } catch { return null; }
 }
 function cleanText(value, max) { return String(value || '').trim().slice(0, max); }
+function clampInt(value, min, max, fallback) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
+}
+function parseUsdtMicros(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  if (!/^\d{1,9}(?:\.\d{1,6})?$/.test(raw)) return null;
+  const [whole, fraction = ''] = raw.split('.');
+  const micros = Number(whole) * USDT_SCALE + Number(fraction.padEnd(6, '0'));
+  return Number.isSafeInteger(micros) && micros > 0 && micros <= 1_000_000_000 * USDT_SCALE ? micros : null;
+}
+function formatUsdtMicros(value) {
+  const micros = Number(value || 0);
+  if (!Number.isSafeInteger(micros) || micros <= 0) return '';
+  const whole = Math.floor(micros / USDT_SCALE);
+  const fraction = String(micros % USDT_SCALE).padStart(6, '0').replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : String(whole);
+}
+function sameText(left, right) { return cleanText(left, 512).toLowerCase() === cleanText(right, 512).toLowerCase(); }
 
 function ensurePaymentMethodsSchema(db) {
   const row = db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='payment_methods'").get();
@@ -86,7 +112,7 @@ function decodeDataUrl(value) {
   return { mime, blob };
 }
 
-export function createPaymentSystem({ db, publicOrigin, json }) {
+export function createPaymentSystem({ db, publicOrigin, json, secret = '', env = process.env, fetchImpl = globalThis.fetch, logger = console }) {
   ensurePaymentMethodsSchema(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS payment_method_details (
@@ -104,11 +130,116 @@ export function createPaymentSystem({ db, publicOrigin, json }) {
   const insertMethod = db.prepare(`INSERT OR IGNORE INTO payment_methods(code,name,enabled,pay_url,instructions,updated_at) VALUES(?,?,?,?,?,?)`);
   insertMethod.run('wechat', '微信支付 / WeChat Pay', 0, '', '请扫码付款；付款完成后等待管理员确认到账。', nowIso());
   insertMethod.run('alipay', '支付宝 / Alipay', 0, '', '请扫码付款；付款完成后等待管理员确认到账。', nowIso());
-  insertMethod.run('usdt', 'USDT / Tether', 0, '', '请通过配置的欧易收款链接或指定链完成 USDT 支付；到账后等待确认。', nowIso());
+  insertMethod.run('usdt', 'USDT / Tether', 0, '', '请按订单显示的精确 USDT 数量付款；服务端会通过 OKX 只读 API 核对到账并自动开通。', nowIso());
   const insertDetail = db.prepare(`INSERT OR IGNORE INTO payment_method_details(code,crypto_asset,updated_at) VALUES(?,?,?)`);
   insertDetail.run('wechat', '', nowIso());
   insertDetail.run('alipay', '', nowIso());
   insertDetail.run('usdt', 'USDT', nowIso());
+
+  let runtimeReady = false;
+  let settleOrderById = null;
+  let pollTimer = null;
+  let startupTimer = null;
+  let checking = false;
+  const status = { lastCheckAt: null, lastSuccessAt: null, lastError: '', lastMatchedOrderId: null };
+  const CONFIG_KEY = secret ? createHmac('sha256', secret).update('gptlock-okx-payment-settings:v1').digest() : null;
+
+  function ensureRuntimeTables() {
+    if (runtimeReady) return;
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS secure_settings (
+        key TEXT PRIMARY KEY,
+        ciphertext TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS payment_plan_prices (
+        plan_code TEXT NOT NULL,
+        payment_code TEXT NOT NULL CHECK(payment_code IN ('usdt')),
+        amount_micros INTEGER NOT NULL CHECK(amount_micros > 0),
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(plan_code,payment_code)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS usdt_order_payments (
+        order_id INTEGER PRIMARY KEY REFERENCES membership_orders(id) ON DELETE CASCADE,
+        expected_amount_micros INTEGER NOT NULL CHECK(expected_amount_micros > 0),
+        asset TEXT NOT NULL DEFAULT 'USDT',
+        network TEXT NOT NULL DEFAULT '',
+        address TEXT NOT NULL DEFAULT '',
+        memo TEXT NOT NULL DEFAULT '',
+        match_status TEXT NOT NULL DEFAULT 'awaiting' CHECK(match_status IN ('awaiting','confirming','ambiguous','settled','error')),
+        okx_deposit_id TEXT NOT NULL DEFAULT '',
+        okx_tx_id TEXT NOT NULL DEFAULT '',
+        okx_state TEXT NOT NULL DEFAULT '',
+        matched_at TEXT,
+        last_checked_at TEXT,
+        last_error TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_usdt_payment_dep_id ON usdt_order_payments(okx_deposit_id) WHERE okx_deposit_id<>'';
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_usdt_payment_tx_id ON usdt_order_payments(okx_tx_id) WHERE okx_tx_id<>'';
+    `);
+    runtimeReady = true;
+  }
+
+  function getSetting(key, fallback = '') {
+    const row = db.prepare('SELECT value FROM app_settings WHERE key=?').get(key);
+    return row ? row.value : fallback;
+  }
+  function setSetting(key, value) {
+    db.prepare(`INSERT INTO app_settings(key,value,updated_at) VALUES(?,?,?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).run(key, String(value), nowIso());
+  }
+  function encryptSetting(value, keyName) {
+    if (!CONFIG_KEY) throw Object.assign(new Error('服务端密钥不可用，无法保存 OKX 凭据'), { status: 500, code: 'PAYMENT_SECRET_UNAVAILABLE' });
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', CONFIG_KEY, iv);
+    cipher.setAAD(Buffer.from(`gptlock-okx-setting:v1:${keyName}`));
+    const ciphertext = Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()]);
+    return `v1.${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${ciphertext.toString('base64url')}`;
+  }
+  function decryptSetting(value, keyName) {
+    if (!value || !CONFIG_KEY) return '';
+    try {
+      const [version, ivText, tagText, dataText] = String(value).split('.');
+      if (version !== 'v1') return '';
+      const decipher = createDecipheriv('aes-256-gcm', CONFIG_KEY, Buffer.from(ivText, 'base64url'));
+      decipher.setAAD(Buffer.from(`gptlock-okx-setting:v1:${keyName}`));
+      decipher.setAuthTag(Buffer.from(tagText, 'base64url'));
+      return Buffer.concat([decipher.update(Buffer.from(dataText, 'base64url')), decipher.final()]).toString('utf8');
+    } catch { return ''; }
+  }
+  function setSecureSetting(key, value) {
+    ensureRuntimeTables();
+    if (!value) return db.prepare('DELETE FROM secure_settings WHERE key=?').run(key);
+    db.prepare(`INSERT INTO secure_settings(key,ciphertext,updated_at) VALUES(?,?,?)
+      ON CONFLICT(key) DO UPDATE SET ciphertext=excluded.ciphertext,updated_at=excluded.updated_at`).run(key, encryptSetting(value, key), nowIso());
+  }
+  function getSecureSetting(key) {
+    ensureRuntimeTables();
+    const row = db.prepare('SELECT ciphertext FROM secure_settings WHERE key=?').get(key);
+    return row ? decryptSetting(row.ciphertext, key) : '';
+  }
+
+  function okxConfig() {
+    const apiKey = getSecureSetting('okx_api_key');
+    const secretKey = getSecureSetting('okx_secret_key');
+    const passphrase = getSecureSetting('okx_passphrase');
+    return {
+      enabled: getSetting('okx_auto_settlement_enabled', '0') === '1',
+      configured: Boolean(apiKey && secretKey && passphrase),
+      apiKey, secretKey, passphrase,
+      pollSeconds: clampInt(getSetting('okx_poll_seconds', '15'), 10, 300, 15),
+      orderTtlMinutes: clampInt(getSetting('usdt_order_ttl_minutes', '120'), 30, 720, 120),
+      allowInternalTransfers: getSetting('okx_allow_internal_transfers', '1') !== '0',
+      apiKeyHint: apiKey ? `${apiKey.slice(0, 4)}…${apiKey.slice(-4)}` : '',
+      baseUrl: OKX_DEFAULT_BASE_URL,
+    };
+  }
 
   function method(code, enabledOnly = false) {
     if (!PAYMENT_CODES.has(code)) return null;
@@ -116,8 +247,14 @@ export function createPaymentSystem({ db, publicOrigin, json }) {
       FROM payment_methods p LEFT JOIN payment_method_details d ON d.code=p.code
       WHERE p.code=?${enabledOnly ? ' AND p.enabled=1' : ''}`).get(code);
   }
+  function planPriceMap() {
+    ensureRuntimeTables();
+    const rows = db.prepare("SELECT plan_code,amount_micros FROM payment_plan_prices WHERE payment_code='usdt'").all();
+    return Object.fromEntries(rows.map((row) => [row.plan_code, formatUsdtMicros(row.amount_micros)]));
+  }
   function publicMethod(row) {
     const qrConfigured = Boolean(row?.qr_blob && row?.qr_mime);
+    const config = row.code === 'usdt' ? okxConfig() : null;
     return {
       code: row.code,
       name: row.name,
@@ -132,6 +269,8 @@ export function createPaymentSystem({ db, publicOrigin, json }) {
         address: row.crypto_address || '',
         memo: row.crypto_memo || '',
       } : null,
+      planPrices: row.code === 'usdt' ? planPriceMap() : null,
+      autoConfirm: row.code === 'usdt' ? Boolean(config.enabled && config.configured) : false,
     };
   }
   function list(enabledOnly = false) {
@@ -144,11 +283,234 @@ export function createPaymentSystem({ db, publicOrigin, json }) {
     json(res, error.status || 500, { ok: false, error: { code: error.code || 'PAYMENT_ERROR', message: error.status ? error.message : '支付配置处理失败' } });
   }
 
+  function usdtQuote(planCode) {
+    ensureRuntimeTables();
+    const row = db.prepare("SELECT amount_micros FROM payment_plan_prices WHERE payment_code='usdt' AND plan_code=?").get(String(planCode || ''));
+    if (!row) throw Object.assign(new Error('该会员套餐尚未配置 USDT 价格，请联系管理员'), { status: 409, code: 'USDT_PRICE_NOT_CONFIGURED' });
+    return { asset: 'USDT', amountMicros: Number(row.amount_micros), amount: formatUsdtMicros(row.amount_micros) };
+  }
+
+  function attachUsdtOrder(orderId, quote = null) {
+    ensureRuntimeTables();
+    const order = db.prepare("SELECT * FROM membership_orders WHERE id=? AND payment_method='usdt'").get(Number(orderId));
+    if (!order) throw Object.assign(new Error('USDT 订单不存在'), { status: 404, code: 'USDT_ORDER_NOT_FOUND' });
+    const current = db.prepare('SELECT * FROM usdt_order_payments WHERE order_id=?').get(order.id);
+    if (current) return current;
+    const price = quote || usdtQuote(order.plan_code);
+    const baseAmountMicros = Number(price.amountMicros);
+    const reserved = new Set(db.prepare(`SELECT d.expected_amount_micros FROM usdt_order_payments d
+      JOIN membership_orders o ON o.id=d.order_id
+      WHERE o.status='pending' AND o.payment_method='usdt' AND o.id<>? AND o.expires_at>=?`).all(order.id, order.created_at).map((row) => Number(row.expected_amount_micros)));
+    let expectedAmountMicros = null;
+    for (let offset = 0; offset <= 999; offset += 1) {
+      const candidate = baseAmountMicros + offset;
+      if (!reserved.has(candidate)) { expectedAmountMicros = candidate; break; }
+    }
+    if (!expectedAmountMicros) throw Object.assign(new Error('当前待支付 USDT 订单过多，暂时无法分配唯一付款金额，请稍后重试'), { status: 409, code: 'USDT_AMOUNT_POOL_EXHAUSTED' });
+    const details = method('usdt');
+    const now = nowIso();
+    db.prepare(`INSERT INTO usdt_order_payments(order_id,expected_amount_micros,asset,network,address,memo,updated_at)
+      VALUES(?,?,?,?,?,?,?)`).run(order.id, expectedAmountMicros, 'USDT', details?.crypto_network || '', details?.crypto_address || '', details?.crypto_memo || '', now);
+    return db.prepare('SELECT * FROM usdt_order_payments WHERE order_id=?').get(order.id);
+  }
+
+  function orderPaymentDetails(orderId) {
+    ensureRuntimeTables();
+    const row = db.prepare('SELECT * FROM usdt_order_payments WHERE order_id=?').get(Number(orderId));
+    if (!row) return null;
+    return {
+      asset: row.asset || 'USDT',
+      amount: formatUsdtMicros(row.expected_amount_micros),
+      network: row.network || '',
+      address: row.address || '',
+      memo: row.memo || '',
+      matchStatus: row.match_status,
+      okxState: row.okx_state || '',
+      txId: row.okx_tx_id || '',
+      depositId: row.okx_deposit_id || '',
+      matchedAt: row.matched_at,
+      lastCheckedAt: row.last_checked_at,
+      lastError: row.last_error || '',
+    };
+  }
+
+  function usdtOrderTtlMs() { return okxConfig().orderTtlMinutes * 60 * 1000; }
+
+  function createClient() {
+    const config = okxConfig();
+    if (!config.configured) throw Object.assign(new Error('OKX 只读 API 凭据尚未配置完整'), { status: 409, code: 'OKX_NOT_CONFIGURED' });
+    return createOkxClient({
+      apiKey: config.apiKey,
+      secretKey: config.secretKey,
+      passphrase: config.passphrase,
+      baseUrl: env.GPTLOCK_OKX_API_BASE || OKX_DEFAULT_BASE_URL,
+      fetchImpl,
+    });
+  }
+
+  function depositMatchesOrder(deposit, row, config) {
+    const amountMicros = parseUsdtMicros(deposit?.amt);
+    if (!amountMicros || amountMicros !== Number(row.expected_amount_micros)) return false;
+    if (String(deposit?.ccy || '').toUpperCase() !== 'USDT') return false;
+    const ts = Number(deposit?.ts || 0);
+    const createdMs = Date.parse(row.created_at || '');
+    const expiresMs = Date.parse(row.expires_at || '');
+    if (!Number.isFinite(ts) || !Number.isFinite(createdMs) || !Number.isFinite(expiresMs)) return false;
+    if (ts < createdMs - MATCH_CLOCK_SKEW_MS || ts > expiresMs + MATCH_COMPLETION_GRACE_MS) return false;
+
+    const chain = cleanText(deposit?.chain, 80);
+    const to = cleanText(deposit?.to, 256);
+    const internal = String(deposit?.type || '') === '3' || (!chain && !to);
+    if (row.network && chain && !sameText(row.network, chain)) return false;
+    if (row.address && to && !sameText(row.address, to)) return false;
+    if ((row.network || row.address) && internal && !config.allowInternalTransfers) return false;
+    if (row.address && !to && !internal) return false;
+    return true;
+  }
+
+  function markCandidates(orderIds, matchStatus, okxState, message = '') {
+    ensureRuntimeTables();
+    const update = db.prepare(`UPDATE usdt_order_payments SET match_status=?,okx_state=?,last_checked_at=?,last_error=?,updated_at=? WHERE order_id=?`);
+    const now = nowIso();
+    for (const id of orderIds) update.run(matchStatus, String(okxState || ''), now, cleanText(message, 500), now, id);
+  }
+
+  function candidateRows() {
+    ensureRuntimeTables();
+    return db.prepare(`SELECT d.*,o.status AS order_status,o.created_at,o.expires_at,o.payment_method,o.plan_code
+      FROM usdt_order_payments d JOIN membership_orders o ON o.id=d.order_id
+      WHERE o.payment_method='usdt' AND o.status='pending' AND d.match_status<>'settled'
+      ORDER BY o.id ASC`).all();
+  }
+
+  function attachLegacyPendingOrders() {
+    ensureRuntimeTables();
+    const rows = db.prepare(`SELECT o.id,o.plan_code FROM membership_orders o
+      LEFT JOIN usdt_order_payments d ON d.order_id=o.id
+      WHERE o.payment_method='usdt' AND o.status='pending' AND d.order_id IS NULL`).all();
+    for (const row of rows) {
+      try { attachUsdtOrder(row.id); }
+      catch (error) {
+        if (error?.code !== 'USDT_PRICE_NOT_CONFIGURED') logger.warn?.('GPTLock USDT order not attached:', row.id, error.message);
+      }
+    }
+  }
+
+  async function runAutoSettlement({ force = false } = {}) {
+    ensureRuntimeTables();
+    if (checking) return { ok: true, skipped: 'busy', ...status };
+    const config = okxConfig();
+    if (!force && (!config.enabled || !config.configured || !settleOrderById)) return { ok: true, skipped: 'disabled', ...status };
+    if (!config.configured) throw Object.assign(new Error('OKX 只读 API 凭据尚未配置完整'), { status: 409, code: 'OKX_NOT_CONFIGURED' });
+    if (!settleOrderById) throw Object.assign(new Error('自动开通回调尚未就绪'), { status: 503, code: 'SETTLEMENT_NOT_READY' });
+
+    checking = true;
+    status.lastCheckAt = nowIso();
+    status.lastError = '';
+    try {
+      attachLegacyPendingOrders();
+      const orders = candidateRows();
+      if (!orders.length) {
+        status.lastSuccessAt = nowIso();
+        return { ok: true, checkedOrders: 0, deposits: 0, settled: 0, ...status };
+      }
+      const deposits = await createClient().getDepositHistory({ ccy: 'USDT', limit: 100 });
+      const usedDepositIds = new Set(db.prepare("SELECT okx_deposit_id FROM usdt_order_payments WHERE okx_deposit_id<>''").all().map((row) => row.okx_deposit_id));
+      const usedTxIds = new Set(db.prepare("SELECT okx_tx_id FROM usdt_order_payments WHERE okx_tx_id<>''").all().map((row) => row.okx_tx_id));
+      const activeOrderIds = new Set(orders.map((row) => row.order_id));
+      let settled = 0;
+      let ambiguous = 0;
+
+      const orderedDeposits = [...deposits].sort((a, b) => Number(a.ts || 0) - Number(b.ts || 0));
+      for (const deposit of orderedDeposits) {
+        const depId = cleanText(deposit.depId, 120);
+        const txId = cleanText(deposit.txId, 300);
+        if ((depId && usedDepositIds.has(depId)) || (txId && usedTxIds.has(txId))) continue;
+        const candidates = orders.filter((row) => activeOrderIds.has(row.order_id) && depositMatchesOrder(deposit, row, config));
+        if (!candidates.length) continue;
+        const stateValue = String(deposit.state || '');
+        if (candidates.length > 1) {
+          ambiguous += 1;
+          markCandidates(candidates.map((row) => row.order_id), 'ambiguous', stateValue, `发现 ${candidates.length} 个订单匹配同一笔 OKX 充值，已停止自动开通，请管理员核对。`);
+          continue;
+        }
+        const candidate = candidates[0];
+        if (stateValue !== '2') {
+          markCandidates([candidate.order_id], 'confirming', stateValue, stateValue === '1' ? 'OKX 已确认到账，等待充值最终完成。' : '已发现匹配充值，等待区块确认。');
+          continue;
+        }
+        try {
+          await Promise.resolve(settleOrderById(candidate.order_id, {
+            source: 'okx_auto', depositId: depId, txId, amount: deposit.amt, chain: deposit.chain, depositTs: deposit.ts,
+          }));
+          const matchedAt = nowIso();
+          db.prepare(`UPDATE usdt_order_payments SET match_status='settled',okx_deposit_id=?,okx_tx_id=?,okx_state='2',matched_at=?,last_checked_at=?,last_error='',updated_at=? WHERE order_id=?`)
+            .run(depId, txId, matchedAt, matchedAt, matchedAt, candidate.order_id);
+          if (depId) usedDepositIds.add(depId);
+          if (txId) usedTxIds.add(txId);
+          status.lastMatchedOrderId = candidate.order_id;
+          activeOrderIds.delete(candidate.order_id);
+          settled += 1;
+        } catch (error) {
+          markCandidates([candidate.order_id], 'error', stateValue, `自动开通失败：${cleanText(error?.message || error, 350)}`);
+        }
+      }
+      const checkedAt = nowIso();
+      db.prepare("UPDATE usdt_order_payments SET last_checked_at=?,updated_at=? WHERE match_status IN ('awaiting','confirming','ambiguous','error')").run(checkedAt, checkedAt);
+      status.lastSuccessAt = checkedAt;
+      return { ok: true, checkedOrders: orders.length, deposits: deposits.length, settled, ambiguous, ...status };
+    } catch (error) {
+      status.lastError = cleanText(error?.message || error, 500);
+      throw error;
+    } finally {
+      checking = false;
+    }
+  }
+
+  function stopPoller() {
+    if (pollTimer) clearInterval(pollTimer);
+    if (startupTimer) clearTimeout(startupTimer);
+    pollTimer = null;
+    startupTimer = null;
+  }
+  function startPoller() {
+    stopPoller();
+    ensureRuntimeTables();
+    const config = okxConfig();
+    pollTimer = setInterval(() => {
+      void runAutoSettlement().catch((error) => logger.warn?.('GPTLock OKX settlement check failed:', error.message));
+    }, config.pollSeconds * 1000);
+    pollTimer.unref?.();
+    startupTimer = setTimeout(() => void runAutoSettlement().catch(() => {}), 1000);
+    startupTimer.unref?.();
+  }
+  function attachSettlement(handler) {
+    ensureRuntimeTables();
+    settleOrderById = typeof handler === 'function' ? handler : null;
+    startPoller();
+  }
+  function close() { stopPoller(); }
+
+  function adminOkxPublic() {
+    const config = okxConfig();
+    return {
+      enabled: config.enabled,
+      configured: config.configured,
+      apiKeyHint: config.apiKeyHint,
+      pollSeconds: config.pollSeconds,
+      orderTtlMinutes: config.orderTtlMinutes,
+      allowInternalTransfers: config.allowInternalTransfers,
+      baseUrl: config.baseUrl,
+      ...status,
+    };
+  }
+
   async function handleAdmin(req, res, url) {
     if (!url.pathname.startsWith('/admin/api/payments')) return false;
     try {
+      ensureRuntimeTables();
       if (url.pathname === '/admin/api/payments' && req.method === 'GET') {
-        return json(res, 200, { ok: true, paymentMethods: list(false) }), true;
+        return json(res, 200, { ok: true, paymentMethods: list(false), okx: adminOkxPublic(), usdtPlanPrices: planPriceMap() }), true;
       }
       const match = url.pathname.match(/^\/admin\/api\/payments\/(wechat|alipay|usdt)$/);
       if (match && req.method === 'PUT') {
@@ -194,8 +556,63 @@ export function createPaymentSystem({ db, publicOrigin, json }) {
           .run(qrUrl, nowIso(), code);
         return json(res, 200, { ok: true, paymentMethod: publicMethod(method(code)) }), true;
       }
+      if (url.pathname === '/admin/api/payments/usdt/prices' && req.method === 'PUT') {
+        const input = await readJson(req, 128 * 1024);
+        const prices = input.prices && typeof input.prices === 'object' ? input.prices : {};
+        const plans = new Set(db.prepare('SELECT code FROM membership_plans').all().map((row) => row.code));
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          const upsert = db.prepare(`INSERT INTO payment_plan_prices(plan_code,payment_code,amount_micros,updated_at) VALUES(?,'usdt',?,?)
+            ON CONFLICT(plan_code,payment_code) DO UPDATE SET amount_micros=excluded.amount_micros,updated_at=excluded.updated_at`);
+          for (const [planCode, raw] of Object.entries(prices)) {
+            if (!plans.has(planCode)) continue;
+            if (String(raw ?? '').trim() === '') {
+              db.prepare("DELETE FROM payment_plan_prices WHERE plan_code=? AND payment_code='usdt'").run(planCode);
+              continue;
+            }
+            const micros = parseUsdtMicros(raw);
+            if (!micros) throw Object.assign(new Error(`${planCode} 的 USDT 价格格式无效，最多 6 位小数`), { status: 400, code: 'INVALID_USDT_PRICE' });
+            upsert.run(planCode, micros, nowIso());
+          }
+          db.exec('COMMIT');
+        } catch (error) {
+          try { db.exec('ROLLBACK'); } catch {}
+          throw error;
+        }
+        return json(res, 200, { ok: true, usdtPlanPrices: planPriceMap() }), true;
+      }
+      if (url.pathname === '/admin/api/payments/usdt/okx' && req.method === 'PUT') {
+        const input = await readJson(req, 128 * 1024);
+        if (input.clearCredentials === true) {
+          setSecureSetting('okx_api_key', '');
+          setSecureSetting('okx_secret_key', '');
+          setSecureSetting('okx_passphrase', '');
+        } else {
+          if (input.apiKey !== undefined && String(input.apiKey).trim()) setSecureSetting('okx_api_key', cleanText(input.apiKey, 256));
+          if (input.secretKey !== undefined && String(input.secretKey)) setSecureSetting('okx_secret_key', String(input.secretKey).slice(0, 512));
+          if (input.passphrase !== undefined && String(input.passphrase)) setSecureSetting('okx_passphrase', String(input.passphrase).slice(0, 256));
+        }
+        if (input.enabled !== undefined) setSetting('okx_auto_settlement_enabled', input.enabled ? '1' : '0');
+        if (input.pollSeconds !== undefined) setSetting('okx_poll_seconds', clampInt(input.pollSeconds, 10, 300, okxConfig().pollSeconds));
+        if (input.orderTtlMinutes !== undefined) setSetting('usdt_order_ttl_minutes', clampInt(input.orderTtlMinutes, 30, 720, okxConfig().orderTtlMinutes));
+        if (input.allowInternalTransfers !== undefined) setSetting('okx_allow_internal_transfers', input.allowInternalTransfers ? '1' : '0');
+        startPoller();
+        return json(res, 200, { ok: true, okx: adminOkxPublic() }), true;
+      }
+      if (url.pathname === '/admin/api/payments/usdt/okx/test' && req.method === 'POST') {
+        const deposits = await createClient().getDepositHistory({ ccy: 'USDT', limit: 1 });
+        status.lastCheckAt = nowIso();
+        status.lastSuccessAt = status.lastCheckAt;
+        status.lastError = '';
+        return json(res, 200, { ok: true, connected: true, sampleCount: deposits.length, okx: adminOkxPublic() }), true;
+      }
+      if (url.pathname === '/admin/api/payments/usdt/okx/check' && req.method === 'POST') {
+        const result = await runAutoSettlement({ force: true });
+        return json(res, 200, result), true;
+      }
       return false;
     } catch (error) {
+      status.lastError = cleanText(error?.message || error, 500);
       replyFailure(res, error);
       return true;
     }
@@ -226,5 +643,18 @@ export function createPaymentSystem({ db, publicOrigin, json }) {
     return false;
   }
 
-  return { handleAdmin, handleSite, list };
+  return {
+    handleAdmin,
+    handleSite,
+    list,
+    usdtQuote,
+    attachUsdtOrder,
+    orderPaymentDetails,
+    usdtOrderTtlMs,
+    runAutoSettlement,
+    attachSettlement,
+    close,
+    parseUsdtMicros,
+    formatUsdtMicros,
+  };
 }

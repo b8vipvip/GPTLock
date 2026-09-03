@@ -799,11 +799,11 @@ export function createAccountSystem({
       planSnapshot: normalizePlanSnapshot(row.plan_snapshot_json, db.prepare('SELECT * FROM membership_plans WHERE code=?').get(row.plan_code)),
     };
   }
-  function markOrderPaid(row) {
+  function markOrderPaid(row, { allowExpiredPending = false } = {}) {
     if (!row) fail(404, 'ORDER_NOT_FOUND', '订单不存在');
     if (row.status === 'paid') return row;
     if (row.status !== 'pending') fail(409, 'ORDER_NOT_PENDING', '订单当前状态无法确认付款');
-    if (Date.parse(row.expires_at) <= Date.now()) {
+    if (!allowExpiredPending && Date.parse(row.expires_at) <= Date.now()) {
       db.prepare(`UPDATE membership_orders SET status='expired' WHERE id=? AND status='pending'`).run(row.id);
       fail(409, 'ORDER_EXPIRED', '订单已过期，请让用户重新创建订单');
     }
@@ -1082,7 +1082,7 @@ export function createAccountSystem({
         const session = requireSession(req);
         const order = db.prepare('SELECT * FROM membership_orders WHERE id=? AND user_id=?').get(Number(orderMatch[1]), session.user_id);
         if (!order) fail(404, 'ORDER_NOT_FOUND', '订单不存在');
-        if (order.status === 'pending' && Date.parse(order.expires_at) <= Date.now()) {
+        if (order.status === 'pending' && order.payment_method !== 'usdt' && Date.parse(order.expires_at) <= Date.now()) {
           db.prepare(`UPDATE membership_orders SET status='expired' WHERE id=? AND status='pending'`).run(order.id);
         }
         return json(res, 200, { ok: true, order: orderPublic(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(order.id)) }, cors), true;
@@ -1455,5 +1455,15 @@ export function createAccountSystem({
     handleAdmin,
     accountSummary,
     testOutbox,
+    markOrderPaidById(orderId, context = {}) {
+      const paid = markOrderPaid(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(orderId)), { allowExpiredPending: context?.source === 'okx_auto' });
+      if (context?.source === 'okx_auto') {
+        audit('order_auto_paid_okx', paid.user_id, {
+          orderId: paid.id, depositId: context.depositId || '', txId: context.txId || '',
+          amount: context.amount || '', chain: context.chain || '', depositTs: context.depositTs || '',
+        });
+      }
+      return orderPublic(paid);
+    },
   };
 }

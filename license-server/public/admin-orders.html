@@ -22,7 +22,7 @@
     </section>
     <div id="app" hidden>
       <section id="orders" class="card">
-        <div class="section-title"><div><h2>会员订单</h2><p class="muted">当前版本支持创建订单和管理员确认到账；接入微信/支付宝商户 API 后可自动回调确认。</p></div><button id="refreshOrders">刷新</button></div>
+        <div class="section-title"><div><h2>会员订单</h2><p class="muted">微信/支付宝静态收款码：实际到账后由管理员确认开通。USDT：启用 OKX 只读自动核对后，金额、网络/地址、时间窗口与最终充值状态全部满足时会自动标记 paid 并开通；仍保留人工确认作为异常处理入口。</p></div><button id="refreshOrders">刷新</button></div>
         <div class="table-wrap"><table><thead><tr><th>订单</th><th>用户</th><th>套餐</th><th>支付</th><th>金额</th><th>状态</th><th>时间</th><th>操作</th></tr></thead><tbody id="ordersBody"></tbody></table></div>
       </section>
     </div>
