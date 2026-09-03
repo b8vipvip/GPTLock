@@ -87,7 +87,7 @@
     shouldGuardSend() {
       const state = api.state;
       if (!state?.available || Date.now() < Number(state.retryAfter || 0)) return false;
-      const source = globalThis.__GPTLOCK_CONTEXT_BUDGET__?.privateHistorySnapshot?.();
+      const source = globalThis.__GPTLOCK_CONTEXT_BUDGET__?.privateHistorySnapshot?.() || domHistorySnapshot();
       return Boolean(
         source
         && source.conversationKey === state.conversationKey
@@ -152,6 +152,56 @@
     return normalizePart({ text, ...mediaCounts(root) });
   }
 
+  function pageConversationKey() {
+    const snapshot = globalThis.__GPTLOCK_CONTEXT_BUDGET__?.snapshot?.();
+    if (snapshot?.conversationKey) return String(snapshot.conversationKey);
+    try {
+      const url = new URL(location.href);
+      const conversationId = url.pathname.match(/(?:^|\/)c\/([a-zA-Z0-9_-]+)/)?.[1] || null;
+      return conversationId ? `conversation:${conversationId}` : `page:${url.pathname}`;
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  function pageModel() {
+    const snapshot = globalThis.__GPTLOCK_CONTEXT_BUDGET__?.snapshot?.();
+    if (snapshot?.model) return String(snapshot.model);
+    const evidence = globalThis.__GPTLOCK_PAGE_MODEL_EVIDENCE__?.collect?.();
+    return typeof evidence?.model === 'string' ? evidence.model : null;
+  }
+
+  function domHistorySnapshot() {
+    const history = [];
+    const seen = new Set();
+    const push = (element, mediaRoot = element) => {
+      if (!element || history.length >= MAX_PARTS) return;
+      const key = mediaRoot || element;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const text = textOf(element).trim();
+      const media = mediaCounts(mediaRoot);
+      if (!text && media.images === 0 && media.attachments === 0) return;
+      history.push(normalizePart({ text, ...media }));
+    };
+
+    for (const element of document.querySelectorAll('[data-message-author-role]')) {
+      const turn = element.closest('article[data-testid^="conversation-turn-"]') || element;
+      push(element, turn);
+    }
+    if (!history.length) {
+      for (const turn of document.querySelectorAll('article[data-testid^="conversation-turn-"]')) push(turn, turn);
+    }
+    if (!history.length) return null;
+    return {
+      conversationKey: pageConversationKey(),
+      model: pageModel(),
+      measuredAt: new Date().toISOString(),
+      history,
+      coverage: 'dom-visible-fallback',
+    };
+  }
+
   function sourceIsFresh(source, maxAgeMs = MAX_SOURCE_AGE_MS) {
     const measuredAt = Date.parse(source?.measuredAt || '');
     return Number.isFinite(measuredAt) && Date.now() - measuredAt <= maxAgeMs;
@@ -160,11 +210,14 @@
   async function evaluationSource(refreshHistory) {
     const legacy = globalThis.__GPTLOCK_CONTEXT_BUDGET__;
     if (!legacy) return null;
-    const source = refreshHistory && typeof legacy.refreshPrivateHistory === 'function'
+    let source = refreshHistory && typeof legacy.refreshPrivateHistory === 'function'
       ? await legacy.refreshPrivateHistory()
       : legacy.privateHistorySnapshot?.();
     const maxAgeMs = refreshHistory ? 5_000 : MAX_SOURCE_AGE_MS;
-    if (!source || !sourceIsFresh(source, maxAgeMs) || !Array.isArray(source.history) || !source.history.length) return null;
+    if (!source || !sourceIsFresh(source, maxAgeMs) || !Array.isArray(source.history) || !source.history.length) {
+      source = domHistorySnapshot();
+    }
+    if (!source || !sourceIsFresh(source, MAX_SOURCE_AGE_MS) || !Array.isArray(source.history) || !source.history.length) return null;
     return {
       source,
       payload: buildBudgetPayload({
@@ -223,6 +276,7 @@
       const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPE, payload: input.payload });
       if (!response?.ok || !response.data) return failure(response?.error || 'private_context_budget_unavailable');
       const evaluatedAt = new Date().toISOString();
+      const coverage = input.source.coverage || 'conversation-tree';
       api.state = {
         available: true,
         stale: false,
@@ -233,7 +287,7 @@
         evaluatedAtMs: Date.now(),
         conversationKey: input.source.conversationKey,
         model: input.source.model,
-        coverage: 'conversation-tree',
+        coverage,
         reason,
       };
       window.dispatchEvent(new CustomEvent('gptlock:private-context-budget-authority', {
@@ -242,7 +296,7 @@
           evaluatedAt,
           conversationKey: input.source.conversationKey,
           model: input.source.model,
-          coverage: 'conversation-tree',
+          coverage,
           result: response.data,
         },
       }));
