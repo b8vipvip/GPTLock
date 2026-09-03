@@ -19,84 +19,97 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Apply integration patches
+      - name: Apply correctness patches
         shell: python
         run: |
           from pathlib import Path
 
           changed = False
 
-          def replace_once(path, old, new, marker):
+          def patch(path, old, new, marker):
               global changed
               p = Path(path)
               text = p.read_text()
               if marker in text:
                   return
               if old not in text:
-                  raise SystemExit(f'expected snippet not found in {path}')
+                  raise SystemExit(f'expected snippet not found in {path}: {marker}')
               p.write_text(text.replace(old, new, 1))
               changed = True
 
-          replace_once(
+          patch(
+              'license-server/payment-system.mjs',
+              """    db.exec(`\n      CREATE TABLE IF NOT EXISTS secure_settings (""",
+              """    db.exec(`\n      CREATE TABLE IF NOT EXISTS app_settings (\n        key TEXT PRIMARY KEY,\n        value TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT;\n      CREATE TABLE IF NOT EXISTS secure_settings (""",
+              'CREATE TABLE IF NOT EXISTS app_settings (\n        key TEXT PRIMARY KEY,\n        value TEXT NOT NULL,'
+          )
+
+          patch(
+              'license-server/payment-system.mjs',
+              """    const price = quote || usdtQuote(order.plan_code);\n    const details = method('usdt');\n    const now = nowIso();\n    db.prepare(`INSERT INTO usdt_order_payments(order_id,expected_amount_micros,asset,network,address,memo,updated_at)\n      VALUES(?,?,?,?,?,?,?)`).run(order.id, price.amountMicros, 'USDT', details?.crypto_network || '', details?.crypto_address || '', details?.crypto_memo || '', now);""",
+              """    const price = quote || usdtQuote(order.plan_code);\n    const baseAmountMicros = Number(price.amountMicros);\n    const reserved = new Set(db.prepare(`SELECT d.expected_amount_micros FROM usdt_order_payments d\n      JOIN membership_orders o ON o.id=d.order_id\n      WHERE o.status='pending' AND o.payment_method='usdt' AND o.id<>?`).all(order.id).map((row) => Number(row.expected_amount_micros)));\n    let expectedAmountMicros = null;\n    for (let offset = 0; offset <= 999; offset += 1) {\n      const candidate = baseAmountMicros + offset;\n      if (!reserved.has(candidate)) { expectedAmountMicros = candidate; break; }\n    }\n    if (!expectedAmountMicros) throw Object.assign(new Error('当前待支付 USDT 订单过多，暂时无法分配唯一付款金额，请稍后重试'), { status: 409, code: 'USDT_AMOUNT_POOL_EXHAUSTED' });\n    const details = method('usdt');\n    const now = nowIso();\n    db.prepare(`INSERT INTO usdt_order_payments(order_id,expected_amount_micros,asset,network,address,memo,updated_at)\n      VALUES(?,?,?,?,?,?,?)`).run(order.id, expectedAmountMicros, 'USDT', details?.crypto_network || '', details?.crypto_address || '', details?.crypto_memo || '', now);""",
+              'USDT_AMOUNT_POOL_EXHAUSTED'
+          )
+
+          patch(
+              'license-server/payment-system.mjs',
+              """      const usedTxIds = new Set(db.prepare(\"SELECT okx_tx_id FROM usdt_order_payments WHERE okx_tx_id<>''\").all().map((row) => row.okx_tx_id));\n      let settled = 0;""",
+              """      const usedTxIds = new Set(db.prepare(\"SELECT okx_tx_id FROM usdt_order_payments WHERE okx_tx_id<>''\").all().map((row) => row.okx_tx_id));\n      const activeOrderIds = new Set(orders.map((row) => row.order_id));\n      let settled = 0;""",
+              'const activeOrderIds = new Set(orders.map((row) => row.order_id));'
+          )
+          patch(
+              'license-server/payment-system.mjs',
+              "const candidates = orders.filter((row) => depositMatchesOrder(deposit, row, config));",
+              "const candidates = orders.filter((row) => activeOrderIds.has(row.order_id) && depositMatchesOrder(deposit, row, config));",
+              'activeOrderIds.has(row.order_id) && depositMatchesOrder'
+          )
+          patch(
+              'license-server/payment-system.mjs',
+              """          status.lastMatchedOrderId = candidate.order_id;\n          settled += 1;""",
+              """          status.lastMatchedOrderId = candidate.order_id;\n          activeOrderIds.delete(candidate.order_id);\n          settled += 1;""",
+              'activeOrderIds.delete(candidate.order_id);'
+          )
+
+          patch(
               'license-server/account-system.mjs',
-              """  return {\n    handleApi,\n    handleAdmin,\n    accountSummary,\n    testOutbox,\n  };\n}""",
-              """  return {\n    handleApi,\n    handleAdmin,\n    accountSummary,\n    testOutbox,\n    markOrderPaidById(orderId, context = {}) {\n      const paid = markOrderPaid(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(orderId)));\n      if (context?.source === 'okx_auto') {\n        audit('order_auto_paid_okx', paid.user_id, {\n          orderId: paid.id, depositId: context.depositId || '', txId: context.txId || '',\n          amount: context.amount || '', chain: context.chain || '', depositTs: context.depositTs || '',\n        });\n      }\n      return orderPublic(paid);\n    },\n  };\n}""",
-              'markOrderPaidById(orderId, context = {})'
+              "function markOrderPaid(row) {",
+              "function markOrderPaid(row, { allowExpiredPending = false } = {}) {",
+              'function markOrderPaid(row, { allowExpiredPending = false } = {}) {'
+          )
+          patch(
+              'license-server/account-system.mjs',
+              "if (Date.parse(row.expires_at) <= Date.now()) {",
+              "if (!allowExpiredPending && Date.parse(row.expires_at) <= Date.now()) {",
+              '!allowExpiredPending && Date.parse(row.expires_at) <= Date.now()'
+          )
+          patch(
+              'license-server/account-system.mjs',
+              "const paid = markOrderPaid(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(orderId)));",
+              "const paid = markOrderPaid(db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(orderId)), { allowExpiredPending: context?.source === 'okx_auto' });",
+              "allowExpiredPending: context?.source === 'okx_auto'"
           )
 
-          replace_once(
-              'license-server/server.mjs',
-              "const paymentSystem = createPaymentSystem({ db, publicOrigin: PUBLIC_ORIGIN, json });",
-              "const paymentSystem = createPaymentSystem({ db, publicOrigin: PUBLIC_ORIGIN, json, secret: SECRET, env });",
-              'secret: SECRET, env });'
-          )
-          replace_once(
-              'license-server/server.mjs',
-              """const accountSystem = createAccountSystem({\n  db, env, secret: SECRET, publicOrigin: PUBLIC_ORIGIN, allowedExtensionIds: ALLOWED_EXTENSION_IDS,\n  windowTtlSeconds: WINDOW_TTL_SECONDS, json, bodyJson, clientIp,\n});\nconst siteAccounts = createSiteAccountSystem({\n  db, env, publicOrigin: PUBLIC_ORIGIN, json, bodyJson, clientIp, accountSummary: accountSystem.accountSummary,\n});""",
-              """const accountSystem = createAccountSystem({\n  db, env, secret: SECRET, publicOrigin: PUBLIC_ORIGIN, allowedExtensionIds: ALLOWED_EXTENSION_IDS,\n  windowTtlSeconds: WINDOW_TTL_SECONDS, json, bodyJson, clientIp,\n});\npaymentSystem.attachSettlement((orderId, context) => accountSystem.markOrderPaidById(orderId, context));\nconst siteAccounts = createSiteAccountSystem({\n  db, env, publicOrigin: PUBLIC_ORIGIN, json, bodyJson, clientIp, accountSummary: accountSystem.accountSummary, paymentSystem,\n});""",
-              'paymentSystem.attachSettlement((orderId, context)'
-          )
-          replace_once(
-              'license-server/server.mjs',
-              "server.on('close', () => siteReleases.stop());",
-              "server.on('close', () => { siteReleases.stop(); paymentSystem.close(); });",
-              'paymentSystem.close();'
-          )
+          for path in ['license-server/account-system.mjs', 'license-server/site-account.mjs']:
+              p = Path(path)
+              text = p.read_text()
+              old = "if (order.status === 'pending' && Date.parse(order.expires_at) <= Date.now()) {"
+              new = "if (order.status === 'pending' && order.payment_method !== 'usdt' && Date.parse(order.expires_at) <= Date.now()) {"
+              if new not in text and old in text:
+                  p.write_text(text.replace(old, new))
+                  changed = True
 
-          replace_once(
-              'license-server/site-account.mjs',
-              'export function createSiteAccountSystem({ db, env, publicOrigin, json, bodyJson, clientIp, accountSummary }) {',
-              'export function createSiteAccountSystem({ db, env, publicOrigin, json, bodyJson, clientIp, accountSummary, paymentSystem }) {',
-              'accountSummary, paymentSystem })'
-          )
-          replace_once(
-              'license-server/site-account.mjs',
-              """  function paymentMethods() {\n    return db.prepare('SELECT code,name,enabled,pay_url,instructions FROM payment_methods WHERE enabled=1 ORDER BY code').all().map((row) => ({\n      code: row.code, name: row.name, payUrl: row.pay_url || '', instructions: row.instructions || '',\n    }));\n  }""",
-              """  function paymentMethods() {\n    return paymentSystem.list(true);\n  }""",
-              'return paymentSystem.list(true);'
-          )
-          replace_once(
-              'license-server/site-account.mjs',
-              """    return { id: row.id, planCode: row.plan_code, paymentMethod: row.payment_method, amountCents: row.amount_cents,\n      status: row.status, payUrl: row.pay_url || '', createdAt: row.created_at, expiresAt: row.expires_at,\n      paidAt: row.paid_at, membershipId: row.membership_id, planSnapshot: snapshot };""",
-              """    return { id: row.id, planCode: row.plan_code, paymentMethod: row.payment_method, amountCents: row.amount_cents,\n      status: row.status, payUrl: row.pay_url || '', createdAt: row.created_at, expiresAt: row.expires_at,\n      paidAt: row.paid_at, membershipId: row.membership_id, planSnapshot: snapshot,\n      payment: row.payment_method === 'usdt' ? paymentSystem.orderPaymentDetails(row.id) : null };""",
-              "row.payment_method === 'usdt' ? paymentSystem.orderPaymentDetails(row.id)"
-          )
-          replace_once(
-              'license-server/site-account.mjs',
-              """        const snapshot = { code: plan.code, name: plan.name, priceCents: plan.price_cents, durationDays: plan.duration_days,\n          maxDevices: plan.max_devices, maxWindows: plan.max_windows, benefits };\n        const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();\n        const result = db.prepare(`INSERT INTO membership_orders(user_id,plan_code,payment_method,amount_cents,status,pay_url,created_at,expires_at,plan_snapshot_json)\n          VALUES(?,?,?,?, 'pending',?,?,?,?)`).run(session.user_id, plan.code, method.code, plan.price_cents,\n            method.pay_url || '', nowIso(), expiresAt, JSON.stringify(snapshot));\n        const order = db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(result.lastInsertRowid));\n        return json(res, 201, { ok: true, order: orderPublic(order), instructions: method.instructions || '' }), true;""",
-              """        const snapshot = { code: plan.code, name: plan.name, priceCents: plan.price_cents, durationDays: plan.duration_days,\n          maxDevices: plan.max_devices, maxWindows: plan.max_windows, benefits };\n        const usdtQuote = method.code === 'usdt' ? paymentSystem.usdtQuote(plan.code) : null;\n        const ttlMs = method.code === 'usdt' ? paymentSystem.usdtOrderTtlMs() : 30 * 60 * 1000;\n        const expiresAt = new Date(Date.now() + ttlMs).toISOString();\n        const result = db.prepare(`INSERT INTO membership_orders(user_id,plan_code,payment_method,amount_cents,status,pay_url,created_at,expires_at,plan_snapshot_json)\n          VALUES(?,?,?,?, 'pending',?,?,?,?)`).run(session.user_id, plan.code, method.code, plan.price_cents,\n            method.pay_url || '', nowIso(), expiresAt, JSON.stringify(snapshot));\n        const order = db.prepare('SELECT * FROM membership_orders WHERE id=?').get(Number(result.lastInsertRowid));\n        if (usdtQuote) paymentSystem.attachUsdtOrder(order.id, usdtQuote);\n        return json(res, 201, { ok: true, order: orderPublic(order), instructions: method.instructions || '' }), true;""",
-              "const usdtQuote = method.code === 'usdt' ? paymentSystem.usdtQuote(plan.code) : null;"
-          )
-          replace_once(
-              'license-server/site-account.mjs',
-              """    } catch (error) {\n      if (error instanceof SiteAccountError) {\n        json(res, error.status, { ok: false, error: { code: error.code, message: error.message } });\n        return true;\n      }\n      throw error;\n    }""",
-              """    } catch (error) {\n      if (error instanceof SiteAccountError || (error?.status && error?.code)) {\n        json(res, error.status, { ok: false, error: { code: error.code, message: error.message } });\n        return true;\n      }\n      throw error;\n    }""",
-              "error instanceof SiteAccountError || (error?.status && error?.code)"
-          )
+          p = Path('license-server/package.json')
+          text = p.read_text()
+          if 'node --check okx-client.mjs' not in text:
+              old = 'node --check server.mjs && node --check account-system.mjs'
+              if old not in text:
+                  raise SystemExit('package check script anchor not found')
+              p.write_text(text.replace(old, 'node --check server.mjs && node --check okx-client.mjs && node --check account-system.mjs', 1))
+              changed = True
 
           if changed:
               Path('/tmp/usdt-patch-changed').write_text('1')
-      - name: Commit integration patches
+      - name: Commit correctness patches
         shell: bash
         run: |
           if [ ! -f /tmp/usdt-patch-changed ]; then
@@ -105,6 +118,6 @@ jobs:
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add license-server/account-system.mjs license-server/server.mjs license-server/site-account.mjs
-          git commit -m 'feat: wire OKX settlement into account orders'
+          git add license-server/payment-system.mjs license-server/account-system.mjs license-server/site-account.mjs license-server/package.json
+          git commit -m 'fix: harden USDT automatic settlement matching'
           git push origin HEAD:feat/usdt-okx-auto-settlement-20260903
