@@ -1,0 +1,33 @@
+name: License Server CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'license-server/**'
+      - '.github/workflows/license-server.yml'
+  pull_request:
+    paths:
+      - 'license-server/**'
+      - '.github/workflows/license-server.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  license-server:
+    name: License server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - name: Check JavaScript
+        working-directory: license-server
+        run: npm run check
+      - name: Run smoke tests
+        working-directory: license-server
+        run: npm test
+      - name: Check updater shell scripts
+        run: bash -n license-server/scripts/update-server.sh license-server/scripts/install-updater-systemd.sh license-server/scripts/github-fetch.sh
