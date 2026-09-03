@@ -1,0 +1,198 @@
+from pathlib import Path
+import json
+import re
+
+catalog_path = Path('extension/model-catalog.js')
+text = catalog_path.read_text()
+
+old = "  const DISCOVERY_SCHEMA_VERSION = 2;\n  const MAX_DISCOVERED_MODELS = 64;"
+new = "  const DISCOVERY_SCHEMA_VERSION = 2;\n  const TRUSTED_STATUS_STORAGE_KEY = 'gptlock.trusted-model-status.v1';\n  const MAX_DISCOVERED_MODELS = 64;"
+assert old in text
+text = text.replace(old, new, 1)
+
+old = "  let indicator = null;\n  let lastState = null;\n  let localPageObservation = null;"
+new = "  let indicator = null;\n  let lastState = null;\n  let trustedStatus = null;\n  let currentPolicy = null;\n  let localPageObservation = null;"
+assert old in text
+text = text.replace(old, new, 1)
+
+pattern = re.compile(r"  function modelSnapshot\(state\) \{.*?\n  \}\n\n  function rememberModels", re.S)
+replacement = r'''  function modelSnapshot(state) {
+    const pageObservation = effectivePageObservation(state);
+    const pageModel = normalizeModelId(pageObservation?.model);
+    const historyHelper = globalThis.__GPTLOCK_MODEL_STATUS_HISTORY__;
+    const selected = historyHelper?.selectStatus?.({
+      state,
+      history: trustedStatus,
+      policy: currentPolicy,
+    }) || null;
+
+    const stateRequestModel = normalizeModelId(state?.lastRequest?.model);
+    const requestModel = normalizeModelId(selected?.request?.id) || stateRequestModel;
+    const requestHistorical = Boolean(requestModel && selected?.request?.historical);
+    const requestCurrent = selected ? Boolean(selected?.request?.current) : Boolean(stateRequestModel);
+
+    const verification = state?.lastVerification;
+    const responseCurrent = responseAppliesToLatestRequest(state);
+    const fallbackResponseModel = responseCurrent ? normalizeModelId(verification?.model) : null;
+    const responseModel = normalizeModelId(selected?.response?.id) || fallbackResponseModel;
+    const responseHistorical = Boolean(responseModel && selected?.response?.historical);
+    const fallbackResponseConfirmed = Boolean(
+      fallbackResponseModel
+      && verification?.evidenceSource === 'network_response_metadata'
+      && !verification?.reasons?.includes?.('model_missing')
+    );
+    const fallbackResponseMismatch = Boolean(
+      fallbackResponseModel
+      && (verification?.reasons?.includes?.('model_not_allowed') || verification?.verdict === 'mismatch')
+    );
+    const responseConfirmed = selected?.response?.id
+      ? Boolean(selected.response.confirmed)
+      : fallbackResponseConfirmed;
+    const responseMismatch = selected?.response?.id
+      ? Boolean(selected.response.mismatch)
+      : fallbackResponseMismatch;
+
+    return {
+      page: {
+        id: pageModel,
+        label: pageModel ? modelLabel(pageModel) : '未识别',
+        status: pageModel ? 'observed' : 'unknown',
+      },
+      request: {
+        id: requestModel,
+        label: requestModel
+          ? `${modelLabel(requestModel)}${requestHistorical ? ' · 最近请求' : ''}`
+          : '等待请求',
+        status: requestHistorical ? 'request-history' : requestModel ? 'request' : 'waiting',
+        historical: requestHistorical,
+      },
+      response: {
+        id: responseModel,
+        label: responseModel ? modelLabel(responseModel) : requestCurrent ? '等待当前响应' : '等待响应',
+        status: responseMismatch
+          ? 'mismatch'
+          : responseHistorical
+            ? 'confirmed-history'
+            : responseConfirmed ? 'confirmed' : responseModel ? 'response' : 'waiting',
+        confirmed: responseConfirmed,
+        mismatch: responseMismatch,
+        historical: responseHistorical,
+      },
+    };
+  }
+
+  function rememberModels'''
+text, count = pattern.subn(replacement, text, count=1)
+assert count == 1, count
+
+old = '        .model-row[data-status="confirmed"] .model-value{color:#dcfce7}\n        .model-row[data-status="mismatch"] .model-value{color:#fee2e2}'
+new = '        .model-row[data-status="request-history"] .model-value{color:#dbeafe;opacity:1;font-weight:800}\n        .model-row[data-status="confirmed"] .model-value,.model-row[data-status="confirmed-history"] .model-value{color:#dcfce7}\n        .model-row[data-status="confirmed-history"] .model-value{opacity:1;font-weight:800}\n        .model-row[data-status="mismatch"] .model-value{color:#fee2e2}'
+assert old in text
+text = text.replace(old, new, 1)
+
+old = "  function consumeState(state) {\n    if (!state) return;\n    lastState = state;\n    rememberModels(trustedModelCandidates(state));\n    render(state);\n  }"
+new = "  function consumeState(state, policy = null) {\n    if (policy) currentPolicy = policy;\n    if (!state) {\n      render(lastState);\n      return;\n    }\n    lastState = state;\n    rememberModels(trustedModelCandidates(state));\n    render(state);\n  }"
+assert old in text
+text = text.replace(old, new, 1)
+
+old = "    if (message?.type === 'GPTLOCK_GUARD_STATE') consumeState(message.state);"
+new = "    if (message?.type === 'GPTLOCK_GUARD_STATE') consumeState(message.state, message.policy);"
+assert old in text
+text = text.replace(old, new, 1)
+
+old = "      if (response?.ok) consumeState(response.data?.tabState);"
+new = "      if (response?.ok) consumeState(response.data?.tabState, response.data?.policy);"
+assert old in text
+text = text.replace(old, new, 1)
+
+marker = "  const pageObserver = new MutationObserver(schedulePageRefresh);"
+insert = '''  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === 'local' && changes[TRUSTED_STATUS_STORAGE_KEY]) {
+      trustedStatus = changes[TRUSTED_STATUS_STORAGE_KEY].newValue || null;
+      render(lastState);
+      return;
+    }
+    if (areaName === 'sync' && changes.policy?.newValue) {
+      currentPolicy = changes.policy.newValue;
+      render(lastState);
+    }
+  });
+
+  chrome.storage.local.get(TRUSTED_STATUS_STORAGE_KEY, (stored) => {
+    if (chrome.runtime.lastError) return;
+    trustedStatus = stored?.[TRUSTED_STATUS_STORAGE_KEY] || null;
+    render(lastState);
+  });
+
+'''
+assert marker in text
+text = text.replace(marker, insert + marker, 1)
+
+catalog_path.write_text(text)
+
+test_path = Path('extension/tests/model-indicator.test.mjs')
+test_text = test_path.read_text()
+addition = r'''
+
+test('base model indicator owns trusted-history rendering so periodic refresh cannot overwrite it with waiting labels', () => {
+  assert.match(source, /gptlock\.trusted-model-status\.v1/);
+  assert.match(source, /__GPTLOCK_MODEL_STATUS_HISTORY__/);
+  assert.match(source, /selectStatus/);
+  assert.match(source, /最近请求/);
+  assert.match(source, /request-history/);
+  assert.match(source, /confirmed-history/);
+  assert.match(source, /storage\.onChanged/);
+});
+'''
+if 'owns trusted-history rendering' not in test_text:
+    test_path.write_text(test_text.rstrip() + addition)
+
+runtime_test = Path('extension/tests/model-status-continuity-runtime.test.mjs')
+runtime_test.write_text("""import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+const source = await readFile(new URL('../model-status-continuity.js', import.meta.url), 'utf8');
+
+test('model status continuity persists trusted evidence but never writes the floating indicator DOM', () => {
+  assert.match(source, /gptlock\\.trusted-model-status\\.v1/);
+  assert.match(source, /mergeTrustedEvidence/);
+  assert.match(source, /chrome\\.storage\\.local\\.set/);
+  assert.doesNotMatch(source, /gptlock-model-indicator-host/);
+  assert.doesNotMatch(source, /querySelector\\(.*model-row/);
+  assert.doesNotMatch(source, /setRow\\(/);
+  assert.doesNotMatch(source, /scheduleRender/);
+});
+
+test('model status continuity remains event driven for evidence capture', () => {
+  assert.match(source, /GPTLOCK_GUARD_STATE/);
+  assert.match(source, /storage\\.onChanged/);
+  assert.match(source, /visibilitychange/);
+  assert.doesNotMatch(source, /setInterval/);
+});
+""")
+
+manifest = Path('extension/manifest.json')
+data = json.loads(manifest.read_text())
+assert data['version'] == '0.5.37'
+data['version'] = '0.5.38'
+manifest.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+
+package = Path('extension/package.json')
+pdata = json.loads(package.read_text())
+assert pdata['version'] == '0.5.37'
+pdata['version'] = '0.5.38'
+package.write_text(json.dumps(pdata, ensure_ascii=False, indent=2) + '\n')
+
+cargo = Path('native-core/Cargo.toml')
+cargo_text = cargo.read_text()
+cargo_text, count = re.subn(r'(?m)^version = "0\.5\.37"$', 'version = "0.5.38"', cargo_text, count=1)
+assert count == 1
+cargo.write_text(cargo_text)
+
+lock = Path('native-core/Cargo.lock')
+lock_text = lock.read_text()
+pattern = re.compile(r'(name = "gptlock-core"\nversion = ")0\.5\.37(")')
+lock_text, count = pattern.subn(r'\g<1>0.5.38\2', lock_text, count=1)
+assert count == 1
+lock.write_text(lock_text)
