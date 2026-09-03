@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   refresh-lock:
-    if: github.event.head_commit.message == 'chore: refresh GPTWork v0.5.37 lockfile'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
