@@ -13,6 +13,7 @@ const optionsJs = fs.readFileSync(new URL('../options.js', import.meta.url), 'ut
 const catalog = fs.readFileSync(new URL('../model-catalog.js', import.meta.url), 'utf8');
 const catalogOptions = fs.readFileSync(new URL('../model-catalog-options.js', import.meta.url), 'utf8');
 const autoLock = fs.readFileSync(new URL('../model-auto-lock.js', import.meta.url), 'utf8');
+const settingsMigration = fs.readFileSync(new URL('../settings-migration.js', import.meta.url), 'utf8');
 
 test('auto remains observable as request metadata but is never a concrete lock target', () => {
   assert.equal(normalizeModelId('auto'), 'auto');
@@ -55,4 +56,14 @@ test('model discovery schema v3 removes routing aliases before persistence or au
 
   assert.match(autoLock, /NON_CONCRETE_MODEL_IDS = new Set\(\['auto'\]\)/);
   assert.match(autoLock, /\.map\(normalizeConcreteModelId\)/);
+});
+
+test('extension startup purges historical auto discovery and lock state without opening Settings', () => {
+  assert.match(settingsMigration, /export async function purgeNonConcreteModelState\(\)/);
+  assert.match(settingsMigration, /DISCOVERED_MODELS_KEY = 'discoveredModels'/);
+  assert.match(settingsMigration, /DISCOVERED_MODEL_EVIDENCE_KEY = 'discoveredModelEvidence'/);
+  assert.match(settingsMigration, /POLICY_KEY = 'policy'/);
+  assert.match(settingsMigration, /NON_CONCRETE_MODEL_IDS = new Set\(\['auto'\]\)/);
+  assert.match(settingsMigration, /patch\[POLICY_KEY\] = \{ \.\.\.policy, lockedModels \}/);
+  assert.match(settingsMigration, /void purgeNonConcreteModelState\(\)\.catch/);
 });
