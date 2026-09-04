@@ -55,13 +55,17 @@
     <section class="card" aria-labelledby="modelHeading">
       <h2 id="modelHeading">锁定模型 <span>Locked models</span></h2>
       <p class="help">可多选。正式聊天 POST 发出前，GPTWork 会检查顶层 model；若当前模型不在允许列表，则改写为第一个锁定模型的已知传输标识。</p>
-      <p class="permission-note">只有正式聊天请求或响应元数据确认的新模型才会加入“自动识别 / Discovered”；页面 DOM 文本只作为辅助观察，不会单独永久入库。新模型首次加入自动识别列表时会自动勾选并立即加入锁定策略；之后你仍可手动取消勾选并保存，GPTWork 不会因后续重复证据把它再次强制启用。</p>
+      <p class="permission-note">只有正式聊天请求或响应元数据确认的具体模型才会加入“自动识别 / Discovered”。<code>auto</code> 是 ChatGPT 自动路由标识，不代表具体模型，不会加入自动识别或锁定策略。页面 DOM 文本只作为辅助观察，不会单独永久入库。</p>
       <div id="modelChoices" class="choices"></div>
       <label class="field" for="customModels">
         <span>自定义模型标识（逗号分隔）</span>
-        <small>Custom model IDs, comma-separated</small>
+        <small>填写实际传输 model ID；不要填写显示名称。Custom concrete model IDs, comma-separated.</small>
       </label>
-      <input id="customModels" type="text" spellcheck="false" placeholder="例如 / e.g. gpt-5.6-sol">
+      <div class="custom-model-editor">
+        <input id="customModels" type="text" spellcheck="false" placeholder="例如 / e.g. gpt-5.6-luna">
+        <button id="saveCustomModels" class="primary" type="button">添加并保存 / Add &amp; save</button>
+      </div>
+      <p id="customModelsMessage" class="inline-message" role="status" aria-live="polite"></p>
     </section>
 
     <section class="card" aria-labelledby="reasoningHeading">

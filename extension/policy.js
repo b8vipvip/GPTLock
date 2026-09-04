@@ -29,6 +29,8 @@ const MODEL_ALIASES = Object.freeze({
   'gpt-5-6': 'gpt-5.6-sol',
 });
 
+const NON_CONCRETE_MODEL_IDS = new Set(['auto']);
+
 const MODEL_TRANSPORT_IDS = Object.freeze({
   'gpt-5.6-sol': 'gpt-5.6-sol-wm',
 });
@@ -41,6 +43,11 @@ export function normalizeModelId(value) {
   const model = String(value ?? '').trim().toLowerCase();
   if (!/^[a-z0-9._:-]{1,128}$/.test(model)) return null;
   return MODEL_ALIASES[model] ?? model;
+}
+
+export function normalizeConcreteModelId(value) {
+  const model = normalizeModelId(value);
+  return model && !NON_CONCRETE_MODEL_IDS.has(model) ? model : null;
 }
 
 export function modelTransportId(value) {
@@ -68,7 +75,7 @@ export function normalizePolicy(input) {
       ? source.reasoningLevels
       : DEFAULT_POLICY.allowedReasoningLevels;
 
-  const lockedModels = unique(rawModels.map(normalizeModelId).filter(Boolean));
+  const lockedModels = unique(rawModels.map(normalizeConcreteModelId).filter(Boolean));
   const allowedReasoningLevels = unique(rawLevels.map(normalizeReasoningLevel).filter(Boolean));
 
   return {

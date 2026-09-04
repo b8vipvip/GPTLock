@@ -2,7 +2,7 @@
   const STORAGE_KEY = 'discoveredModels';
   const EVIDENCE_STORAGE_KEY = 'discoveredModelEvidence';
   const DISCOVERY_SCHEMA_KEY = 'modelDiscoverySchemaVersion';
-  const DISCOVERY_SCHEMA_VERSION = 2;
+  const DISCOVERY_SCHEMA_VERSION = 3;
   const TRUSTED_STATUS_STORAGE_KEY = 'gptlock.trusted-model-status.v1';
   const MAX_DISCOVERED_MODELS = 64;
   const STATE_REFRESH_MS = 1200;
@@ -13,6 +13,7 @@
     'gpt-5.6-sol-wm': 'gpt-5.6-sol',
     'gpt-5-6': 'gpt-5.6-sol',
   });
+  const NON_CONCRETE_MODEL_IDS = new Set(['auto']);
   const PAGE_MODEL_SELECTORS = [
     '[data-testid="model-switcher-dropdown-button"]',
     'button[data-testid*="model-switcher"]',
@@ -37,12 +38,17 @@
     return MODEL_ALIASES[model] ?? model;
   }
 
+  function normalizeConcreteModelId(value) {
+    const model = normalizeModelId(value);
+    return model && !NON_CONCRETE_MODEL_IDS.has(model) ? model : null;
+  }
+
   function normalizeDisplayedModel(text) {
     if (!text) return null;
     const compact = String(text).trim().toLowerCase().replace(/\s+/g, '-');
-    // Visible DOM text is advisory only.  Recognize the established Sol family
-    // explicitly, otherwise fall back to the base GPT family.  Do not turn
-    // arbitrary trailing UI text (for example "Solji"/"Solmo") into a model ID.
+    // Visible DOM text is advisory only. Recognize the established Sol family
+    // explicitly, otherwise fall back to the base GPT family. Do not turn
+    // arbitrary trailing UI text into a model ID.
     const compactSol = compact.match(/(?:^|[^a-z0-9])(?:gpt-)?(\d+(?:\.\d+)*)-sol(?:-wm)?(?:$|[^a-z0-9])/);
     if (compactSol) return normalizeModelId(`gpt-${compactSol[1]}-sol`);
     const explicit = compact.match(/(?:^|[^a-z0-9])gpt-?(\d+(?:\.\d+)*)(?=$|[^a-z0-9.])/);
@@ -120,13 +126,15 @@
   function trustedModelCandidates(state) {
     const values = [];
     const add = (value, source) => {
-      const model = normalizeModelId(value);
+      const model = normalizeConcreteModelId(value);
       if (!model) return;
       const key = `${source}:${model}`;
       if (!values.some((item) => item.key === key)) values.push({ key, model, source });
     };
 
-    // The formal conversation POST is authoritative for what GPTWork actually sends.
+    // A concrete model in the formal conversation POST is authoritative for what
+    // GPTWork actually sends. Routing aliases such as "auto" are deliberately
+    // excluded because they do not identify the serving model.
     add(state?.lastRequest?.model, 'network_request_metadata');
 
     const verification = state?.lastVerification;
@@ -140,7 +148,7 @@
   }
 
   function legacySuspiciousModel(value) {
-    const model = normalizeModelId(value);
+    const model = normalizeConcreteModelId(value);
     if (!model) return true;
     if (/^gpt-5\.6-(?:s|so)$/.test(model)) return true;
     return model !== 'gpt-5.6-sol' && /^gpt-5\.6-sol[a-z0-9]+$/.test(model);
@@ -233,16 +241,18 @@
         DISCOVERY_SCHEMA_KEY,
       ]);
       const legacy = Array.isArray(stored[STORAGE_KEY])
-        ? stored[STORAGE_KEY].map(normalizeModelId).filter(Boolean)
+        ? stored[STORAGE_KEY].map(normalizeConcreteModelId).filter(Boolean)
         : [];
       const evidence = stored[EVIDENCE_STORAGE_KEY] && typeof stored[EVIDENCE_STORAGE_KEY] === 'object'
         ? { ...stored[EVIDENCE_STORAGE_KEY] }
         : {};
+      for (const key of Object.keys(evidence)) {
+        if (!normalizeConcreteModelId(key)) delete evidence[key];
+      }
       const now = new Date().toISOString();
 
-      // v1 stored page-text guesses without provenance. Keep plausible historical IDs,
-      // but drop the known partial/concatenated 5.6 Sol artifacts. A real future model
-      // can always be re-added immediately by authoritative network evidence.
+      // Historical page guesses without provenance remain only when they are
+      // concrete IDs. Routing aliases such as auto are purged in schema v3.
       if (Number(stored[DISCOVERY_SCHEMA_KEY] || 0) < DISCOVERY_SCHEMA_VERSION) {
         for (const model of legacy) {
           if (legacySuspiciousModel(model)) continue;
@@ -251,7 +261,7 @@
       }
 
       for (const candidate of candidates) {
-        const model = normalizeModelId(candidate?.model);
+        const model = normalizeConcreteModelId(candidate?.model);
         if (!model || legacySuspiciousModel(model) && candidate?.source?.startsWith?.('page_')) continue;
         const previous = evidence[model] && typeof evidence[model] === 'object' ? evidence[model] : {};
         const sources = [...new Set([...(Array.isArray(previous.sources) ? previous.sources : []), candidate.source])];
@@ -264,7 +274,7 @@
       }
 
       const entries = Object.entries(evidence)
-        .filter(([model, item]) => normalizeModelId(model) && item?.confirmed
+        .filter(([model, item]) => normalizeConcreteModelId(model) && item?.confirmed
           && (!legacySuspiciousModel(model) || hasTrustedNetworkEvidence(item)))
         .sort((a, b) => String(a[1]?.lastSeenAt || '').localeCompare(String(b[1]?.lastSeenAt || '')))
         .slice(-MAX_DISCOVERED_MODELS);
