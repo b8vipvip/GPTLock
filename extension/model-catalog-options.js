@@ -2,11 +2,12 @@
   const STORAGE_KEY = 'discoveredModels';
   const EVIDENCE_STORAGE_KEY = 'discoveredModelEvidence';
   const DISCOVERY_SCHEMA_KEY = 'modelDiscoverySchemaVersion';
-  const DISCOVERY_SCHEMA_VERSION = 2;
+  const DISCOVERY_SCHEMA_VERSION = 3;
   const MODEL_ALIASES = Object.freeze({
     'gpt-5.6-sol-wm': 'gpt-5.6-sol',
     'gpt-5-6': 'gpt-5.6-sol',
   });
+  const NON_CONCRETE_MODEL_IDS = new Set(['auto']);
 
   function normalizeModelId(value) {
     const model = String(value ?? '').trim().toLowerCase();
@@ -14,8 +15,13 @@
     return MODEL_ALIASES[model] ?? model;
   }
 
-  function legacySuspiciousModel(value) {
+  function normalizeConcreteModelId(value) {
     const model = normalizeModelId(value);
+    return model && !NON_CONCRETE_MODEL_IDS.has(model) ? model : null;
+  }
+
+  function legacySuspiciousModel(value) {
+    const model = normalizeConcreteModelId(value);
     if (!model) return true;
     if (/^gpt-5\.6-(?:s|so)$/.test(model)) return true;
     return model !== 'gpt-5.6-sol' && /^gpt-5\.6-sol[a-z0-9]+$/.test(model);
@@ -35,7 +41,7 @@
   }
 
   function modelLabel(value) {
-    const model = normalizeModelId(value);
+    const model = normalizeConcreteModelId(value);
     if (!model) return 'Unknown';
     if (model === 'gpt-5.6-sol') return 'GPT-5.6 Sol';
     if (model === 'gpt-5.5') return 'GPT-5.5';
@@ -54,29 +60,30 @@
   }
 
   function appendChoice(model, lockedModels, evidence) {
+    const concrete = normalizeConcreteModelId(model);
     const container = document.getElementById('modelChoices');
-    if (!container) return;
-    const existing = container.querySelector(`input[name="model"][value="${CSS.escape(model)}"]`);
+    if (!container || !concrete) return;
+    const existing = container.querySelector(`input[name="model"][value="${CSS.escape(concrete)}"]`);
     if (existing) {
-      if (existing.closest('[data-discovered-model]')) existing.checked = lockedModels.includes(model);
+      if (existing.closest('[data-discovered-model]')) existing.checked = lockedModels.includes(concrete);
       return;
     }
 
     const row = document.createElement('label');
     row.className = 'check-row';
-    row.dataset.discoveredModel = model;
+    row.dataset.discoveredModel = concrete;
 
     const input = document.createElement('input');
     input.type = 'checkbox';
     input.name = 'model';
-    input.value = model;
-    input.checked = lockedModels.includes(model);
+    input.value = concrete;
+    input.checked = lockedModels.includes(concrete);
 
     const text = document.createElement('span');
     const strong = document.createElement('strong');
-    strong.textContent = modelLabel(model);
+    strong.textContent = modelLabel(concrete);
     const small = document.createElement('small');
-    small.textContent = `${model} · ${evidenceLabel(model, evidence)}`;
+    small.textContent = `${concrete} · ${evidenceLabel(concrete, evidence)}`;
     text.append(strong, small);
     row.append(input, text);
     container.append(row);
@@ -88,7 +95,7 @@
     const discoveredSet = new Set(discovered);
     const remaining = field.value
       .split(',')
-      .map((value) => normalizeModelId(value))
+      .map((value) => normalizeConcreteModelId(value))
       .filter((value) => value && !discoveredSet.has(value));
     field.value = [...new Set(remaining)].join(', ');
   }
@@ -112,21 +119,25 @@
       DISCOVERY_SCHEMA_KEY,
       'policy',
     ]);
-    const discoveredBefore = Array.isArray(stored[STORAGE_KEY])
-      ? [...new Set(stored[STORAGE_KEY].map(normalizeModelId).filter(Boolean))]
-      : [];
-    const lockedBefore = Array.isArray(stored.policy?.lockedModels)
-      ? stored.policy.lockedModels.map(normalizeModelId).filter(Boolean)
-      : [];
+    const discoveredRaw = Array.isArray(stored[STORAGE_KEY]) ? stored[STORAGE_KEY] : [];
+    const discoveredBefore = [...new Set(discoveredRaw.map(normalizeModelId).filter(Boolean))];
+    const lockedRaw = Array.isArray(stored.policy?.lockedModels) ? stored.policy.lockedModels : [];
+    const lockedBefore = lockedRaw.map(normalizeModelId).filter(Boolean);
     const evidenceBefore = stored[EVIDENCE_STORAGE_KEY] && typeof stored[EVIDENCE_STORAGE_KEY] === 'object'
       ? stored[EVIDENCE_STORAGE_KEY]
       : {};
     const trusted = (model) => hasTrustedNetworkEvidence(evidenceBefore?.[model]);
-    const discovered = discoveredBefore.filter((model) => !legacySuspiciousModel(model) || trusted(model));
-    const lockedModels = lockedBefore.filter((model) => !legacySuspiciousModel(model) || trusted(model));
+    const discovered = discoveredBefore
+      .map(normalizeConcreteModelId)
+      .filter((model) => model && (!legacySuspiciousModel(model) || trusted(model)));
+    const lockedModels = lockedBefore
+      .map(normalizeConcreteModelId)
+      .filter((model) => model && (!legacySuspiciousModel(model) || trusted(model)));
     const evidence = Object.fromEntries(
-      Object.entries(evidenceBefore).filter(([model, item]) =>
-        !legacySuspiciousModel(model) || hasTrustedNetworkEvidence(item)),
+      Object.entries(evidenceBefore).filter(([model, item]) => {
+        const concrete = normalizeConcreteModelId(model);
+        return concrete && (!legacySuspiciousModel(concrete) || hasTrustedNetworkEvidence(item));
+      }),
     );
 
     if (
