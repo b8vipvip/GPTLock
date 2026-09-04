@@ -70,6 +70,11 @@ input[type="text"], select {
   font: inherit;
 }
 input[type="text"]:focus, select:focus { outline: 3px solid #bfdbfe; border-color: #2563eb; }
+.custom-model-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: stretch; }
+.custom-model-editor button { white-space: nowrap; }
+.inline-message { min-height: 20px; margin: 7px 0 0; color: #475569; font-size: 13px; }
+.inline-message.good { color: #166534; }
+.inline-message.bad { color: #b91c1c; }
 .check-row.wide { margin-top: 12px; }
 .permission-note { margin: 9px 0 0; padding-left: 14px; color: #7c4a03; font-size: 13px; line-height: 1.55; }
 .permission-note.en { margin-top: 2px; color: #8a6a26; }
@@ -119,6 +124,7 @@ button:disabled { opacity: .5; cursor: default; }
   .status-title, .update-heading { align-items: flex-start; flex-direction: column; }
   .status-actions { justify-content: flex-start; }
   .update-meta { grid-template-columns: 1fr; }
+  .custom-model-editor { grid-template-columns: 1fr; }
   dl div { grid-template-columns: 1fr; gap: 3px; }
   .badge { white-space: normal; }
 }
