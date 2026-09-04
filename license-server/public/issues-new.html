@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="新建 GPTWork Issue — 提交问题、Bug 或功能建议。">
+  <title>新建 Issue · GPTWork</title>
+  <link rel="stylesheet" href="/site.css">
+</head>
+<body data-page="issues-new">
+<header class="site-header"><div class="shell nav"><a class="brand" href="/"><span class="brand-mark"></span><span>GPTWork</span></a><nav class="nav-links"><a href="/">产品</a><a href="/guide">教程</a><a href="/releases">版本发布</a><a aria-current="page" href="/issues">Issues</a><a href="/support">支持</a><a class="nav-account" href="/account">账户中心</a></nav></div></header>
+<main class="shell support issue-compose-page">
+  <div class="release-top issue-compose-heading">
+    <div><span class="eyebrow">GPTWork Community</span><h1>新建 Issue</h1><p>提交问题、Bug、功能建议或需要管理员协助处理的事项。</p></div>
+    <a class="btn btn-soft" href="/issues">← 返回讨论区</a>
+  </div>
+
+  <section id="issueAuthRequired" class="release-card" hidden>
+    <h2>请先登录 GPTWork 账户</h2>
+    <p>新建 Issue 需要登录。登录完成后返回此页面即可继续编辑。</p>
+    <div class="hero-actions"><a class="btn btn-primary" href="/account">登录账户</a><a class="btn btn-soft" href="/issues">返回讨论区</a></div>
+  </section>
+
+  <section id="issueCreateDisabled" class="release-card" hidden>
+    <h2>当前暂停新建 Issue</h2>
+    <p id="issueCreateDisabledMessage">讨论区仍可浏览，管理员暂时关闭了用户新建功能。</p>
+    <div class="hero-actions"><a class="btn btn-soft" href="/issues">返回讨论区</a></div>
+  </section>
+
+  <section id="issueComposer" class="release-card" hidden>
+    <div class="form-grid">
+      <div class="field">
+        <label for="newIssueTitle">标题</label>
+        <input id="newIssueTitle" maxlength="120" placeholder="简要说明问题，例如：自动验证完成后状态仍异常">
+        <p id="newIssueTitleCount" class="release-date">0 / 120</p>
+      </div>
+      <div class="field">
+        <label for="newIssueBody">问题描述</label>
+        <textarea id="newIssueBody" class="release-notes" rows="14" maxlength="5000" placeholder="发生了什么？如何复现？期望结果是什么？请不要提交密码、Cookie、Token、支付信息、私人聊天或未经脱敏的完整诊断日志。"></textarea>
+        <p id="newIssueBodyCount" class="release-date">0 / 5000</p>
+      </div>
+      <label class="issue-private-option" for="newIssueAdminOnly">
+        <input id="newIssueAdminOnly" type="checkbox">
+        <span><strong>仅管理员可见</strong><small>开启后不会出现在公开列表、搜索或公开详情页，只能由 GPTWork 管理员后台查看和回复。</small></span>
+      </label>
+      <div class="release-card issue-compose-preview">
+        <h3>正文预览</h3>
+        <div id="newIssuePreview" class="release-notes">开始输入后这里会显示正文预览。</div>
+      </div>
+      <div class="asset-row"><button class="btn btn-primary" id="createIssue" type="button">提交 Issue</button><a class="btn btn-soft" href="/issues">取消</a></div>
+      <p id="newIssueMessage" class="release-date"></p>
+    </div>
+  </section>
+
+  <section id="issueCreatedPrivate" class="release-card" hidden>
+    <span class="release-tag">ADMIN ONLY</span>
+    <h2 id="privateIssueCreatedTitle">Issue 已提交</h2>
+    <p>该 Issue 设置为“仅管理员可见”，不会出现在公开讨论区，也不能通过公开 Issue 链接访问。管理员可以在控制台查看并回复。</p>
+    <div class="hero-actions"><a class="btn btn-primary" href="/issues">返回讨论区</a><a class="btn btn-soft" href="/account">账户中心</a></div>
+  </section>
+</main>
+<footer class="site-footer"><div class="shell footer-row"><span>GPTWork · Issues</span><div class="footer-links"><a href="/support">支持中心</a><a href="/privacy">隐私</a><a href="/terms">条款</a><a href="/account">账户</a></div></div></footer>
+<script src="/site.js" defer></script>
+<script type="module" src="/issues-new.js"></script>
+</body>
+</html>

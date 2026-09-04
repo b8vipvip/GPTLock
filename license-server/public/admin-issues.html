@@ -39,7 +39,7 @@
 
       <section class="card" id="createCard" hidden>
         <div class="section-title">
-          <div><h2>管理员新建帖子</h2><p class="muted">帖子将以“GPTWork 管理员”身份公开显示，不关联任何普通用户账户。</p></div>
+          <div><h2>管理员新建帖子</h2><p class="muted">帖子以“GPTWork 管理员”身份显示；需要时也可以创建仅后台可见的内部 Issue。</p></div>
           <button id="cancelCreate" type="button">取消</button>
         </div>
         <div class="module-grid">
@@ -49,6 +49,7 @@
           </label>
           <label>状态<select id="createStatus"><option value="open">Open</option><option value="closed">Closed</option></select></label>
           <label class="check"><input id="createPinned" type="checkbox"> 创建后置顶</label>
+          <label class="check"><input id="createAdminOnly" type="checkbox"> 仅管理员可见</label>
           <label class="wide">正文
             <textarea id="createBody" rows="14" maxlength="20000" placeholder="写清楚背景、结论、步骤、注意事项或需要用户反馈的信息。"></textarea>
             <small id="createBodyCount" class="website-help">0 / 5000</small>
@@ -80,6 +81,7 @@
           </label>
           <label>状态<select id="editStatus"><option value="open">Open</option><option value="closed">Closed</option></select></label>
           <label class="check"><input id="editPinned" type="checkbox"> 置顶帖子</label>
+          <label class="check"><input id="editAdminOnly" type="checkbox"> 仅管理员可见</label>
           <label class="wide">正文
             <textarea id="editBody" rows="16" maxlength="20000"></textarea>
             <small id="editBodyCount" class="website-help">0 / 5000</small>
