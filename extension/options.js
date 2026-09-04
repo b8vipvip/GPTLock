@@ -1,6 +1,7 @@
 import {
   KNOWN_MODELS,
   REASONING_LEVELS,
+  normalizeConcreteModelId,
   normalizeModelId,
   normalizePolicy,
   normalizeSettings,
@@ -12,6 +13,8 @@ const elements = {
   modelChoices: document.getElementById('modelChoices'),
   reasoningChoices: document.getElementById('reasoningChoices'),
   customModels: document.getElementById('customModels'),
+  saveCustomModels: document.getElementById('saveCustomModels'),
+  customModelsMessage: document.getElementById('customModelsMessage'),
   preferredReasoning: document.getElementById('preferredReasoning'),
   enabled: document.getElementById('enabled'),
   networkVerification: document.getElementById('networkVerification'),
@@ -94,6 +97,30 @@ function sendMessage(message) {
   });
 }
 
+function parseCustomModels() {
+  const raw = elements.customModels.value
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const invalid = raw.filter((value) => !normalizeModelId(value));
+  const routingAliases = raw.filter((value) => normalizeModelId(value) && !normalizeConcreteModelId(value));
+  const models = [...new Set(raw.map(normalizeConcreteModelId).filter(Boolean))];
+  return { raw, invalid, routingAliases, models };
+}
+
+function validateCustomModels(parsed) {
+  if (parsed.invalid.length) {
+    throw new Error(`模型标识格式无效：${parsed.invalid.join(', ')}。请填写实际传输 model ID（不能包含空格）。`);
+  }
+  if (parsed.routingAliases.length) {
+    throw new Error(`${parsed.routingAliases.join(', ')} 是自动路由标识，不是具体模型，不能加入锁定列表。`);
+  }
+}
+
+function concreteSelectedModels() {
+  return selected('model').map(normalizeConcreteModelId).filter(Boolean);
+}
+
 function renderStatus(nativeStatus = {}) {
   const connected = Boolean(nativeStatus.connected);
   elements.connectionBadge.className = `badge ${connected ? 'online' : 'offline'}`;
@@ -144,16 +171,45 @@ async function load() {
   renderStatus(state.nativeStatus);
 }
 
+async function saveCustomModels() {
+  if (!elements.saveCustomModels) return;
+  const parsed = parseCustomModels();
+  validateCustomModels(parsed);
+  const stored = await chrome.storage.sync.get('policy');
+  const basePolicy = normalizePolicy(stored.policy);
+  const lockedModels = [...new Set([...concreteSelectedModels(), ...parsed.models])];
+  if (!lockedModels.length) throw new Error('至少选择或填写一个具体模型。');
+
+  elements.saveCustomModels.disabled = true;
+  if (elements.customModelsMessage) elements.customModelsMessage.textContent = '正在保存模型策略…';
+  try {
+    await chrome.storage.sync.set({
+      policy: { ...basePolicy, lockedModels },
+    });
+    const known = new Set(KNOWN_MODELS.map((model) => model.id));
+    elements.customModels.value = lockedModels.filter((model) => !known.has(model)).join(', ');
+    if (elements.customModelsMessage) {
+      elements.customModelsMessage.textContent = '已添加并保存；模型锁定策略立即生效 / Added and saved.';
+      elements.customModelsMessage.className = 'inline-message good';
+    }
+  } finally {
+    elements.saveCustomModels.disabled = false;
+  }
+}
+
 async function save() {
   elements.formMessage.textContent = '';
-  const customModels = elements.customModels.value
-    .split(',')
-    .map(normalizeModelId)
-    .filter(Boolean);
-  const lockedModels = [...new Set([...selected('model'), ...customModels])];
+  const parsed = parseCustomModels();
+  try {
+    validateCustomModels(parsed);
+  } catch (error) {
+    elements.formMessage.textContent = error.message;
+    return;
+  }
+  const lockedModels = [...new Set([...concreteSelectedModels(), ...parsed.models])];
   const allowedReasoningLevels = selected('reasoning');
   if (!lockedModels.length || !allowedReasoningLevels.length) {
-    elements.formMessage.textContent = '至少选择一个模型和一个推理强度 / Select at least one model and one reasoning level.';
+    elements.formMessage.textContent = '至少选择一个具体模型和一个推理强度 / Select at least one concrete model and one reasoning level.';
     return;
   }
 
@@ -182,6 +238,23 @@ elements.save.addEventListener('click', () => {
     elements.formMessage.textContent = `保存失败 / Save failed: ${error.message}`;
   });
 });
+
+if (elements.saveCustomModels) {
+  elements.saveCustomModels.addEventListener('click', () => {
+    if (elements.customModelsMessage) elements.customModelsMessage.className = 'inline-message';
+    void saveCustomModels().catch((error) => {
+      if (elements.customModelsMessage) {
+        elements.customModelsMessage.textContent = `保存失败 / Save failed: ${error.message}`;
+        elements.customModelsMessage.className = 'inline-message bad';
+      }
+    });
+  });
+  elements.customModels.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    elements.saveCustomModels.click();
+  });
+}
 
 elements.reconnect.addEventListener('click', () => {
   elements.nativeStatus.textContent = '重新连接中 / Reconnecting…';
