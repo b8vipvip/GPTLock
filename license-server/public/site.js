@@ -50,7 +50,7 @@ async function loadReleaseFeed() {
   const data = await api('/site/api/releases');
   const latest = data.releases?.[0];
   const badge = document.getElementById('latestBadge');
-  if (badge && latest?.tag) badge.textContent = `${latest.tag} · Windows / Linux`;
+  if (badge && latest?.tag && badge.dataset.cmsOverride !== '1') badge.textContent = `${latest.tag} · Windows / Linux`;
   const feed = document.getElementById('releaseFeed');
   if (!feed) return;
   feed.replaceChildren();
@@ -327,6 +327,109 @@ function renderAccount(data, config, refresh) {
   if (!orderList.childElementCount) listEmpty(orderList, '暂无订单');
 }
 
+function cmsText(target, value) {
+  if (!target || value === undefined || value === null) return;
+  target.textContent = String(value);
+  if (String(value).includes('\n')) target.style.whiteSpace = 'pre-line';
+}
+function cmsLink(target, label, href) {
+  if (!target) return;
+  cmsText(target, label || '');
+  if (href) target.href = href;
+  target.hidden = !label;
+}
+function pathMatches(href) {
+  try {
+    const url = new URL(href, location.origin);
+    const current = location.pathname.replace(/\/$/, '') || '/';
+    const target = url.pathname.replace(/\/$/, '') || '/';
+    return current === target;
+  } catch { return false; }
+}
+function applyGlobalWebsiteConfig(config) {
+  const site = config.site || {};
+  const brand = document.querySelector('.site-header .brand > span:last-child'); if (brand && site.brandName) brand.textContent = site.brandName;
+  const footer = document.querySelector('.site-footer .footer-row > span'); if (footer && site.footerText) footer.textContent = site.footerText;
+  const nav = document.querySelector('.site-header .nav-links');
+  if (nav && Array.isArray(config.navigation)) {
+    nav.replaceChildren();
+    const items = [...config.navigation].filter((item) => item.enabled).sort((a, b) => Number(a.order) - Number(b.order));
+    for (const item of items) {
+      const link = node('a', item.account ? 'nav-account' : '', item.label || '链接');
+      link.href = item.href || '/';
+      if (/^https:\/\//.test(link.href) && !link.href.startsWith(location.origin)) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+      if (pathMatches(item.href)) link.setAttribute('aria-current', 'page');
+      nav.append(link);
+    }
+  }
+  if (page === 'home') {
+    if (site.title) document.title = site.title;
+    const meta = document.querySelector('meta[name="description"]'); if (meta && site.description) meta.content = site.description;
+  }
+}
+function homeSections() {
+  const sections = [...document.querySelectorAll('main > section')].filter((section) => !section.dataset.cmsCustom);
+  const ids = ['hero', 'features', 'workflow', 'callout'];
+  const map = new Map();
+  ids.forEach((id, index) => { if (sections[index]) { sections[index].dataset.cmsModule = id; map.set(id, sections[index]); } });
+  return map;
+}
+function applyHero(section, module) {
+  const badge = section.querySelector('#latestBadge');
+  if (badge && module.badge) { badge.textContent = module.badge; badge.dataset.cmsOverride = '1'; }
+  cmsText(section.querySelector('h1'), module.title); cmsText(section.querySelector('.hero-copy'), module.body);
+  const actions = section.querySelectorAll('.hero-actions a'); cmsLink(actions[0], module.primaryLabel, module.primaryHref); cmsLink(actions[1], module.secondaryLabel, module.secondaryHref); cmsLink(actions[2], module.tertiaryLabel, module.tertiaryHref);
+  cmsText(section.querySelector('.status-pill'), module.statusLabel);
+  const labels = section.querySelectorAll('.lock-label'); const values = section.querySelectorAll('.lock-value');
+  const labelValues = [module.modeLabel, module.stateLabel, module.modelLabel, module.reasoningLabel, module.protectionLabel];
+  const stateValues = [module.modeValue, module.stateValue, module.modelValue, module.reasoningValue, module.protectionValue];
+  labels.forEach((item, index) => cmsText(item, labelValues[index])); values.forEach((item, index) => cmsText(item, stateValues[index]));
+  cmsText(section.querySelector('.hero-card.note'), module.noteText);
+  const signal = section.querySelector('.hero-card.signal'); if (signal) { cmsText(signal.querySelector('b'), module.signalTitle); cmsText(signal.querySelector('small'), module.signalText); }
+}
+function applyFeatures(section, module) {
+  cmsText(section.querySelector('.section-head h2'), module.title); cmsText(section.querySelector('.section-head p'), module.lead);
+  const grid = section.querySelector('.grid-3'); if (!grid) return; grid.replaceChildren();
+  (module.items || []).forEach((item, index) => { const card = node('article', 'feature-card'); card.append(node('div', 'feature-icon', String(index + 1).padStart(2, '0')), node('h3', '', item.title || ''), node('p', '', item.body || '')); grid.append(card); });
+}
+function applyWorkflow(section, module) {
+  cmsText(section.querySelector('.section-head h2'), module.title); cmsText(section.querySelector('.section-head p'), module.lead);
+  const nodes = section.querySelectorAll('.map-node');
+  nodes.forEach((mapNode, index) => { const item = module.items?.[index]; mapNode.hidden = !item; if (item) { cmsText(mapNode.querySelector('b'), item.title); cmsText(mapNode.querySelector('span'), item.body); } });
+  const actions = section.querySelectorAll('.hero-actions a'); cmsLink(actions[0], module.primaryLabel, module.primaryHref); cmsLink(actions[1], module.secondaryLabel, module.secondaryHref);
+}
+function applyCallout(section, module) { cmsText(section.querySelector('h2'), module.title); cmsText(section.querySelector('p'), module.body); cmsLink(section.querySelector('a.btn'), module.buttonLabel, module.buttonHref); }
+function createCustomModule(module) {
+  const section = node('section', 'section'); section.dataset.cmsCustom = module.id; section.dataset.cmsModule = module.id;
+  const shell = node('div', 'shell'); const head = node('div', 'section-head'); const left = node('div'); const title = node('h2', '', module.title || ''); const body = node('p', '', module.body || ''); title.style.whiteSpace = 'pre-line'; body.style.whiteSpace = 'pre-line'; left.append(title, body); head.append(left); shell.append(head);
+  if (module.buttonLabel) { const actions = node('div', 'hero-actions'); const link = node('a', 'btn btn-primary', module.buttonLabel); link.href = module.buttonHref || '/'; actions.append(link); shell.append(actions); }
+  section.append(shell); return section;
+}
+function applyHomeModules(config) {
+  const main = document.querySelector('main'); if (!main) return;
+  document.querySelectorAll('[data-cms-custom]').forEach((item) => item.remove());
+  const defaults = homeSections();
+  const modules = [...(config.homeModules || [])].sort((a, b) => Number(a.order) - Number(b.order));
+  for (const module of modules) {
+    let section = defaults.get(module.id);
+    if (!section && module.type === 'custom') section = createCustomModule(module);
+    if (!section) continue;
+    section.hidden = !module.enabled;
+    if (module.type === 'hero') applyHero(section, module);
+    else if (module.type === 'features') applyFeatures(section, module);
+    else if (module.type === 'workflow') applyWorkflow(section, module);
+    else if (module.type === 'callout') applyCallout(section, module);
+    main.append(section);
+  }
+}
+async function loadWebsiteConfig() {
+  const data = await api('/site/api/website');
+  const config = data.config || {};
+  applyGlobalWebsiteConfig(config);
+  if (page === 'home') applyHomeModules(config);
+}
+
+void loadWebsiteConfig().catch(() => {});
 if (page === 'home') void loadReleaseFeed().catch(() => {});
 if (page === 'releases') void loadReleaseFeed().catch((error) => {
   const feed = document.getElementById('releaseFeed');
