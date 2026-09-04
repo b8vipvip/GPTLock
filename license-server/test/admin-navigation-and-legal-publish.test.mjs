@@ -35,11 +35,37 @@ test('shared admin navigation contains the complete canonical menu', () => {
   }
 });
 
-test('legal publish stops before POST when the saved draft has no changes', () => {
+test('website CMS uses isolated per-field saves while retaining an explicit save-all fallback', () => {
+  const html = readFileSync(join(PUBLIC, 'admin-website.html'), 'utf8');
+  const source = readFileSync(join(PUBLIC, 'admin-website.js'), 'utf8');
+  const css = readFileSync(join(PUBLIC, 'admin-website.css'), 'utf8');
+  assert.match(html, />全部保存并发布</, 'website toolbar should make the save-all action explicit');
+  assert.match(source, /persisted:\s*null/, 'website editor should retain a last-published snapshot');
+  assert.match(source, /async function persistPath\(/, 'website editor should support path-scoped saves');
+  assert.match(source, /const next = clone\(state\.persisted\)/, 'field save should begin from the published snapshot, not all local edits');
+  assert.match(source, /cms-field-save/, 'website fields should render their own save controls');
+  assert.match(css, /\.cms-field-footer/, 'field save controls should have an explicit bottom-right layout');
+});
+
+test('legal CMS removes the old draft action row and publishes individual fields directly', () => {
+  const html = readFileSync(join(PUBLIC, 'admin-website.html'), 'utf8');
   const source = readFileSync(join(PUBLIC, 'page-cms.js'), 'utf8');
-  const guard = source.indexOf('if (!saved.dirty)');
-  const publishRequest = source.indexOf("/publish`, { method: 'POST'", guard);
-  assert.ok(guard >= 0, 'Legal CMS should explicitly guard clean drafts');
-  assert.ok(publishRequest > guard, 'No-change guard must run before the publish request');
-  assert.match(source.slice(guard, publishRequest), /页面顶部“保存并发布”/, 'No-change message should direct normal website edits to the correct publish button');
+  for (const legacyId of ['saveLegalDraft', 'compareLegal', 'restoreLegalDraft', 'publishLegal']) assert.doesNotMatch(html, new RegExp(`id="${legacyId}"`), `${legacyId} should be removed from Legal CMS`);
+  assert.match(source, /async function saveLegalField\(/, 'Legal CMS should have field-scoped save/publish behavior');
+  assert.match(source, /const next = \{ \.\.\.item\.published\.document, \[field\]: pending\[field\] \}/, 'legal save should start from the published document and replace only one field');
+  assert.match(source, /\/publish`, \{ method: 'POST'/, 'legal field save should publish immediately');
+  assert.match(source, /\/restore`, \{ method: 'POST'/, 'failed legal publish should restore the server draft');
+  for (const field of ['browserTitle','description','eyebrow','title','subtitle','content']) assert.ok(source.includes(`${field}:`), `Legal CMS should expose a save control mapping for ${field}`);
+});
+
+test('Issues admin UI exposes first-class administrator post creation and improved editing', () => {
+  const html = readFileSync(join(PUBLIC, 'admin-issues.html'), 'utf8');
+  const source = readFileSync(join(PUBLIC, 'admin-issues.js'), 'utf8');
+  assert.match(html, /id="newAdminIssue"/, 'Issues admin should expose administrator post creation');
+  assert.match(html, /id="createCard"/, 'Issues admin should include the administrator composer');
+  assert.match(html, /id="editStatus"/, 'Issue editor should edit status directly');
+  assert.match(html, /id="editPinned"/, 'Issue editor should edit pinned state directly');
+  assert.match(html, /id="editPreview"/, 'Issue editor should provide a body preview');
+  assert.match(source, /api\('\/admin\/api\/issues',\{method:'POST'/, 'administrator composer should use the admin create endpoint');
+  assert.match(source, /event\.ctrlKey\|\|event\.metaKey/, 'Issue editor should support Ctrl/Cmd+S');
 });

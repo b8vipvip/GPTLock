@@ -149,6 +149,10 @@
   if (document.body.dataset.adminPage !== 'website') return;
   const $ = (id) => document.getElementById(id);
   const legalState = { documents: [], active: 'privacy', loaded: false };
+  const editableFields = ['browserTitle','description','eyebrow','title','subtitle','content'];
+  const fieldControls = {
+    browserTitle:'legalBrowserTitle', description:'legalDescription', eyebrow:'legalEyebrow', title:'legalTitle', subtitle:'legalSubtitle', content:'legalContent',
+  };
   async function api(path, options = {}) {
     const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', headers: { 'content-type': 'application/json', ...(options.headers || {}) }, ...options });
     const body = await response.json().catch(() => ({}));
@@ -163,7 +167,15 @@
   function collect() {
     const item = current(); if (!item) return null;
     item.draft = { ...item.draft, browserTitle: $('legalBrowserTitle').value, description: $('legalDescription').value, eyebrow: $('legalEyebrow').value, title: $('legalTitle').value, subtitle: $('legalSubtitle').value, content: $('legalContent').value };
-    return item.draft;
+    return { ...item.draft };
+  }
+  function localMerge(data, pending, savedField = null) {
+    const merged = { ...data, draft: { ...data.published.document } };
+    for (const field of editableFields) merged.draft[field] = pending[field] ?? merged.draft[field];
+    if (savedField) merged.draft[savedField] = data.published.document[savedField];
+    merged.draft.lastUpdated = data.published.document.lastUpdated;
+    merged.dirty = editableFields.some((field) => String(merged.draft[field] ?? '') !== String(data.published.document[field] ?? ''));
+    return merged;
   }
   function docLines(doc) {
     const body = String(doc?.content || '').split('\n'); const limited = body.length > 400 ? [...body.slice(0, 400), `… 已截断，正文共 ${body.length} 行 …`] : body;
@@ -180,7 +192,7 @@
     }
     return out;
   }
-  function renderDiff(before, after, title = '当前已发布版本 ↔ 草稿') {
+  function renderDiff(before, after, title = '当前已发布版本 ↔ 当前编辑') {
     const wrap = $('legalDiff'); if (!wrap) return; wrap.replaceChildren(node('div', 'legal-diff-title', title)); const lines = node('div', 'legal-diff-lines');
     for (const [type, text] of lineDiff(before, after)) { const row = node('div', `legal-diff-line ${type}`); row.append(node('span', 'legal-diff-mark', type === 'add' ? '+' : type === 'remove' ? '−' : ' '), node('code', '', text || ' ')); lines.append(row); }
     wrap.append(lines);
@@ -198,36 +210,47 @@
     const wrap = $('legalHistory'); wrap.replaceChildren();
     for (const entry of item.history || []) {
       const row = node('div', 'legal-history-row'); const info = node('div'); const action = entry.action === 'rollback' ? `回滚自 v${entry.sourceVersion}` : entry.action === 'seed' ? '初始版本' : '发布'; info.append(node('strong', '', `v${entry.version} · ${action}`), node('small', '', date(entry.publishedAt)));
-      const actions = node('div', 'module-controls'); const compare = node('button', '', '与草稿对比'); compare.type = 'button'; compare.addEventListener('click', async () => { try { collect(); const data = await api(`/admin/api/legal/${item.key}/version?version=${entry.version}`); renderDiff(data.document, item.draft, `历史 v${entry.version} ↔ 当前草稿`); } catch (error) { msg(error.message, 'bad'); } }); actions.append(compare);
+      const actions = node('div', 'module-controls'); const compare = node('button', '', '与当前编辑对比'); compare.type = 'button'; compare.addEventListener('click', async () => { try { collect(); const data = await api(`/admin/api/legal/${item.key}/version?version=${entry.version}`); renderDiff(data.document, item.draft, `历史 v${entry.version} ↔ 当前编辑`); } catch (error) { msg(error.message, 'bad'); } }); actions.append(compare);
       if (entry.version !== item.published.version) { const rollback = node('button', 'danger', '回滚到此版本'); rollback.type = 'button'; rollback.addEventListener('click', () => arm(rollback, '再次点击确认回滚并发布', async () => { try { const data = await api(`/admin/api/legal/${item.key}/rollback`, { method: 'POST', body: JSON.stringify({ version: entry.version, confirmation: `ROLLBACK:${item.key}` }) }); replace(data); render(); msg(`已基于 v${entry.version} 发布新的 v${data.published.version}，历史版本未被覆盖。`, 'good'); } catch (error) { msg(error.message, 'bad'); } })); actions.append(rollback); }
       row.append(info, actions); wrap.append(row);
     }
   }
   function render() {
-    const item = current(); if (!item || !$('legalName')) return; tabs(); $('legalName').textContent = `${item.name} · ${item.path}`; $('legalState').textContent = `已发布 v${item.published.version} · ${date(item.published.publishedAt)} · 草稿 ${date(item.draftUpdatedAt)}${item.dirty ? ' · 有未发布修改' : ' · 已同步'}`;
-    $('legalBrowserTitle').value = item.draft.browserTitle || ''; $('legalDescription').value = item.draft.description || ''; $('legalEyebrow').value = item.draft.eyebrow || ''; $('legalTitle').value = item.draft.title || ''; $('legalSubtitle').value = item.draft.subtitle || ''; $('legalLastUpdated').value = item.draft.lastUpdated || ''; $('legalContent').value = item.draft.content || ''; $('legalPreview').href = item.path; history(item); renderDiff(item.published.document, item.draft);
+    const item = current(); if (!item || !$('legalName')) return; tabs();
+    $('legalName').textContent = `${item.name} · ${item.path}`; $('legalState').textContent = `已发布 v${item.published.version} · ${date(item.published.publishedAt)}${item.dirty ? ' · 当前页面有未保存编辑' : ' · 已同步'}`;
+    $('legalBrowserTitle').value = item.draft.browserTitle || ''; $('legalDescription').value = item.draft.description || ''; $('legalEyebrow').value = item.draft.eyebrow || ''; $('legalTitle').value = item.draft.title || ''; $('legalSubtitle').value = item.draft.subtitle || ''; $('legalLastUpdated').value = item.published.document.lastUpdated || ''; $('legalContent').value = item.draft.content || ''; $('legalPreview').href = item.path; history(item); renderDiff(item.published.document, item.draft);
+    document.querySelectorAll('.legal-fields .cms-field-status').forEach((el) => { el.textContent = ''; });
   }
   async function load() {
-    if (!$('legalTabs') || $('app')?.hidden) return; try { const data = await api('/admin/api/legal'); legalState.documents = data.documents || []; if (!legalState.documents.some((item) => item.key === legalState.active)) legalState.active = legalState.documents[0]?.key || 'privacy'; legalState.loaded = true; render(); } catch (error) { if (error.status !== 401) msg(error.message, 'bad'); }
+    if (!$('legalTabs') || $('app')?.hidden) return;
+    try { const data = await api('/admin/api/legal'); legalState.documents = data.documents || []; if (!legalState.documents.some((item) => item.key === legalState.active)) legalState.active = legalState.documents[0]?.key || 'privacy'; legalState.loaded = true; render(); }
+    catch (error) { if (error.status !== 401) msg(error.message, 'bad'); }
   }
-  async function saveDraft(quiet = false) { const item = current(); if (!item) return null; collect(); const data = await api(`/admin/api/legal/${item.key}/draft`, { method: 'PUT', body: JSON.stringify({ document: item.draft }) }); replace(data); render(); if (!quiet) msg('草稿已保存；公开页面仍保持当前已发布版本。', 'good'); return data; }
-  async function publish() {
+  async function saveLegalField(field, saveButton, statusNode) {
+    const item = current(); if (!item) return; const pending = collect(); const original = saveButton.textContent; saveButton.disabled = true; saveButton.textContent = '保存中…'; statusNode.textContent = '正在发布';
+    const next = { ...item.published.document, [field]: pending[field] };
     try {
-      const saved = await saveDraft(true);
-      if (!saved) return;
+      const saved = await api(`/admin/api/legal/${item.key}/draft`, { method: 'PUT', body: JSON.stringify({ document: next }) });
       if (!saved.dirty) {
-        msg('当前法律文档没有未发布修改；如果你修改的是首页或运营页面，请使用页面顶部“保存并发布”。', 'good');
-        return;
+        replace(localMerge(saved, pending, field)); render(); statusNode.textContent = '无变化'; msg('该字段与当前已发布版本一致，无需重复发布。', 'good'); return;
       }
-      const data = await api(`/admin/api/legal/${saved.key}/publish`, { method: 'POST', body: JSON.stringify({ confirmation: `PUBLISH:${saved.key}` }) });
-      replace(data); render(); msg(`已发布 ${data.name} v${data.published.version}。`, 'good');
-    } catch (error) { msg(error.message, 'bad'); }
+      let data;
+      try { data = await api(`/admin/api/legal/${item.key}/publish`, { method: 'POST', body: JSON.stringify({ confirmation: `PUBLISH:${item.key}` }) }); }
+      catch (error) {
+        const restored = await api(`/admin/api/legal/${item.key}/restore`, { method: 'POST', body: '{}' }).catch(() => saved);
+        replace(localMerge(restored, pending, null)); render(); throw error;
+      }
+      replace(localMerge(data, pending, field)); render(); statusNode.textContent = `已保存 · v${data.published.version}`; msg(`${data.name} 的“${field}”已保存并立即发布为 v${data.published.version}。`, 'good');
+    } catch (error) { statusNode.textContent = '保存失败'; msg(error.message, 'bad'); }
+    finally { saveButton.disabled = false; saveButton.textContent = original; }
   }
-  async function restore() { const item = current(); if (!item) return; try { const data = await api(`/admin/api/legal/${item.key}/restore`, { method: 'POST', body: '{}' }); replace(data); render(); msg('草稿已恢复为当前已发布版本。', 'good'); } catch (error) { msg(error.message, 'bad'); } }
-  $('saveLegalDraft')?.addEventListener('click', () => void saveDraft());
-  $('compareLegal')?.addEventListener('click', () => { const item = current(); if (!item) return; collect(); renderDiff(item.published.document, item.draft); msg('已按行显示草稿与已发布版本差异。'); });
-  $('publishLegal')?.addEventListener('click', () => arm($('publishLegal'), '再次点击确认发布', () => void publish()));
-  $('restoreLegalDraft')?.addEventListener('click', () => arm($('restoreLegalDraft'), '再次点击确认丢弃草稿', () => void restore()));
+  function installLegalFieldSaves() {
+    for (const [field, id] of Object.entries(fieldControls)) {
+      const control = $(id); const label = control?.closest('label'); if (!control || !label || label.dataset.fieldSaveReady === '1') continue;
+      label.dataset.fieldSaveReady = '1'; label.classList.add('cms-field'); const footer = node('span', 'cms-field-footer'); const status = node('small', 'cms-field-status'); const save = node('button', 'cms-field-save', '保存'); save.type = 'button'; save.addEventListener('click', () => void saveLegalField(field, save, status)); footer.append(status, save); label.append(footer);
+    }
+  }
+  installLegalFieldSaves();
   const app = $('app'); if (app) new MutationObserver(() => { if (!app.hidden && !legalState.loaded) void load(); }).observe(app, { attributes: true, attributeFilter: ['hidden'] });
   if (app && !app.hidden) void load();
 })();
