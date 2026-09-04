@@ -223,6 +223,7 @@ const server = createServer(async (req, res) => {
     if (ADMIN_PAGES[url.pathname]) return staticFile(res, join(PUBLIC,ADMIN_PAGES[url.pathname]));
     if (url.pathname === '/site.css') return staticFile(res, join(PUBLIC,'site.css'));
     if (url.pathname === '/site.js') return staticFile(res, join(PUBLIC,'site.js'));
+    if (url.pathname === '/page-cms.js') return staticFile(res, join(PUBLIC,'page-cms.js'));
     if (url.pathname === '/issues.js') return staticFile(res, join(PUBLIC,'issues.js'));
     if (url.pathname === '/admin.js') return staticFile(res, join(PUBLIC,'admin.js'));
     if (url.pathname === '/admin-issues.js') return staticFile(res, join(PUBLIC,'admin-issues.js'));
