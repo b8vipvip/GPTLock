@@ -21,9 +21,13 @@ test('workflow renderer supports all eight CMS-configurable items', () => {
   assert.match(SITE_JS, /columns\[1\]\.replaceChildren/);
 });
 
-test('mobile navigation is expandable instead of hiding all ordinary links', () => {
+test('mobile navigation is expandable and boots before CMS availability', () => {
   assert.match(SITE_JS, /function setupMobileNavigation\(nav\)/);
   assert.match(SITE_JS, /aria-expanded/);
+  const bootstrap = SITE_JS.indexOf("setupMobileNavigation(document.querySelector('.site-header .nav-links'));");
+  const cmsLoad = SITE_JS.indexOf('void loadWebsiteConfig().catch(() => {});');
+  assert.ok(bootstrap >= 0, 'mobile navigation should initialize from static HTML');
+  assert.ok(cmsLoad > bootstrap, 'mobile navigation must initialize before the CMS API request');
   assert.match(SITE_CSS, /\.nav-toggle \{ display: none/);
   assert.match(SITE_CSS, /\.nav-links\.is-open \{ display: flex; \}/);
   assert.doesNotMatch(SITE_CSS, /\.nav-links a:not\(\.nav-account\) \{ display: none; \}/);
