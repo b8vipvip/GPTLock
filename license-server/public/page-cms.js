@@ -1,4 +1,28 @@
 (() => {
+  const current = document.body.dataset.adminPage || '';
+  const nav = document.querySelector('.sidebar nav');
+  if (!current || !nav) return;
+  const items = [
+    ['overview', '/admin/overview', '总览'],
+    ['users', '/admin/users', '用户'],
+    ['plans', '/admin/plans', '会员'],
+    ['orders', '/admin/orders', '订单'],
+    ['issues', '/admin/issues', 'Issues 讨论区'],
+    ['website', '/admin/website', '官网管理'],
+    ['settings', '/admin/settings', '系统配置'],
+    ['client-logs', '/admin/client-logs', '客户端运行日志'],
+    ['server-logs', '/admin/server-logs', '服务端日志'],
+    ['update', '/admin/update', '更新'],
+  ];
+  nav.replaceChildren(...items.map(([page, href, label]) => {
+    const link = document.createElement('a');
+    link.href = href; link.dataset.page = page; link.textContent = label;
+    if (page === current) { link.classList.add('active'); link.setAttribute('aria-current', 'page'); }
+    return link;
+  }));
+})();
+
+(() => {
   const page = document.body.dataset.page || '';
   const legalKey = document.body.dataset.legalKey || '';
   const operationalPages = ['guide','releases','issues','support','account'];
@@ -187,7 +211,18 @@
     if (!$('legalTabs') || $('app')?.hidden) return; try { const data = await api('/admin/api/legal'); legalState.documents = data.documents || []; if (!legalState.documents.some((item) => item.key === legalState.active)) legalState.active = legalState.documents[0]?.key || 'privacy'; legalState.loaded = true; render(); } catch (error) { if (error.status !== 401) msg(error.message, 'bad'); }
   }
   async function saveDraft(quiet = false) { const item = current(); if (!item) return null; collect(); const data = await api(`/admin/api/legal/${item.key}/draft`, { method: 'PUT', body: JSON.stringify({ document: item.draft }) }); replace(data); render(); if (!quiet) msg('草稿已保存；公开页面仍保持当前已发布版本。', 'good'); return data; }
-  async function publish() { try { await saveDraft(true); const item = current(); const data = await api(`/admin/api/legal/${item.key}/publish`, { method: 'POST', body: JSON.stringify({ confirmation: `PUBLISH:${item.key}` }) }); replace(data); render(); msg(`已发布 ${data.name} v${data.published.version}。`, 'good'); } catch (error) { msg(error.message, 'bad'); } }
+  async function publish() {
+    try {
+      const saved = await saveDraft(true);
+      if (!saved) return;
+      if (!saved.dirty) {
+        msg('当前法律文档没有未发布修改；如果你修改的是首页或运营页面，请使用页面顶部“保存并发布”。', 'good');
+        return;
+      }
+      const data = await api(`/admin/api/legal/${saved.key}/publish`, { method: 'POST', body: JSON.stringify({ confirmation: `PUBLISH:${saved.key}` }) });
+      replace(data); render(); msg(`已发布 ${data.name} v${data.published.version}。`, 'good');
+    } catch (error) { msg(error.message, 'bad'); }
+  }
   async function restore() { const item = current(); if (!item) return; try { const data = await api(`/admin/api/legal/${item.key}/restore`, { method: 'POST', body: '{}' }); replace(data); render(); msg('草稿已恢复为当前已发布版本。', 'good'); } catch (error) { msg(error.message, 'bad'); } }
   $('saveLegalDraft')?.addEventListener('click', () => void saveDraft());
   $('compareLegal')?.addEventListener('click', () => { const item = current(); if (!item) return; collect(); renderDiff(item.published.document, item.draft); msg('已按行显示草稿与已发布版本差异。'); });
