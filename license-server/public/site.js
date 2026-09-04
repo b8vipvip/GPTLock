@@ -465,6 +465,7 @@ async function loadWebsiteConfig() {
   if (page === 'home') applyHomeModules(config);
 }
 
+setupMobileNavigation(document.querySelector('.site-header .nav-links'));
 void loadWebsiteConfig().catch(() => {});
 if (page === 'home') void loadReleaseFeed().catch(() => {});
 if (page === 'releases') void loadReleaseFeed().catch((error) => {
