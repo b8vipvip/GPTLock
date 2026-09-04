@@ -1,1 +1,109 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GPTWork 管理 · Issues 讨论区</title><link rel="stylesheet" href="/admin.css"></head><body data-admin-page="issues"><div class="shell"><aside class="sidebar"><div class="brand"><span>G</span><div><strong>GPTWork</strong><small>Control Center</small></div></div><nav><a href="/admin/overview" data-page="overview">总览</a><a href="/admin/users" data-page="users">用户</a><a href="/admin/plans" data-page="plans">会员</a><a href="/admin/orders" data-page="orders">订单</a><a href="/admin/issues" data-page="issues" class="active" aria-current="page">Issues 讨论区</a><a href="/admin/website" data-page="website">官网管理</a><a href="/admin/settings" data-page="settings">系统配置</a><a href="/admin/client-logs" data-page="client-logs">客户端运行日志</a><a href="/admin/server-logs" data-page="server-logs">服务端日志</a><a href="/admin/update" data-page="update">更新</a></nav><button id="logout" class="ghost" hidden>退出管理员</button></aside><main class="workspace"><header class="topbar"><div><p>GPTWORK ADMIN · ISSUES</p><h1>Issues 讨论区</h1></div><span class="security-pill">Community Control</span></header><section id="login" class="card login-card"><h2>管理员登录</h2><p class="muted">使用现有 GPTWork 管理员密码。</p><div class="inline"><input id="password" type="password" autocomplete="current-password" placeholder="管理员密码"><button id="loginButton" class="primary">登录</button></div><p id="loginMessage" class="message"></p></section><div id="app" hidden><section class="card"><div class="section-title"><div><h2>讨论区参数</h2><p class="muted">可以整体关闭讨论区，或单独暂停用户新建与回复。管理员仍可在后台管理已有内容。</p></div><button id="saveConfig" class="primary" type="button">保存参数</button></div><div class="grid four"><label class="check"><input id="issuesEnabled" type="checkbox"> 启用 Issues 讨论区</label><label class="check"><input id="createEnabled" type="checkbox"> 允许用户新建</label><label class="check"><input id="replyEnabled" type="checkbox"> 允许用户回复</label><label>每页数量<input id="pageSize" type="number" min="5" max="50"></label><label>标题最大字符<input id="maxTitle" type="number" min="40" max="200"></label><label>正文最大字符<input id="maxBody" type="number" min="500" max="20000"></label><label>回复最大字符<input id="maxReply" type="number" min="200" max="10000"></label></div><p id="configMessage" class="message"></p></section><section class="card"><div class="section-title"><div><h2>帖子管理</h2><p class="muted" id="listState">加载中…</p></div><button id="refreshIssues" type="button">刷新</button></div><div class="inline"><input id="issueSearch" placeholder="搜索标题、正文或用户邮箱"><select id="issueStatus"><option value="all">全部状态</option><option value="open">Open</option><option value="closed">Closed</option></select><button id="searchIssues" type="button">搜索</button></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>状态</th><th>标题</th><th>用户</th><th>回复</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="issuesBody"></tbody></table></div></section><section class="card" id="detailCard" hidden><div class="section-title"><div><h2 id="detailTitle">Issue</h2><p class="muted" id="detailMeta"></p></div><div class="inline"><button id="togglePin" type="button">置顶</button><button id="toggleStatus" type="button">关闭</button><button id="deleteIssue" class="danger" type="button">删除帖子</button></div></div><label>标题<input id="editTitle"></label><label>正文<textarea id="editBody" rows="7"></textarea></label><div class="inline"><button id="saveIssue" class="primary" type="button">保存帖子</button></div><p id="detailMessage" class="message"></p><h3>回复</h3><div id="replies"></div><h3>管理员回复</h3><textarea id="adminReply" rows="5" placeholder="以 GPTWork 管理员身份回复"></textarea><div class="inline"><button id="sendAdminReply" class="primary" type="button">管理员回复</button></div><p id="replyMessage" class="message"></p></section></div></main></div><script src="/page-cms.js" defer></script><script type="module" src="/admin-issues.js"></script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GPTWork 管理 · Issues 讨论区</title>
+  <link rel="stylesheet" href="/admin.css">
+  <link rel="stylesheet" href="/admin-website.css">
+</head>
+<body data-admin-page="issues">
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span>G</span><div><strong>GPTWork</strong><small>Control Center</small></div></div>
+    <nav><a href="/admin/overview" data-page="overview">总览</a><a href="/admin/users" data-page="users">用户</a><a href="/admin/plans" data-page="plans">会员</a><a href="/admin/orders" data-page="orders">订单</a><a href="/admin/issues" data-page="issues" class="active" aria-current="page">Issues 讨论区</a><a href="/admin/website" data-page="website">官网管理</a><a href="/admin/settings" data-page="settings">系统配置</a><a href="/admin/client-logs" data-page="client-logs">客户端运行日志</a><a href="/admin/server-logs" data-page="server-logs">服务端日志</a><a href="/admin/update" data-page="update">更新</a></nav>
+    <button id="logout" class="ghost" hidden>退出管理员</button>
+  </aside>
+  <main class="workspace">
+    <header class="topbar"><div><p>GPTWORK ADMIN · ISSUES</p><h1>Issues 讨论区</h1></div><span class="security-pill">Community Control</span></header>
+    <section id="login" class="card login-card">
+      <h2>管理员登录</h2><p class="muted">使用现有 GPTWork 管理员密码。</p>
+      <div class="inline"><input id="password" type="password" autocomplete="current-password" placeholder="管理员密码"><button id="loginButton" class="primary">登录</button></div>
+      <p id="loginMessage" class="message"></p>
+    </section>
+
+    <div id="app" hidden>
+      <section class="card">
+        <div class="section-title"><div><h2>讨论区参数</h2><p class="muted">可以整体关闭讨论区，或单独暂停用户新建与回复。管理员仍可在后台新建、编辑和回复帖子。</p></div><button id="saveConfig" class="primary" type="button">保存参数</button></div>
+        <div class="grid four">
+          <label class="check"><input id="issuesEnabled" type="checkbox"> 启用 Issues 讨论区</label>
+          <label class="check"><input id="createEnabled" type="checkbox"> 允许用户新建</label>
+          <label class="check"><input id="replyEnabled" type="checkbox"> 允许用户回复</label>
+          <label>每页数量<input id="pageSize" type="number" min="5" max="50"></label>
+          <label>标题最大字符<input id="maxTitle" type="number" min="40" max="200"></label>
+          <label>正文最大字符<input id="maxBody" type="number" min="500" max="20000"></label>
+          <label>回复最大字符<input id="maxReply" type="number" min="200" max="10000"></label>
+        </div>
+        <p id="configMessage" class="message"></p>
+      </section>
+
+      <section class="card" id="createCard" hidden>
+        <div class="section-title">
+          <div><h2>管理员新建帖子</h2><p class="muted">帖子将以“GPTWork 管理员”身份公开显示，不关联任何普通用户账户。</p></div>
+          <button id="cancelCreate" type="button">取消</button>
+        </div>
+        <div class="module-grid">
+          <label class="wide">标题
+            <input id="createTitle" maxlength="200" placeholder="例如：GPTWork v0.5.39 使用说明 / 已知问题公告">
+            <small id="createTitleCount" class="website-help">0 / 120</small>
+          </label>
+          <label>状态<select id="createStatus"><option value="open">Open</option><option value="closed">Closed</option></select></label>
+          <label class="check"><input id="createPinned" type="checkbox"> 创建后置顶</label>
+          <label class="wide">正文
+            <textarea id="createBody" rows="14" maxlength="20000" placeholder="写清楚背景、结论、步骤、注意事项或需要用户反馈的信息。"></textarea>
+            <small id="createBodyCount" class="website-help">0 / 5000</small>
+          </label>
+        </div>
+        <div class="section-actions"><button id="createTemplate" type="button">插入公告模板</button><button id="createIssue" class="primary" type="button">发布管理员帖子</button></div>
+        <h3>实时预览</h3><pre id="createPreview" class="logbox">开始输入后这里会显示正文预览。</pre>
+        <p id="createMessage" class="message"></p>
+      </section>
+
+      <section class="card">
+        <div class="section-title">
+          <div><h2>帖子管理</h2><p class="muted" id="listState">加载中…</p></div>
+          <div class="section-actions"><button id="newAdminIssue" class="primary" type="button">管理员新建帖子</button><button id="refreshIssues" type="button">刷新</button></div>
+        </div>
+        <div class="inline"><input id="issueSearch" placeholder="搜索标题、正文或用户邮箱"><select id="issueStatus"><option value="all">全部状态</option><option value="open">Open</option><option value="closed">Closed</option></select><button id="searchIssues" type="button">搜索</button></div>
+        <div class="table-wrap"><table><thead><tr><th>ID</th><th>状态</th><th>标题</th><th>作者</th><th>回复</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="issuesBody"></tbody></table></div>
+      </section>
+
+      <section class="card" id="detailCard" hidden>
+        <div class="section-title">
+          <div><h2 id="detailTitle">Issue</h2><p class="muted" id="detailMeta"></p></div>
+          <div class="section-actions"><a id="openPublicIssue" class="button-link" target="_blank" rel="noopener noreferrer">查看公开页面 ↗</a><button id="deleteIssue" class="danger" type="button">删除帖子</button></div>
+        </div>
+        <div class="module-grid">
+          <label class="wide">标题
+            <input id="editTitle" maxlength="200">
+            <small id="editTitleCount" class="website-help">0 / 120</small>
+          </label>
+          <label>状态<select id="editStatus"><option value="open">Open</option><option value="closed">Closed</option></select></label>
+          <label class="check"><input id="editPinned" type="checkbox"> 置顶帖子</label>
+          <label class="wide">正文
+            <textarea id="editBody" rows="16" maxlength="20000"></textarea>
+            <small id="editBodyCount" class="website-help">0 / 5000</small>
+          </label>
+        </div>
+        <div class="section-actions"><span class="muted">快捷键：Ctrl / ⌘ + S 保存当前帖子</span><button id="saveIssue" class="primary" type="button">保存帖子</button></div>
+        <h3>正文预览</h3><pre id="editPreview" class="logbox"></pre>
+        <p id="detailMessage" class="message"></p>
+
+        <div class="legal-split">
+          <div><h3>全部回复</h3><div id="replies" class="module-list"></div></div>
+          <div>
+            <h3>管理员回复</h3>
+            <textarea id="adminReply" rows="10" placeholder="以 GPTWork 管理员身份回复"></textarea>
+            <small id="replyCount" class="website-help">0 / 3000</small>
+            <div class="section-actions"><button id="sendAdminReply" class="primary" type="button">发布管理员回复</button></div>
+            <p id="replyMessage" class="message"></p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+<script src="/page-cms.js" defer></script>
+<script type="module" src="/admin-issues.js"></script>
+</body>
+</html>
