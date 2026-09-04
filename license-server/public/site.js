@@ -1,4 +1,5 @@
 const page = document.body.dataset.page || '';
+const LEGACY_AUTO_RELEASE_BADGE = 'Windows / Linux · Chrome / Edge';
 
 function text(value, fallback = '—') { return value === null || value === undefined || value === '' ? fallback : String(value); }
 function dateText(value) {
@@ -346,21 +347,47 @@ function pathMatches(href) {
     return current === target;
   } catch { return false; }
 }
+function decorateLink(link, item) {
+  link.href = item.href || '/';
+  if (/^https:\/\//.test(link.href) && !link.href.startsWith(location.origin)) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+  if (pathMatches(item.href)) link.setAttribute('aria-current', 'page');
+}
+function setupMobileNavigation(nav) {
+  if (!nav || nav.dataset.mobileReady === '1') return;
+  const shell = nav.closest('.nav'); if (!shell) return;
+  nav.dataset.mobileReady = '1'; nav.id ||= 'siteNavigation';
+  const toggle = node('button', 'nav-toggle', '菜单');
+  toggle.type = 'button'; toggle.setAttribute('aria-controls', nav.id); toggle.setAttribute('aria-expanded', 'false'); toggle.setAttribute('aria-label', '打开网站导航');
+  const close = () => { nav.classList.remove('is-open'); toggle.setAttribute('aria-expanded', 'false'); toggle.setAttribute('aria-label', '打开网站导航'); };
+  toggle.addEventListener('click', () => {
+    const open = !nav.classList.contains('is-open'); nav.classList.toggle('is-open', open); toggle.setAttribute('aria-expanded', String(open)); toggle.setAttribute('aria-label', open ? '关闭网站导航' : '打开网站导航');
+  });
+  nav.addEventListener('click', (event) => { if (event.target.closest('a')) close(); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
+  shell.insertBefore(toggle, nav);
+}
 function applyGlobalWebsiteConfig(config) {
   const site = config.site || {};
   const brand = document.querySelector('.site-header .brand > span:last-child'); if (brand && site.brandName) brand.textContent = site.brandName;
   const footer = document.querySelector('.site-footer .footer-row > span'); if (footer && site.footerText) footer.textContent = site.footerText;
+  const items = Array.isArray(config.navigation) ? [...config.navigation].filter((item) => item.enabled).sort((a, b) => Number(a.order) - Number(b.order)) : [];
   const nav = document.querySelector('.site-header .nav-links');
   if (nav && Array.isArray(config.navigation)) {
     nav.replaceChildren();
-    const items = [...config.navigation].filter((item) => item.enabled).sort((a, b) => Number(a.order) - Number(b.order));
     for (const item of items) {
-      const link = node('a', item.account ? 'nav-account' : '', item.label || '链接');
-      link.href = item.href || '/';
-      if (/^https:\/\//.test(link.href) && !link.href.startsWith(location.origin)) { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
-      if (pathMatches(item.href)) link.setAttribute('aria-current', 'page');
-      nav.append(link);
+      const link = node('a', item.account ? 'nav-account' : '', item.label || '链接'); decorateLink(link, item); nav.append(link);
     }
+    setupMobileNavigation(nav);
+  }
+  const footerLinks = document.querySelector('.site-footer .footer-links');
+  if (footerLinks && Array.isArray(config.navigation)) {
+    const legal = [{ label: '隐私', href: '/privacy' }, { label: '条款', href: '/terms' }, { label: '数据删除', href: '/data-deletion' }];
+    const merged = []; const seen = new Set();
+    for (const item of [...items, ...legal]) {
+      const key = String(item.href || '/'); if (seen.has(key)) continue; seen.add(key); merged.push(item);
+    }
+    footerLinks.replaceChildren();
+    for (const item of merged) { const link = node('a', '', item.label || '链接'); decorateLink(link, item); footerLinks.append(link); }
   }
   if (page === 'home') {
     if (site.title) document.title = site.title;
@@ -375,8 +402,11 @@ function homeSections() {
   return map;
 }
 function applyHero(section, module) {
-  const badge = section.querySelector('#latestBadge');
-  if (badge && module.badge) { badge.textContent = module.badge; badge.dataset.cmsOverride = '1'; }
+  const badge = section.querySelector('#latestBadge'); const customBadge = String(module.badge || '').trim();
+  if (badge) {
+    delete badge.dataset.cmsOverride;
+    if (customBadge && customBadge !== LEGACY_AUTO_RELEASE_BADGE) { badge.textContent = customBadge; badge.dataset.cmsOverride = '1'; }
+  }
   cmsText(section.querySelector('h1'), module.title); cmsText(section.querySelector('.hero-copy'), module.body);
   const actions = section.querySelectorAll('.hero-actions a'); cmsLink(actions[0], module.primaryLabel, module.primaryHref); cmsLink(actions[1], module.secondaryLabel, module.secondaryHref); cmsLink(actions[2], module.tertiaryLabel, module.tertiaryHref);
   cmsText(section.querySelector('.status-pill'), module.statusLabel);
@@ -392,10 +422,16 @@ function applyFeatures(section, module) {
   const grid = section.querySelector('.grid-3'); if (!grid) return; grid.replaceChildren();
   (module.items || []).forEach((item, index) => { const card = node('article', 'feature-card'); card.append(node('div', 'feature-icon', String(index + 1).padStart(2, '0')), node('h3', '', item.title || ''), node('p', '', item.body || '')); grid.append(card); });
 }
+function workflowNode(item, index) {
+  const accents = ['acid', '', 'sky', 'coral', '', 'acid', 'sky', 'coral'];
+  const mapNode = node('div', `map-node${accents[index] ? ` ${accents[index]}` : ''}`); mapNode.append(node('b', '', item.title || ''), node('span', '', item.body || '')); return mapNode;
+}
 function applyWorkflow(section, module) {
   cmsText(section.querySelector('.section-head h2'), module.title); cmsText(section.querySelector('.section-head p'), module.lead);
-  const nodes = section.querySelectorAll('.map-node');
-  nodes.forEach((mapNode, index) => { const item = module.items?.[index]; mapNode.hidden = !item; if (item) { cmsText(mapNode.querySelector('b'), item.title); cmsText(mapNode.querySelector('span'), item.body); } });
+  const columns = section.querySelectorAll('.map-col'); const items = (module.items || []).slice(0, 8);
+  if (columns.length >= 2) {
+    const split = Math.ceil(items.length / 2); columns[0].replaceChildren(...items.slice(0, split).map((item, index) => workflowNode(item, index))); columns[1].replaceChildren(...items.slice(split).map((item, index) => workflowNode(item, split + index)));
+  }
   const actions = section.querySelectorAll('.hero-actions a'); cmsLink(actions[0], module.primaryLabel, module.primaryHref); cmsLink(actions[1], module.secondaryLabel, module.secondaryHref);
 }
 function applyCallout(section, module) { cmsText(section.querySelector('h2'), module.title); cmsText(section.querySelector('p'), module.body); cmsLink(section.querySelector('a.btn'), module.buttonLabel, module.buttonHref); }
@@ -429,6 +465,7 @@ async function loadWebsiteConfig() {
   if (page === 'home') applyHomeModules(config);
 }
 
+setupMobileNavigation(document.querySelector('.site-header .nav-links'));
 void loadWebsiteConfig().catch(() => {});
 if (page === 'home') void loadReleaseFeed().catch(() => {});
 if (page === 'releases') void loadReleaseFeed().catch((error) => {
