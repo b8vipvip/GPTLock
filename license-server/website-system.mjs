@@ -1,3 +1,5 @@
+import { createLegalContentSystem } from './legal-content-system.mjs';
+
 const WEBSITE_SETTING_KEY = 'website_config_v1';
 
 const PAGE_DEFAULTS = {
@@ -133,10 +135,19 @@ export function createWebsiteSystem({ db, json }) {
   const getSetting = db.prepare('SELECT value, updated_at FROM app_settings WHERE key = ?');
   const setSetting = db.prepare(`INSERT INTO app_settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`);
   const audit = db.prepare('INSERT INTO audit_log(event,detail,created_at) VALUES(?,?,?)');
+  const legalSystem = createLegalContentSystem({ db, json });
   function read() { const row = getSetting.get(WEBSITE_SETTING_KEY); if (!row) return { config: clone(DEFAULT_WEBSITE_CONFIG), updatedAt: null }; try { return { config: normalizeWebsiteConfig(JSON.parse(row.value)), updatedAt: row.updated_at || null }; } catch { return { config: clone(DEFAULT_WEBSITE_CONFIG), updatedAt: row.updated_at || null }; } }
   function save(config, event = 'website_config_updated') { const normalized = normalizeWebsiteConfig(config); const updatedAt = new Date().toISOString(); setSetting.run(WEBSITE_SETTING_KEY, JSON.stringify(normalized), updatedAt); audit.run(event, JSON.stringify({ modules: normalized.homeModules.length, navigation: normalized.navigation.length, pages: Object.keys(normalized.pages).length }), updatedAt); return { config: normalized, updatedAt }; }
   if (!getSetting.get(WEBSITE_SETTING_KEY)) save(DEFAULT_WEBSITE_CONFIG, 'website_config_initialized');
-  async function handleSite(req, res, url) { if (url.pathname === '/site/api/website' && req.method === 'GET') { const data = read(); json(res, 200, { ok: true, ...data }); return true; } return false; }
-  async function handleAdmin(req, res, url, bodyJson) { if (url.pathname === '/admin/api/website' && req.method === 'GET') { json(res, 200, { ok: true, ...read(), defaults: clone(DEFAULT_WEBSITE_CONFIG) }); return true; } if (url.pathname === '/admin/api/website' && req.method === 'PUT') { const input = await bodyJson(req); const data = save(input.config || input); json(res, 200, { ok: true, ...data }); return true; } if (url.pathname === '/admin/api/website/reset' && req.method === 'POST') { const data = save(DEFAULT_WEBSITE_CONFIG, 'website_config_reset'); json(res, 200, { ok: true, ...data }); return true; } return false; }
-  return { read, handleSite, handleAdmin };
+  async function handleSite(req, res, url) {
+    if (url.pathname === '/site/api/website' && req.method === 'GET') { const data = read(); json(res, 200, { ok: true, ...data }); return true; }
+    return legalSystem.handleSite(req, res, url);
+  }
+  async function handleAdmin(req, res, url, bodyJson) {
+    if (url.pathname === '/admin/api/website' && req.method === 'GET') { json(res, 200, { ok: true, ...read(), defaults: clone(DEFAULT_WEBSITE_CONFIG), legal: legalSystem.readAllAdmin() }); return true; }
+    if (url.pathname === '/admin/api/website' && req.method === 'PUT') { const input = await bodyJson(req); const data = save(input.config || input); json(res, 200, { ok: true, ...data }); return true; }
+    if (url.pathname === '/admin/api/website/reset' && req.method === 'POST') { const data = save(DEFAULT_WEBSITE_CONFIG, 'website_config_reset'); json(res, 200, { ok: true, ...data }); return true; }
+    return legalSystem.handleAdmin(req, res, url, bodyJson);
+  }
+  return { read, handleSite, handleAdmin, legalSystem };
 }
