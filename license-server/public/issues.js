@@ -26,16 +26,17 @@ function renderIssueCard(issue) {
 
 async function loadConfig() {
   const data = await api('/site/api/issues/config'); state.config = data.config; state.authenticated = Boolean(data.authenticated);
-  $('newIssueCard').hidden = !(state.authenticated && data.config.createEnabled);
-  setText('issuesState', state.authenticated ? '已登录 · 可以提问和参与解答' : '公开浏览 · 登录 GPTWork 账户后可提问和解答');
+  const entry = $('newIssueEntry'); if (entry) { entry.hidden = !data.config.createEnabled; entry.setAttribute('aria-disabled', data.config.createEnabled ? 'false' : 'true'); }
+  const login = $('issuesLogin'); if (login) login.hidden = state.authenticated;
+  setText('issuesState', state.authenticated ? '已登录 · 可以新建 Issue 和参与解答' : '公开浏览 · 新建 Issue 时需要先登录 GPTWork 账户');
 }
 async function loadIssues() {
   state.detailId = null; $('issueDetail').hidden = true; $('issueListWrap').hidden = false;
   const params = new URLSearchParams({ page: String(state.page), status: state.status }); if (state.q) params.set('q', state.q);
   const data = await api(`/site/api/issues?${params}`); state.pageSize = data.pageSize; state.total = data.total;
   clear($('issueList')); for (const issue of data.issues) $('issueList').append(renderIssueCard(issue));
-  if (!data.issues.length) { const empty = document.createElement('article'); empty.className = 'release-card'; empty.textContent = '暂时没有符合条件的 Issue。'; $('issueList').append(empty); }
-  const pages = Math.max(1, Math.ceil(state.total / state.pageSize)); setText('pageState', `第 ${state.page} / ${pages} 页 · 共 ${state.total} 个 Issues`);
+  if (!data.issues.length) { const empty = document.createElement('article'); empty.className = 'release-card'; empty.textContent = '暂时没有符合条件的公开 Issue。'; $('issueList').append(empty); }
+  const pages = Math.max(1, Math.ceil(state.total / state.pageSize)); setText('pageState', `第 ${state.page} / ${pages} 页 · 共 ${state.total} 个公开 Issues`);
   $('prevPage').disabled = state.page <= 1; $('nextPage').disabled = state.page >= pages;
   history.replaceState(null, '', state.page === 1 && !state.q && state.status === 'all' ? '/issues' : `/issues?${params}`);
 }
@@ -57,12 +58,6 @@ async function openIssue(id) {
   history.replaceState(null, '', `/issues?id=${id}`); window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-async function createIssue() {
-  const title = $('newIssueTitle').value.trim(); const body = $('newIssueBody').value.trim(); const buttonNode = $('createIssue'); buttonNode.disabled = true; setText('newIssueMessage', '正在提交…');
-  try { const data = await api('/site/api/issues', { method: 'POST', body: JSON.stringify({ title, body }) }); $('newIssueTitle').value = ''; $('newIssueBody').value = ''; setText('newIssueMessage', '提交成功。'); await openIssue(data.issue.id); }
-  catch (error) { setText('newIssueMessage', error.message); }
-  finally { buttonNode.disabled = false; }
-}
 async function sendReply() {
   if (!state.detailId) return; const body = $('replyBody').value.trim(); const buttonNode = $('sendReply'); buttonNode.disabled = true; setText('replyMessage', '正在回复…');
   try { await api(`/site/api/issues/${state.detailId}/replies`, { method: 'POST', body: JSON.stringify({ body }) }); $('replyBody').value = ''; setText('replyMessage', '回复成功。'); await openIssue(state.detailId); }
@@ -79,7 +74,6 @@ $('showOpenIssues').addEventListener('click', () => applyFilter('open'));
 $('showClosedIssues').addEventListener('click', () => applyFilter('closed'));
 $('prevPage').addEventListener('click', () => { if (state.page > 1) { state.page -= 1; void loadIssues().catch(showFatal); } });
 $('nextPage').addEventListener('click', () => { if (state.page * state.pageSize < state.total) { state.page += 1; void loadIssues().catch(showFatal); } });
-$('createIssue').addEventListener('click', () => void createIssue());
 $('sendReply').addEventListener('click', () => void sendReply());
 $('backToIssues').addEventListener('click', () => void loadIssues().catch(showFatal));
 

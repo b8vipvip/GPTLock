@@ -204,7 +204,7 @@ async function handleAdmin(req, res, url) {
 const SITE_PAGES = {
   '/':'index.html','/guide':'guide.html','/guide/':'guide.html','/releases':'releases.html','/releases/':'releases.html','/account':'account.html','/account/':'account.html',
   '/privacy':'privacy.html','/privacy/':'privacy.html','/terms':'terms.html','/terms/':'terms.html','/support':'support.html','/support/':'support.html',
-  '/issues':'issues.html','/issues/':'issues.html','/data-deletion':'data-deletion.html','/data-deletion/':'data-deletion.html',
+  '/issues':'issues.html','/issues/':'issues.html','/issues/new':'issues-new.html','/issues/new/':'issues-new.html','/data-deletion':'data-deletion.html','/data-deletion/':'data-deletion.html',
 };
 const ADMIN_PAGES = {
   '/admin':'admin.html','/admin/':'admin.html','/admin/overview':'admin.html','/admin/users':'admin-users.html','/admin/plans':'admin-plans.html','/admin/orders':'admin-orders.html',
@@ -225,6 +225,7 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/site.js') return staticFile(res, join(PUBLIC,'site.js'));
     if (url.pathname === '/page-cms.js') return staticFile(res, join(PUBLIC,'page-cms.js'));
     if (url.pathname === '/issues.js') return staticFile(res, join(PUBLIC,'issues.js'));
+    if (url.pathname === '/issues-new.js') return staticFile(res, join(PUBLIC,'issues-new.js'));
     if (url.pathname === '/admin.js') return staticFile(res, join(PUBLIC,'admin.js'));
     if (url.pathname === '/admin-issues.js') return staticFile(res, join(PUBLIC,'admin-issues.js'));
     if (url.pathname === '/admin-website.js') return staticFile(res, join(PUBLIC,'admin-website.js'));

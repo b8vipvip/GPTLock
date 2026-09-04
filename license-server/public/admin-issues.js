@@ -38,17 +38,17 @@ function renderIssues(rows,total){
   $('issuesBody').textContent='';
   for(const issue of rows){
     const tr=document.createElement('tr');
-    const status=`${issue.pinned?'置顶 · ':''}${issue.status}`;
+    const status=`${issue.adminOnly?'仅管理员 · ':''}${issue.pinned?'置顶 · ':''}${issue.status}`;
     tr.append(td(issue.id),td(status),td(issue.title),td(authorText(issue)),td(issue.replyCount),td(localDate(issue.updatedAt)));
     const actions=document.createElement('td');actions.append(action('管理',()=>void openIssue(issue.id),'primary'));tr.append(actions);$('issuesBody').append(tr);
   }
   if(!rows.length){const tr=document.createElement('tr');const cell=document.createElement('td');cell.colSpan=7;cell.textContent='暂无符合条件的帖子';tr.append(cell);$('issuesBody').append(tr);}
-  $('listState').textContent=`共 ${total} 个 Issues`;
+  $('listState').textContent=`共 ${total} 个 Issues（包含仅管理员可见）`;
 }
 async function loadIssues(){const params=new URLSearchParams({status:$('issueStatus').value||'all'});const q=$('issueSearch').value.trim();if(q)params.set('q',q);const data=await api(`/admin/api/issues?${params}`);renderIssues(data.issues,data.total);}
 
 function openCreate(){
-  $('createCard').hidden=false;$('createTitle').value='';$('createBody').value='';$('createStatus').value='open';$('createPinned').checked=false;message($('createMessage'),'');syncCreateEditor();$('createCard').scrollIntoView({behavior:'smooth',block:'start'});$('createTitle').focus();
+  $('createCard').hidden=false;$('createTitle').value='';$('createBody').value='';$('createStatus').value='open';$('createPinned').checked=false;$('createAdminOnly').checked=false;message($('createMessage'),'');syncCreateEditor();$('createCard').scrollIntoView({behavior:'smooth',block:'start'});$('createTitle').focus();
 }
 function closeCreate(){$('createCard').hidden=true;message($('createMessage'),'');}
 function insertCreateTemplate(){
@@ -58,8 +58,8 @@ function insertCreateTemplate(){
 async function createAdminIssue(){
   const button=$('createIssue');button.disabled=true;message($('createMessage'),'正在发布管理员帖子…');
   try{
-    const data=await api('/admin/api/issues',{method:'POST',body:JSON.stringify({title:$('createTitle').value,body:$('createBody').value,status:$('createStatus').value,pinned:$('createPinned').checked})});
-    closeCreate();await loadIssues();await openIssue(data.issue.id);message($('detailMessage'),'管理员帖子已发布并立即出现在官网 Issues 讨论区。','good');
+    const data=await api('/admin/api/issues',{method:'POST',body:JSON.stringify({title:$('createTitle').value,body:$('createBody').value,status:$('createStatus').value,pinned:$('createPinned').checked,adminOnly:$('createAdminOnly').checked})});
+    closeCreate();await loadIssues();await openIssue(data.issue.id);message($('detailMessage'),data.issue.adminOnly?'管理员内部帖子已创建，仅后台可见。':'管理员帖子已发布并立即出现在官网 Issues 讨论区。','good');
   }catch(error){message($('createMessage'),error.message,'bad');}
   finally{button.disabled=false;}
 }
@@ -77,14 +77,15 @@ function renderReplies(){
 }
 function renderDetail(data){
   state.current=data.issue;state.replies=data.replies;$('detailCard').hidden=false;
-  $('detailTitle').textContent=`#${data.issue.id} ${data.issue.title}`;$('detailMeta').textContent=`${authorText(data.issue)} · ${localDate(data.issue.createdAt)} · ${data.issue.replyCount} 条回复`;
-  $('editTitle').value=data.issue.title;$('editBody').value=data.issue.body;$('editStatus').value=data.issue.status;$('editPinned').checked=Boolean(data.issue.pinned);$('openPublicIssue').href=`/issues?id=${data.issue.id}`;
+  $('detailTitle').textContent=`#${data.issue.id} ${data.issue.title}`;$('detailMeta').textContent=`${authorText(data.issue)} · ${localDate(data.issue.createdAt)} · ${data.issue.replyCount} 条回复${data.issue.adminOnly?' · 仅管理员可见':''}`;
+  $('editTitle').value=data.issue.title;$('editBody').value=data.issue.body;$('editStatus').value=data.issue.status;$('editPinned').checked=Boolean(data.issue.pinned);$('editAdminOnly').checked=Boolean(data.issue.adminOnly);
+  $('openPublicIssue').href=`/issues?id=${data.issue.id}`;$('openPublicIssue').hidden=Boolean(data.issue.adminOnly);
   syncEditEditor();renderReplies();syncReplyEditor();
 }
 async function openIssue(id){renderDetail(await api(`/admin/api/issues/${id}`));message($('detailMessage'),'');$('detailCard').scrollIntoView({behavior:'smooth',block:'start'});}
 async function patchIssue(){
   if(!state.current)return;const button=$('saveIssue');button.disabled=true;message($('detailMessage'),'正在保存…');
-  try{const data=await api(`/admin/api/issues/${state.current.id}`,{method:'PATCH',body:JSON.stringify({title:$('editTitle').value,body:$('editBody').value,status:$('editStatus').value,pinned:$('editPinned').checked})});renderDetail(data);await loadIssues();message($('detailMessage'),'帖子已保存，官网立即生效。','good');}
+  try{const data=await api(`/admin/api/issues/${state.current.id}`,{method:'PATCH',body:JSON.stringify({title:$('editTitle').value,body:$('editBody').value,status:$('editStatus').value,pinned:$('editPinned').checked,adminOnly:$('editAdminOnly').checked})});renderDetail(data);await loadIssues();message($('detailMessage'),data.issue.adminOnly?'帖子已保存并设为仅管理员可见。':'帖子已保存，公开讨论区立即生效。','good');}
   finally{button.disabled=false;}
 }
 async function adminReply(){

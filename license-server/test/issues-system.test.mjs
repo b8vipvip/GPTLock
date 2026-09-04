@@ -33,17 +33,36 @@ async function admin(system, method, path, body={}) { const res={}; const handle
 test('public issues require login to post, hide email, and allow signed-in discussion', async () => {
   const {system}=fixture();
   let res=await site(system,'POST','/site/api/issues','',{title:'无法创建',body:'匿名用户不应该能够创建这个问题'}); assert.equal(res.status,401);
-  res=await site(system,'POST','/site/api/issues','alice-token',{title:'自动验证状态异常',body:'自动验证完成后状态仍显示等待，希望确认原因。'}); assert.equal(res.status,201); const id=res.body.issue.id; assert.deepEqual(res.body.issue.author,{label:'用户 #1'}); assert.equal(res.body.issue.authorRole,'user'); assert.equal(JSON.stringify(res.body).includes('alice@example.com'),false);
+  res=await site(system,'POST','/site/api/issues','alice-token',{title:'自动验证状态异常',body:'自动验证完成后状态仍显示等待，希望确认原因。'}); assert.equal(res.status,201); const id=res.body.issue.id; assert.deepEqual(res.body.issue.author,{label:'用户 #1'}); assert.equal(res.body.issue.authorRole,'user'); assert.equal(res.body.issue.adminOnly,false); assert.equal(JSON.stringify(res.body).includes('alice@example.com'),false);
   res=await site(system,'POST',`/site/api/issues/${id}/replies`,'bob-token',{body:'我也遇到了，可以先导出脱敏日志。'}); assert.equal(res.status,201); assert.equal(res.body.replies.length,1); assert.equal(res.body.replies[0].author.label,'用户 #2');
   res=await site(system,'GET',`/site/api/issues/${id}`); assert.equal(res.status,200); assert.equal(JSON.stringify(res.body).includes('@example.com'),false);
 });
 
-test('admin can create first-class administrator posts visible to the public', async () => {
+test('admin-only user Issue is invisible to every public read and reply path until administrator publishes it', async () => {
+  const {system}=fixture();
+  let res=await site(system,'POST','/site/api/issues','alice-token',{title:'包含账户信息的内部问题',body:'这条问题只允许 GPTWork 管理员在后台查看和处理。',adminOnly:true});
+  assert.equal(res.status,201); const id=res.body.issue.id; assert.equal(res.body.issue.adminOnly,true); assert.deepEqual(res.body.issue.author,{label:'用户 #1'});
+
+  res=await site(system,'GET','/site/api/issues'); assert.equal(res.status,200); assert.equal(res.body.total,0); assert.equal(res.body.issues.some((issue)=>issue.id===id),false);
+  res=await site(system,'GET','/site/api/issues?q=账户信息'); assert.equal(res.status,200); assert.equal(res.body.total,0);
+  res=await site(system,'GET',`/site/api/issues/${id}`,'alice-token'); assert.equal(res.status,404);
+  res=await site(system,'POST',`/site/api/issues/${id}/replies`,'bob-token',{body:'普通用户不能给私密帖回复'}); assert.equal(res.status,404);
+
+  res=await admin(system,'GET',`/admin/api/issues/${id}`); assert.equal(res.status,200); assert.equal(res.body.issue.adminOnly,true); assert.equal(res.body.issue.author.email,'alice@example.com');
+  res=await admin(system,'PATCH',`/admin/api/issues/${id}`,{adminOnly:false}); assert.equal(res.status,200); assert.equal(res.body.issue.adminOnly,false);
+  res=await site(system,'GET',`/site/api/issues/${id}`); assert.equal(res.status,200); assert.equal(res.body.issue.id,id);
+});
+
+test('admin can create first-class administrator posts visible to the public or keep them internal', async () => {
   const {system}=fixture();
   let res=await admin(system,'POST','/admin/api/issues',{title:'GPTWork 官方公告',body:'这是由 GPTWork 管理员直接创建的公开讨论帖子。',status:'open',pinned:true});
-  assert.equal(res.status,201); const id=res.body.issue.id;
-  assert.equal(res.body.issue.authorRole,'admin'); assert.deepEqual(res.body.issue.author,{label:'GPTWork 管理员'}); assert.equal(res.body.issue.pinned,true);
-  res=await site(system,'GET',`/site/api/issues/${id}`); assert.equal(res.status,200); assert.equal(res.body.issue.authorRole,'admin'); assert.deepEqual(res.body.issue.author,{label:'GPTWork 管理员'}); assert.equal(JSON.stringify(res.body).includes('@example.com'),false);
+  assert.equal(res.status,201); const publicId=res.body.issue.id;
+  assert.equal(res.body.issue.authorRole,'admin'); assert.deepEqual(res.body.issue.author,{label:'GPTWork 管理员'}); assert.equal(res.body.issue.pinned,true); assert.equal(res.body.issue.adminOnly,false);
+  res=await site(system,'GET',`/site/api/issues/${publicId}`); assert.equal(res.status,200); assert.equal(res.body.issue.authorRole,'admin'); assert.deepEqual(res.body.issue.author,{label:'GPTWork 管理员'}); assert.equal(JSON.stringify(res.body).includes('@example.com'),false);
+
+  res=await admin(system,'POST','/admin/api/issues',{title:'管理员内部处理记录',body:'这条管理员帖子只在控制台内部显示。',status:'open',adminOnly:true});
+  assert.equal(res.status,201); const privateId=res.body.issue.id; assert.equal(res.body.issue.adminOnly,true);
+  res=await site(system,'GET',`/site/api/issues/${privateId}`); assert.equal(res.status,404);
 });
 
 test('admin can reply, pin, close, configure and delete while closed issue rejects user reply', async () => {
@@ -57,7 +76,7 @@ test('admin can reply, pin, close, configure and delete while closed issue rejec
   res=await admin(system,'GET',`/admin/api/issues/${id}`); assert.equal(res.status,404);
 });
 
-test('legacy issue table migrates without changing issue ids or replies', async () => {
+test('legacy issue table migrates without changing ids or replies and defaults history to public', async () => {
   const db=baseDb();
   const now=new Date().toISOString();
   db.exec(`
@@ -82,6 +101,7 @@ test('legacy issue table migrates without changing issue ids or replies', async 
   const json=(res,status,body)=>{res.status=status;res.body=body;}; const bodyJson=async(req)=>req.body||{};
   const system=createIssuesSystem({db,publicOrigin:'https://gptwork.test',json,bodyJson});
   const columns=db.prepare('PRAGMA table_info(support_issues)').all();
-  assert.equal(columns.find((column)=>column.name==='user_id').notnull,0); assert.ok(columns.some((column)=>column.name==='author_role'));
-  const res=await admin(system,'GET','/admin/api/issues/7'); assert.equal(res.status,200); assert.equal(res.body.issue.id,7); assert.equal(res.body.issue.authorRole,'user'); assert.equal(res.body.replies[0].id,9);
+  assert.equal(columns.find((column)=>column.name==='user_id').notnull,0); assert.ok(columns.some((column)=>column.name==='author_role')); assert.ok(columns.some((column)=>column.name==='admin_only'));
+  const row=db.prepare('SELECT admin_only FROM support_issues WHERE id=7').get(); assert.equal(row.admin_only,0);
+  const res=await admin(system,'GET','/admin/api/issues/7'); assert.equal(res.status,200); assert.equal(res.body.issue.id,7); assert.equal(res.body.issue.authorRole,'user'); assert.equal(res.body.issue.adminOnly,false); assert.equal(res.body.replies[0].id,9);
 });

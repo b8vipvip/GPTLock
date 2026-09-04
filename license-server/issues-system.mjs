@@ -16,6 +16,7 @@ export function createIssuesSystem({ db, publicOrigin, json, bodyJson }) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
       author_role TEXT NOT NULL DEFAULT 'user' CHECK(author_role IN ('user','admin')),
+      admin_only INTEGER NOT NULL DEFAULT 0 CHECK(admin_only IN (0,1)),
       title TEXT NOT NULL,
       body TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed')),
@@ -34,20 +35,23 @@ export function createIssuesSystem({ db, publicOrigin, json, bodyJson }) {
     ) STRICT;
   `);
 
-  function ensureIssueAuthorSchema() {
+  function ensureIssueSchema() {
     const columns = db.prepare('PRAGMA table_info(support_issues)').all();
     const userId = columns.find((column) => column.name === 'user_id');
     const authorRole = columns.find((column) => column.name === 'author_role');
-    if (authorRole && userId && Number(userId.notnull || 0) === 0) return;
+    const adminOnly = columns.find((column) => column.name === 'admin_only');
+    if (authorRole && adminOnly && userId && Number(userId.notnull || 0) === 0) return;
     const roleExpression = authorRole ? "CASE WHEN author_role='admin' THEN 'admin' ELSE 'user' END" : "'user'";
+    const adminOnlyExpression = adminOnly ? 'CASE WHEN admin_only=1 THEN 1 ELSE 0 END' : '0';
     db.exec('PRAGMA foreign_keys=OFF');
     try {
       db.exec(`BEGIN IMMEDIATE;
-        DROP TABLE IF EXISTS support_issues_v2;
-        CREATE TABLE support_issues_v2 (
+        DROP TABLE IF EXISTS support_issues_v3;
+        CREATE TABLE support_issues_v3 (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
           author_role TEXT NOT NULL DEFAULT 'user' CHECK(author_role IN ('user','admin')),
+          admin_only INTEGER NOT NULL DEFAULT 0 CHECK(admin_only IN (0,1)),
           title TEXT NOT NULL,
           body TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed')),
@@ -55,10 +59,10 @@ export function createIssuesSystem({ db, publicOrigin, json, bodyJson }) {
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         ) STRICT;
-        INSERT INTO support_issues_v2(id,user_id,author_role,title,body,status,pinned,created_at,updated_at)
-          SELECT id,user_id,${roleExpression},title,body,status,pinned,created_at,updated_at FROM support_issues;
+        INSERT INTO support_issues_v3(id,user_id,author_role,admin_only,title,body,status,pinned,created_at,updated_at)
+          SELECT id,user_id,${roleExpression},${adminOnlyExpression},title,body,status,pinned,created_at,updated_at FROM support_issues;
         DROP TABLE support_issues;
-        ALTER TABLE support_issues_v2 RENAME TO support_issues;
+        ALTER TABLE support_issues_v3 RENAME TO support_issues;
         COMMIT;`);
     } catch (error) {
       try { db.exec('ROLLBACK'); } catch {}
@@ -67,11 +71,11 @@ export function createIssuesSystem({ db, publicOrigin, json, bodyJson }) {
       db.exec('PRAGMA foreign_keys=ON');
     }
     const violations = db.prepare('PRAGMA foreign_key_check').all();
-    if (violations.length) throw new Error('support_issues author migration failed foreign-key validation');
+    if (violations.length) throw new Error('support_issues schema migration failed foreign-key validation');
   }
-  ensureIssueAuthorSchema();
+  ensureIssueSchema();
   db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_support_issues_activity ON support_issues(pinned DESC,updated_at DESC,id DESC);
+    CREATE INDEX IF NOT EXISTS idx_support_issues_activity ON support_issues(admin_only,pinned DESC,updated_at DESC,id DESC);
     CREATE INDEX IF NOT EXISTS idx_support_issue_replies_issue ON support_issue_replies(issue_id,id);
   `);
 
@@ -101,14 +105,18 @@ export function createIssuesSystem({ db, publicOrigin, json, bodyJson }) {
     const author = isAdmin
       ? { label:'GPTWork 管理员' }
       : (admin ? { id:row.user_id, email:row.email || '', label:publicAuthor(row.user_id) } : { label:publicAuthor(row.user_id) });
-    return { id:row.id, title:row.title, body:row.body, status:row.status, pinned:Boolean(row.pinned), authorRole:isAdmin?'admin':'user', replyCount:Number(row.reply_count || 0), createdAt:row.created_at, updatedAt:row.updated_at, author };
+    return { id:row.id, title:row.title, body:row.body, status:row.status, pinned:Boolean(row.pinned), adminOnly:Boolean(row.admin_only), authorRole:isAdmin?'admin':'user', replyCount:Number(row.reply_count || 0), createdAt:row.created_at, updatedAt:row.updated_at, author };
   }
   function replyRow(row, admin = false) {
     const isAdmin = row.author_role === 'admin';
     return { id:row.id, body:row.body, authorRole:row.author_role, author:isAdmin ? { label:'GPTWork 管理员' } : (admin ? { id:row.user_id, email:row.email || '', label:publicAuthor(row.user_id) } : { label:publicAuthor(row.user_id) }), createdAt:row.created_at, updatedAt:row.updated_at };
   }
   const issueSelect = `SELECT i.*,u.email,(SELECT COUNT(*) FROM support_issue_replies r WHERE r.issue_id=i.id) AS reply_count FROM support_issues i LEFT JOIN users u ON u.id=i.user_id`;
-  function getIssue(id, admin = false) { const row = db.prepare(`${issueSelect} WHERE i.id=?`).get(id); return row ? issueRow(row, admin) : null; }
+  function getIssue(id, admin = false, includePrivate = admin) {
+    const privacy = includePrivate ? '' : ' AND i.admin_only=0';
+    const row = db.prepare(`${issueSelect} WHERE i.id=?${privacy}`).get(id);
+    return row ? issueRow(row, admin) : null;
+  }
   function getReplies(id, admin = false) { return db.prepare(`SELECT r.*,u.email FROM support_issue_replies r LEFT JOIN users u ON u.id=r.user_id WHERE r.issue_id=? ORDER BY r.id`).all(id).map((row) => replyRow(row, admin)); }
   function rateCheck(kind, userId, max, minutes) {
     const since = new Date(Date.now() - minutes * 60000).toISOString();
@@ -122,9 +130,10 @@ export function createIssuesSystem({ db, publicOrigin, json, bodyJson }) {
     const body = input.body === undefined && fallback ? fallback.body : cleanBody(input.body, cfg.maxBody);
     const status = ['open','closed'].includes(input.status) ? input.status : (fallback?.status || 'open');
     const pinned = input.pinned === undefined ? Boolean(fallback?.pinned) : Boolean(input.pinned);
+    const adminOnly = input.adminOnly === undefined ? Boolean(fallback?.adminOnly) : Boolean(input.adminOnly);
     if (title.length < 4) fail(400,'TITLE_TOO_SHORT','标题至少 4 个字符');
     if (body.length < 10) fail(400,'BODY_TOO_SHORT','问题描述至少 10 个字符');
-    return { title, body, status, pinned };
+    return { title, body, status, pinned, adminOnly };
   }
   function sendError(res,error) { if (error instanceof IssuesError) { json(res,error.status,{ok:false,error:{code:error.code,message:error.message}}); return true; } throw error; }
 
@@ -135,8 +144,8 @@ export function createIssuesSystem({ db, publicOrigin, json, bodyJson }) {
       if (!['GET','HEAD'].includes(req.method || '') && !originAllowed(req)) fail(403,'ORIGIN_MISMATCH','请求来源校验失败');
       if (url.pathname === '/site/api/issues/config' && req.method === 'GET') { json(res,200,{ok:true,config:cfg,authenticated:Boolean(sessionUser(req))}); return true; }
       if (url.pathname === '/site/api/issues' && req.method === 'GET') {
-        const page=clampInt(url.searchParams.get('page'),1,100000,1); const status=['open','closed'].includes(url.searchParams.get('status'))?url.searchParams.get('status'):'all'; const q=String(url.searchParams.get('q')||'').trim(); const where=[]; const params=[];
-        if(status!=='all'){where.push('i.status=?');params.push(status);} if(q){where.push("(i.title LIKE ? ESCAPE '\\' OR i.body LIKE ? ESCAPE '\\')");const term=likeTerm(q);params.push(term,term);} const clause=where.length?`WHERE ${where.join(' AND ')}`:'';
+        const page=clampInt(url.searchParams.get('page'),1,100000,1); const status=['open','closed'].includes(url.searchParams.get('status'))?url.searchParams.get('status'):'all'; const q=String(url.searchParams.get('q')||'').trim(); const where=['i.admin_only=0']; const params=[];
+        if(status!=='all'){where.push('i.status=?');params.push(status);} if(q){where.push("(i.title LIKE ? ESCAPE '\\' OR i.body LIKE ? ESCAPE '\\')");const term=likeTerm(q);params.push(term,term);} const clause=`WHERE ${where.join(' AND ')}`;
         const total=Number(db.prepare(`SELECT COUNT(*) AS count FROM support_issues i ${clause}`).get(...params)?.count||0);
         const rows=db.prepare(`${issueSelect} ${clause} ORDER BY i.pinned DESC,i.updated_at DESC,i.id DESC LIMIT ? OFFSET ?`).all(...params,cfg.pageSize,(page-1)*cfg.pageSize).map((row)=>issueRow(row));
         json(res,200,{ok:true,issues:rows,page,pageSize:cfg.pageSize,total}); return true;
@@ -144,8 +153,8 @@ export function createIssuesSystem({ db, publicOrigin, json, bodyJson }) {
       if (url.pathname === '/site/api/issues' && req.method === 'POST') {
         if(!cfg.createEnabled) fail(403,'CREATE_DISABLED','当前暂停新建问题');
         const user=requireUser(req); rateCheck('issue',user.user_id,5,10); const input=await bodyJson(req); const next=validateIssueInput(input,cfg); const now=nowIso();
-        const result=db.prepare("INSERT INTO support_issues(user_id,author_role,title,body,status,pinned,created_at,updated_at) VALUES(?,'user',?,?,?,?,?,?)").run(user.user_id,next.title,next.body,'open',0,now,now);
-        json(res,201,{ok:true,issue:getIssue(Number(result.lastInsertRowid))}); return true;
+        const result=db.prepare("INSERT INTO support_issues(user_id,author_role,admin_only,title,body,status,pinned,created_at,updated_at) VALUES(?,'user',?,?,?,?,?,?,?)").run(user.user_id,next.adminOnly?1:0,next.title,next.body,'open',0,now,now);
+        json(res,201,{ok:true,issue:getIssue(Number(result.lastInsertRowid),false,true)}); return true;
       }
       const detail=url.pathname.match(/^\/site\/api\/issues\/(\d+)$/);
       if(detail&&req.method==='GET'){const id=Number(detail[1]);const issue=getIssue(id);if(!issue)fail(404,'ISSUE_NOT_FOUND','问题不存在');json(res,200,{ok:true,issue,replies:getReplies(id),authenticated:Boolean(sessionUser(req))});return true;}
@@ -170,12 +179,12 @@ export function createIssuesSystem({ db, publicOrigin, json, bodyJson }) {
       }
       if(url.pathname==='/admin/api/issues'&&req.method==='POST'){
         const cfg=config();const input=await bodyJson(req);const next=validateIssueInput(input,cfg);const now=nowIso();
-        const result=db.prepare("INSERT INTO support_issues(user_id,author_role,title,body,status,pinned,created_at,updated_at) VALUES(NULL,'admin',?,?,?,?,?,?)").run(next.title,next.body,next.status,next.pinned?1:0,now,now);
+        const result=db.prepare("INSERT INTO support_issues(user_id,author_role,admin_only,title,body,status,pinned,created_at,updated_at) VALUES(NULL,'admin',?,?,?,?,?,?,?)").run(next.adminOnly?1:0,next.title,next.body,next.status,next.pinned?1:0,now,now);
         json(res,201,{ok:true,issue:getIssue(Number(result.lastInsertRowid),true),replies:[]});return true;
       }
       const detail=url.pathname.match(/^\/admin\/api\/issues\/(\d+)$/);
       if(detail&&req.method==='GET'){const id=Number(detail[1]);const issue=getIssue(id,true);if(!issue)fail(404,'ISSUE_NOT_FOUND','问题不存在');json(res,200,{ok:true,issue,replies:getReplies(id,true)});return true;}
-      if(detail&&req.method==='PATCH'){const id=Number(detail[1]);const current=getIssue(id,true);if(!current)fail(404,'ISSUE_NOT_FOUND','问题不存在');const input=await bodyJson(req);const next=validateIssueInput(input,config(),current);db.prepare('UPDATE support_issues SET title=?,body=?,status=?,pinned=?,updated_at=? WHERE id=?').run(next.title,next.body,next.status,next.pinned?1:0,nowIso(),id);json(res,200,{ok:true,issue:getIssue(id,true),replies:getReplies(id,true)});return true;}
+      if(detail&&req.method==='PATCH'){const id=Number(detail[1]);const current=getIssue(id,true);if(!current)fail(404,'ISSUE_NOT_FOUND','问题不存在');const input=await bodyJson(req);const next=validateIssueInput(input,config(),current);db.prepare('UPDATE support_issues SET title=?,body=?,status=?,pinned=?,admin_only=?,updated_at=? WHERE id=?').run(next.title,next.body,next.status,next.pinned?1:0,next.adminOnly?1:0,nowIso(),id);json(res,200,{ok:true,issue:getIssue(id,true),replies:getReplies(id,true)});return true;}
       if(detail&&req.method==='DELETE'){const id=Number(detail[1]);const result=db.prepare('DELETE FROM support_issues WHERE id=?').run(id);if(!result.changes)fail(404,'ISSUE_NOT_FOUND','问题不存在');json(res,200,{ok:true});return true;}
       const reply=url.pathname.match(/^\/admin\/api\/issues\/(\d+)\/replies$/);
       if(reply&&req.method==='POST'){const id=Number(reply[1]);if(!getIssue(id,true))fail(404,'ISSUE_NOT_FOUND','问题不存在');const input=await bodyJson(req);const body=cleanBody(input.body,config().maxReply);if(body.length<2)fail(400,'REPLY_TOO_SHORT','回复内容至少 2 个字符');const now=nowIso();db.exec('BEGIN IMMEDIATE');try{db.prepare("INSERT INTO support_issue_replies(issue_id,user_id,author_role,body,created_at,updated_at) VALUES(?,NULL,'admin',?,?,?)").run(id,body,now,now);db.prepare('UPDATE support_issues SET updated_at=? WHERE id=?').run(now,id);db.exec('COMMIT');}catch(error){try{db.exec('ROLLBACK');}catch{}throw error;}json(res,201,{ok:true,issue:getIssue(id,true),replies:getReplies(id,true)});return true;}
