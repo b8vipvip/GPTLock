@@ -5,6 +5,7 @@
     'gpt-5.6-sol-wm': 'gpt-5.6-sol',
     'gpt-5-6': 'gpt-5.6-sol',
   });
+  const NON_CONCRETE_MODEL_IDS = new Set(['auto']);
   let writeQueue = Promise.resolve();
 
   function normalizeModelId(value) {
@@ -13,9 +14,14 @@
     return MODEL_ALIASES[model] ?? model;
   }
 
+  function normalizeConcreteModelId(value) {
+    const model = normalizeModelId(value);
+    return model && !NON_CONCRETE_MODEL_IDS.has(model) ? model : null;
+  }
+
   function normalizeModels(values) {
     return [...new Set((Array.isArray(values) ? values : [])
-      .map(normalizeModelId)
+      .map(normalizeConcreteModelId)
       .filter(Boolean))];
   }
 
@@ -37,7 +43,8 @@
           };
       const lockedModels = normalizeModels(policy.lockedModels);
       const nextLockedModels = [...new Set([...lockedModels, ...models])];
-      if (nextLockedModels.length === lockedModels.length) return;
+      if (nextLockedModels.length === lockedModels.length
+        && JSON.stringify(lockedModels) === JSON.stringify(policy.lockedModels || [])) return;
       await chrome.storage.sync.set({
         [POLICY_KEY]: { ...policy, lockedModels: nextLockedModels },
       });
