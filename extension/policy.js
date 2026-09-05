@@ -1,5 +1,5 @@
 export const DEFAULT_POLICY = Object.freeze({
-  lockedModels: ['gpt-5.6-sol'],
+  lockedModels: ['gpt-6-astra', 'gpt-5.6-sol'],
   allowedReasoningLevels: ['medium', 'high', 'extra-high'],
   strictMode: true,
 });
@@ -13,6 +13,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
 });
 
 export const KNOWN_MODELS = Object.freeze([
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra' },
   { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
   { id: 'gpt-5.5', label: 'GPT-5.5' },
 ]);
@@ -39,10 +40,15 @@ function unique(values) {
   return [...new Set(values)];
 }
 
+function normalizeAstraFamily(model) {
+  if (model === 'gpt-6-astra') return 'gpt-6-astra';
+  return /^(?:gpt-6-astra)(?:[-_.:][a-z0-9._:-]+)$/.test(model) ? 'gpt-6-astra' : null;
+}
+
 export function normalizeModelId(value) {
   const model = String(value ?? '').trim().toLowerCase();
   if (!/^[a-z0-9._:-]{1,128}$/.test(model)) return null;
-  return MODEL_ALIASES[model] ?? model;
+  return normalizeAstraFamily(model) ?? MODEL_ALIASES[model] ?? model;
 }
 
 export function normalizeConcreteModelId(value) {
