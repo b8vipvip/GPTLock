@@ -21,6 +21,15 @@ jobs:
           node-version: '22'
       - name: Apply safe rich text CMS patch
         run: python3 scripts/tmp-rich-text-cms-patch.py
+      - name: Preserve existing CMS help-text contract
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('license-server/public/admin-website.html')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('单行输入框绿色“保存”位于右侧', '单行输入框的绿色“保存”位于输入框右侧')
+          p.write_text(s, encoding='utf-8')
+          PY
       - name: Check license server JavaScript
         run: npm --prefix license-server run check
       - name: Run license server tests
