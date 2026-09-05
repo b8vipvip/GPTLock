@@ -18,8 +18,32 @@ function verificationReasons(state) {
   return Array.isArray(state.lastVerification?.reasons) ? state.lastVerification.reasons : [];
 }
 
-function hasConfirmedModelMismatch(state) {
-  return state.phase === 'mismatch' && verificationReasons(state).includes('model_not_allowed');
+function timestamp(value) {
+  const parsed = Date.parse(value || '');
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function mismatchAppliesToLatestRequest(state) {
+  const verifiedAt = timestamp(state.lastVerification?.verifiedAt);
+  const requestAt = timestamp(state.lastRequest?.capturedAt);
+  if (requestAt === null) return verifiedAt !== null;
+  if (verifiedAt === null) return false;
+  return verifiedAt >= requestAt;
+}
+
+function hasConfirmedModelMismatch(state, policy) {
+  if (state.phase !== 'mismatch' || !verificationReasons(state).includes('model_not_allowed')) return false;
+
+  // A reason code is only authoritative while its concrete model is still disallowed.
+  // This prevents an old mismatch reason from surviving a policy change while the
+  // current response model is now explicitly allowed (for example GPT-5.6 Sol).
+  const verifiedModel = state.lastVerification?.model;
+  if (!verifiedModel || policy.lockedModels.includes(verifiedModel)) return false;
+
+  // A strict-mode block is turn-scoped. Never let an older response mismatch block
+  // a newer formal request. Missing correlation data fails open instead of making a
+  // stale browser-page listener permanently disable ChatGPT sending.
+  return mismatchAppliesToLatestRequest(state);
 }
 
 function autoVerificationAppliesToLatestRequest(state) {
@@ -72,8 +96,8 @@ export function evaluateGuard({ state, policy, settings, inScope = true }) {
     };
   }
 
-  // A later metadata-empty frame must never erase a backend model mismatch.
-  if (strict && hasConfirmedModelMismatch(state)) {
+  // A confirmed mismatch may block only the request it actually belongs to.
+  if (strict && hasConfirmedModelMismatch(state, policy)) {
     return {
       ...base,
       canSend: false,
