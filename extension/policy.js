@@ -31,6 +31,7 @@ const MODEL_ALIASES = Object.freeze({
 });
 
 const NON_CONCRETE_MODEL_IDS = new Set(['auto']);
+const INVALID_EXPLICIT_POLICY_FALLBACK = Object.freeze(['gpt-5.6-sol']);
 
 const MODEL_TRANSPORT_IDS = Object.freeze({
   'gpt-5.6-sol': 'gpt-5.6-sol-wm',
@@ -69,7 +70,8 @@ export function normalizeReasoningLevel(value) {
 }
 
 export function normalizePolicy(input) {
-  const source = input && typeof input === 'object' ? input : DEFAULT_POLICY;
+  const hasExplicitPolicy = Boolean(input && typeof input === 'object');
+  const source = hasExplicitPolicy ? input : DEFAULT_POLICY;
   const rawModels = Array.isArray(source.lockedModels)
     ? source.lockedModels
     : Array.isArray(source.models)
@@ -83,9 +85,12 @@ export function normalizePolicy(input) {
 
   const lockedModels = unique(rawModels.map(normalizeConcreteModelId).filter(Boolean));
   const allowedReasoningLevels = unique(rawLevels.map(normalizeReasoningLevel).filter(Boolean));
+  const fallbackModels = hasExplicitPolicy && rawModels.length
+    ? INVALID_EXPLICIT_POLICY_FALLBACK
+    : DEFAULT_POLICY.lockedModels;
 
   return {
-    lockedModels: lockedModels.length ? lockedModels : [...DEFAULT_POLICY.lockedModels],
+    lockedModels: lockedModels.length ? lockedModels : [...fallbackModels],
     allowedReasoningLevels: allowedReasoningLevels.length
       ? allowedReasoningLevels
       : [...DEFAULT_POLICY.allowedReasoningLevels],
