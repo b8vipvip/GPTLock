@@ -32,6 +32,18 @@ function verifiedAuto(patch = {}) {
   };
 }
 
+function confirmedMismatch(patch = {}) {
+  return {
+    model: 'gpt-5.5',
+    reasoning: 'high',
+    verdict: 'mismatch',
+    reason: 'model_not_allowed',
+    reasons: ['model_not_allowed'],
+    verifiedAt: '2026-08-26T12:55:20.000Z',
+    ...patch,
+  };
+}
+
 test('normal initial state is request-lock ready without a probe gate', () => {
   const guard = evaluateGuard({ state: state(), policy: DEFAULT_POLICY, settings: DEFAULT_SETTINGS });
   assert.equal(guard.canSend, true);
@@ -70,11 +82,12 @@ test('waiting, unverified and verification errors do not interrupt chat', () => 
   }
 });
 
-test('strict mode blocks only a confirmed response model mismatch', () => {
+test('strict mode blocks only a confirmed response model mismatch for the latest request', () => {
   const guard = evaluateGuard({
     state: state({
       phase: 'mismatch',
-      lastVerification: { reason: 'model_not_allowed', reasons: ['model_not_allowed', 'reasoning_missing'] },
+      lastRequest: { capturedAt: '2026-08-26T12:55:18.000Z' },
+      lastVerification: confirmedMismatch({ reasons: ['model_not_allowed', 'reasoning_missing'] }),
     }),
     policy: DEFAULT_POLICY,
     settings: DEFAULT_SETTINGS,
@@ -83,6 +96,49 @@ test('strict mode blocks only a confirmed response model mismatch', () => {
   assert.equal(guard.allowKind, 'blocked');
   assert.equal(guard.status, 'mismatch');
   assert.equal(guard.reason, 'model_not_allowed');
+});
+
+test('stale mismatch from an older turn cannot block a newer request', () => {
+  const guard = evaluateGuard({
+    state: state({
+      phase: 'mismatch',
+      lastRequest: { capturedAt: '2026-08-26T12:56:00.000Z' },
+      lastVerification: confirmedMismatch({ verifiedAt: '2026-08-26T12:55:20.000Z' }),
+    }),
+    policy: DEFAULT_POLICY,
+    settings: DEFAULT_SETTINGS,
+  });
+  assert.equal(guard.canSend, true);
+  assert.equal(guard.allowKind, 'warning');
+  assert.equal(guard.status, 'mismatch');
+});
+
+test('stale model_not_allowed reason cannot block when the verified model is now allowed', () => {
+  const guard = evaluateGuard({
+    state: state({
+      phase: 'mismatch',
+      lastRequest: { capturedAt: '2026-08-26T12:55:18.000Z' },
+      lastVerification: confirmedMismatch({ model: 'gpt-5.6-sol' }),
+    }),
+    policy: DEFAULT_POLICY,
+    settings: DEFAULT_SETTINGS,
+  });
+  assert.equal(guard.canSend, true);
+  assert.equal(guard.status, 'mismatch');
+});
+
+test('uncorrelated mismatch evidence fails open instead of permanently blocking chat', () => {
+  const guard = evaluateGuard({
+    state: state({
+      phase: 'mismatch',
+      lastRequest: { capturedAt: '2026-08-26T12:55:18.000Z' },
+      lastVerification: confirmedMismatch({ verifiedAt: undefined }),
+    }),
+    policy: DEFAULT_POLICY,
+    settings: DEFAULT_SETTINGS,
+  });
+  assert.equal(guard.canSend, true);
+  assert.equal(guard.status, 'mismatch');
 });
 
 test('reasoning-only mismatch remains warning-only even in strict mode', () => {
@@ -152,12 +208,12 @@ test('sticky auto verification requires complete allowed backend evidence', () =
   assert.equal(guard.status, 'unverified');
 });
 
-test('confirmed mismatch overrides an earlier successful auto verification', () => {
+test('confirmed mismatch for the latest request overrides an earlier successful auto verification', () => {
   const guard = evaluateGuard({
     state: state({
       phase: 'mismatch',
       lastRequest: { capturedAt: '2026-08-26T12:55:18.264Z' },
-      lastVerification: { reason: 'model_not_allowed', reasons: ['model_not_allowed'] },
+      lastVerification: confirmedMismatch(),
       autoVerification: verifiedAuto(),
     }),
     policy: DEFAULT_POLICY,
