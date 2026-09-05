@@ -84,7 +84,7 @@ pub enum ReasonCode {
     EvidenceStale,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VerificationResult {
     pub allowed: bool,
@@ -103,10 +103,18 @@ pub struct VerificationResult {
 
 fn canonical_model_id(value: &str) -> Option<String> {
     let normalized = normalize_model_id(value).ok()?;
-    Some(match normalized.as_str() {
-        "gpt-5.6-sol-wm" => "gpt-5.6-sol".to_owned(),
-        _ => normalized,
-    })
+    if normalized == "gpt-5.6-sol-wm" {
+        return Some("gpt-5.6-sol".to_owned());
+    }
+    if normalized == "gpt-6-astra"
+        || normalized.starts_with("gpt-6-astra-")
+        || normalized.starts_with("gpt-6-astra_")
+        || normalized.starts_with("gpt-6-astra.")
+        || normalized.starts_with("gpt-6-astra:")
+    {
+        return Some("gpt-6-astra".to_owned());
+    }
+    Some(normalized)
 }
 
 fn policy_allows_model(policy: &Policy, model: &str) -> bool {
@@ -219,6 +227,13 @@ mod tests {
         }
     }
 
+    fn astra_policy() -> Policy {
+        Policy {
+            locked_models: vec!["gpt-6-astra".to_owned(), "gpt-5.6-sol".to_owned()],
+            ..Policy::default()
+        }
+    }
+
     #[test]
     fn verifies_matching_network_metadata() {
         let result = verify(
@@ -233,6 +248,20 @@ mod tests {
         assert_eq!(result.verdict, Verdict::Verified);
         assert_eq!(result.decision, PolicyDecision::Allow);
         assert!(result.allowed);
+    }
+
+    #[test]
+    fn verifies_astra_family_transport_without_guessing_exact_suffix() {
+        for model in ["gpt-6-astra", "gpt-6-astra-wm", "gpt-6-astra.preview"] {
+            let result = verify(
+                &astra_policy(),
+                "revision",
+                request(EvidenceSource::NetworkResponseMetadata, model, "high"),
+            );
+            assert_eq!(result.model.as_deref(), Some("gpt-6-astra"));
+            assert_eq!(result.verdict, Verdict::Verified);
+            assert_eq!(result.decision, PolicyDecision::Allow);
+        }
     }
 
     #[test]
