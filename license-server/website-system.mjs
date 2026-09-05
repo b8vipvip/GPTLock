@@ -1,4 +1,5 @@
 import { createLegalContentSystem } from './legal-content-system.mjs';
+import { normalizeTextStyles } from './text-style.mjs';
 
 const WEBSITE_SETTING_KEY = 'website_config_v1';
 
@@ -45,7 +46,7 @@ const PAGE_DEFAULTS = {
 };
 
 export const DEFAULT_WEBSITE_CONFIG = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   site: {
     brandName: 'GPTWork',
     title: 'GPTWork · Work 模式与模型锁定',
@@ -88,23 +89,23 @@ function bool(value, fallback = true) { return typeof value === 'boolean' ? valu
 function numericOrder(value, fallback) { const parsed = Number(value); return Number.isFinite(parsed) ? Math.max(-9999, Math.min(9999, Math.round(parsed))) : fallback; }
 function safeHref(value, fallback = '/') { const href = text(value, fallback, 500); if (/^\/(?!\/)[^\s]*$/.test(href)) return href; try { const url = new URL(href); if (url.protocol === 'https:') return url.toString(); } catch {} return fallback; }
 function slug(value, fallback) { const result = String(value || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 48); return result || fallback; }
-function normalizeItems(value, defaults, maxItems = 8) { const source = Array.isArray(value) ? value : defaults; return source.slice(0, maxItems).map((item, index) => ({ title: text(item?.title, defaults[index]?.title || `项目 ${index + 1}`, 160), body: text(item?.body, defaults[index]?.body || '', 1200) })); }
+function normalizeItems(value, defaults, maxItems = 8) { const source = Array.isArray(value) ? value : defaults; return source.slice(0, maxItems).map((item, index) => ({ title: text(item?.title, defaults[index]?.title || `项目 ${index + 1}`, 160), body: text(item?.body, defaults[index]?.body || '', 1200), styles: normalizeTextStyles(item?.styles, ['title','body']) })); }
 
 function normalizeHomeModule(raw, fallback, index) {
   const type = ['hero', 'features', 'workflow', 'callout', 'custom'].includes(raw?.type) ? raw.type : fallback?.type || 'custom';
   const base = fallback || { id: `custom-${index + 1}`, type: 'custom', name: '自定义内容', enabled: true, order: (index + 1) * 10, title: '自定义模块', body: '', buttonLabel: '', buttonHref: '/' };
   const common = { id: slug(raw?.id, base.id), type, name: text(raw?.name, base.name, 80), enabled: bool(raw?.enabled, base.enabled), order: numericOrder(raw?.order, base.order) };
-  if (type === 'hero') return { ...common, badge: text(raw?.badge, base.badge, 160), title: text(raw?.title, base.title, 300), body: text(raw?.body, base.body, 5000), primaryLabel: text(raw?.primaryLabel, base.primaryLabel, 80), primaryHref: safeHref(raw?.primaryHref, base.primaryHref), secondaryLabel: text(raw?.secondaryLabel, base.secondaryLabel, 80), secondaryHref: safeHref(raw?.secondaryHref, base.secondaryHref), tertiaryLabel: text(raw?.tertiaryLabel, base.tertiaryLabel, 80), tertiaryHref: safeHref(raw?.tertiaryHref, base.tertiaryHref), statusLabel: text(raw?.statusLabel, base.statusLabel, 100), modeLabel: text(raw?.modeLabel, base.modeLabel, 80), modeValue: text(raw?.modeValue, base.modeValue, 100), stateLabel: text(raw?.stateLabel, base.stateLabel, 80), stateValue: text(raw?.stateValue, base.stateValue, 100), modelLabel: text(raw?.modelLabel, base.modelLabel, 80), modelValue: text(raw?.modelValue, base.modelValue, 100), reasoningLabel: text(raw?.reasoningLabel, base.reasoningLabel, 80), reasoningValue: text(raw?.reasoningValue, base.reasoningValue, 100), protectionLabel: text(raw?.protectionLabel, base.protectionLabel, 80), protectionValue: text(raw?.protectionValue, base.protectionValue, 140), noteText: text(raw?.noteText, base.noteText, 200), signalTitle: text(raw?.signalTitle, base.signalTitle, 100), signalText: text(raw?.signalText, base.signalText, 300) };
-  if (type === 'features') return { ...common, title: text(raw?.title, base.title, 300), lead: text(raw?.lead, base.lead, 1200), items: normalizeItems(raw?.items, base.items, 6) };
-  if (type === 'workflow') return { ...common, title: text(raw?.title, base.title, 300), lead: text(raw?.lead, base.lead, 1200), items: normalizeItems(raw?.items, base.items, 8), primaryLabel: text(raw?.primaryLabel, base.primaryLabel, 80), primaryHref: safeHref(raw?.primaryHref, base.primaryHref), secondaryLabel: text(raw?.secondaryLabel, base.secondaryLabel, 80), secondaryHref: safeHref(raw?.secondaryHref, base.secondaryHref) };
-  if (type === 'callout') return { ...common, title: text(raw?.title, base.title, 300), body: text(raw?.body, base.body, 1200), buttonLabel: text(raw?.buttonLabel, base.buttonLabel, 80), buttonHref: safeHref(raw?.buttonHref, base.buttonHref) };
-  return { ...common, type: 'custom', title: text(raw?.title, base.title, 300), body: text(raw?.body, base.body, 5000), buttonLabel: text(raw?.buttonLabel, base.buttonLabel, 80), buttonHref: safeHref(raw?.buttonHref, base.buttonHref) };
+  if (type === 'hero') return { ...common, badge: text(raw?.badge, base.badge, 160), title: text(raw?.title, base.title, 300), body: text(raw?.body, base.body, 5000), primaryLabel: text(raw?.primaryLabel, base.primaryLabel, 80), primaryHref: safeHref(raw?.primaryHref, base.primaryHref), secondaryLabel: text(raw?.secondaryLabel, base.secondaryLabel, 80), secondaryHref: safeHref(raw?.secondaryHref, base.secondaryHref), tertiaryLabel: text(raw?.tertiaryLabel, base.tertiaryLabel, 80), tertiaryHref: safeHref(raw?.tertiaryHref, base.tertiaryHref), statusLabel: text(raw?.statusLabel, base.statusLabel, 100), modeLabel: text(raw?.modeLabel, base.modeLabel, 80), modeValue: text(raw?.modeValue, base.modeValue, 100), stateLabel: text(raw?.stateLabel, base.stateLabel, 80), stateValue: text(raw?.stateValue, base.stateValue, 100), modelLabel: text(raw?.modelLabel, base.modelLabel, 80), modelValue: text(raw?.modelValue, base.modelValue, 100), reasoningLabel: text(raw?.reasoningLabel, base.reasoningLabel, 80), reasoningValue: text(raw?.reasoningValue, base.reasoningValue, 100), protectionLabel: text(raw?.protectionLabel, base.protectionLabel, 80), protectionValue: text(raw?.protectionValue, base.protectionValue, 140), noteText: text(raw?.noteText, base.noteText, 200), signalTitle: text(raw?.signalTitle, base.signalTitle, 100), signalText: text(raw?.signalText, base.signalText, 300), styles: normalizeTextStyles(raw?.styles, ['badge','title','body','primaryLabel','secondaryLabel','tertiaryLabel','statusLabel','modeLabel','modeValue','stateLabel','stateValue','modelLabel','modelValue','reasoningLabel','reasoningValue','protectionLabel','protectionValue','noteText','signalTitle','signalText']) };
+  if (type === 'features') return { ...common, title: text(raw?.title, base.title, 300), lead: text(raw?.lead, base.lead, 1200), items: normalizeItems(raw?.items, base.items, 6), styles: normalizeTextStyles(raw?.styles, ['title','lead']) };
+  if (type === 'workflow') return { ...common, title: text(raw?.title, base.title, 300), lead: text(raw?.lead, base.lead, 1200), items: normalizeItems(raw?.items, base.items, 8), primaryLabel: text(raw?.primaryLabel, base.primaryLabel, 80), primaryHref: safeHref(raw?.primaryHref, base.primaryHref), secondaryLabel: text(raw?.secondaryLabel, base.secondaryLabel, 80), secondaryHref: safeHref(raw?.secondaryHref, base.secondaryHref), styles: normalizeTextStyles(raw?.styles, ['title','lead','primaryLabel','secondaryLabel']) };
+  if (type === 'callout') return { ...common, title: text(raw?.title, base.title, 300), body: text(raw?.body, base.body, 1200), buttonLabel: text(raw?.buttonLabel, base.buttonLabel, 80), buttonHref: safeHref(raw?.buttonHref, base.buttonHref), styles: normalizeTextStyles(raw?.styles, ['title','body','buttonLabel']) };
+  return { ...common, type: 'custom', title: text(raw?.title, base.title, 300), body: text(raw?.body, base.body, 5000), buttonLabel: text(raw?.buttonLabel, base.buttonLabel, 80), buttonHref: safeHref(raw?.buttonHref, base.buttonHref), styles: normalizeTextStyles(raw?.styles, ['title','body','buttonLabel']) };
 }
 
 function normalizePageModule(raw, fallback) {
   const base = fallback;
   const common = { id: base.id, type: base.type, name: base.name, enabled: bool(raw?.enabled, base.enabled), order: numericOrder(raw?.order, base.order), lockedOrder: Boolean(base.lockedOrder) };
-  if (base.type === 'callout') return { ...common, title: text(raw?.title, base.title, 300), body: text(raw?.body, base.body, 1600), buttonLabel: text(raw?.buttonLabel, base.buttonLabel, 80), buttonHref: safeHref(raw?.buttonHref, base.buttonHref) };
+  if (base.type === 'callout') return { ...common, title: text(raw?.title, base.title, 300), body: text(raw?.body, base.body, 1600), buttonLabel: text(raw?.buttonLabel, base.buttonLabel, 80), buttonHref: safeHref(raw?.buttonHref, base.buttonHref), styles: normalizeTextStyles(raw?.styles, ['title','body','buttonLabel']) };
   return common;
 }
 
@@ -115,7 +116,7 @@ function normalizePage(raw, defaults) {
     name: defaults.name,
     browserTitle: text(raw?.browserTitle, defaults.browserTitle, 160),
     description: text(raw?.description, defaults.description, 500),
-    hero: { eyebrow: text(hero.eyebrow, defaults.hero.eyebrow, 160), title: text(hero.title, defaults.hero.title, 300), body: text(hero.body, defaults.hero.body, 2000) },
+    hero: { eyebrow: text(hero.eyebrow, defaults.hero.eyebrow, 160), title: text(hero.title, defaults.hero.title, 300), body: text(hero.body, defaults.hero.body, 2000), styles: normalizeTextStyles(hero.styles, ['eyebrow','title','body']) },
     modules: defaults.modules.map((base) => normalizePageModule(rawModules.find((item) => item?.id === base.id), base)),
   };
 }
@@ -123,12 +124,12 @@ function normalizePage(raw, defaults) {
 export function normalizeWebsiteConfig(input = {}) {
   const defaults = DEFAULT_WEBSITE_CONFIG; const site = input.site || {};
   const configuredNavigation = Array.isArray(input.navigation) ? input.navigation : defaults.navigation;
-  const navigation = configuredNavigation.slice(0, 16).map((item, index) => { const fallback = defaults.navigation.find((candidate) => candidate.id === item?.id) || defaults.navigation[index] || { id: `nav-${index + 1}`, label: '链接', href: '/', enabled: true, order: (index + 1) * 10 }; return { id: slug(item?.id, fallback.id), label: text(item?.label, fallback.label, 80), href: safeHref(item?.href, fallback.href), enabled: bool(item?.enabled, fallback.enabled), order: numericOrder(item?.order, fallback.order), account: bool(item?.account, fallback.account || false) }; });
+  const navigation = configuredNavigation.slice(0, 16).map((item, index) => { const fallback = defaults.navigation.find((candidate) => candidate.id === item?.id) || defaults.navigation[index] || { id: `nav-${index + 1}`, label: '链接', href: '/', enabled: true, order: (index + 1) * 10 }; return { id: slug(item?.id, fallback.id), label: text(item?.label, fallback.label, 80), href: safeHref(item?.href, fallback.href), enabled: bool(item?.enabled, fallback.enabled), order: numericOrder(item?.order, fallback.order), account: bool(item?.account, fallback.account || false), styles: normalizeTextStyles(item?.styles, ['label']) }; });
   const sourceModules = Array.isArray(input.homeModules) ? input.homeModules : defaults.homeModules; const modules = []; const seen = new Set();
   for (let index = 0; index < Math.min(sourceModules.length, 20); index += 1) { const raw = sourceModules[index] || {}; const fallback = defaults.homeModules.find((module) => module.id === raw.id) || (!raw.type || raw.type !== 'custom' ? defaults.homeModules[index] : null); const normalized = normalizeHomeModule(raw, fallback, index); if (seen.has(normalized.id)) normalized.id = `custom-${index + 1}`; seen.add(normalized.id); modules.push(normalized); }
   for (const defaultModule of defaults.homeModules) if (!seen.has(defaultModule.id)) modules.push(clone(defaultModule));
   const pages = {}; for (const [key, pageDefaults] of Object.entries(PAGE_DEFAULTS)) pages[key] = normalizePage(input.pages?.[key], pageDefaults);
-  return { schemaVersion: 2, site: { brandName: text(site.brandName, defaults.site.brandName, 80), title: text(site.title, defaults.site.title, 160), description: text(site.description, defaults.site.description, 500), footerText: text(site.footerText, defaults.site.footerText, 160) }, navigation, homeModules: modules, pages };
+  return { schemaVersion: 3, site: { brandName: text(site.brandName, defaults.site.brandName, 80), title: text(site.title, defaults.site.title, 160), description: text(site.description, defaults.site.description, 500), footerText: text(site.footerText, defaults.site.footerText, 160), styles: normalizeTextStyles(site.styles, ['brandName','footerText']) }, navigation, homeModules: modules, pages };
 }
 
 export function createWebsiteSystem({ db, json }) {

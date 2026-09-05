@@ -1,3 +1,5 @@
+let cmsRichText = null;
+const cmsRichTextPromise = import('/rich-text-style.js').catch(() => null);
 const page = document.body.dataset.page || '';
 const LEGACY_AUTO_RELEASE_BADGE = 'Windows / Linux · Chrome / Edge';
 
@@ -328,14 +330,16 @@ function renderAccount(data, config, refresh) {
   if (!orderList.childElementCount) listEmpty(orderList, '暂无订单');
 }
 
-function cmsText(target, value) {
+function cmsText(target, value, style = {}) {
   if (!target || value === undefined || value === null) return;
   target.textContent = String(value);
   if (String(value).includes('\n')) target.style.whiteSpace = 'pre-line';
+  cmsRichText?.applyTextStyle(target, style);
 }
-function cmsLink(target, label, href) {
+function cmsNode(tag, className, value, style = {}) { const el = node(tag, className, value); cmsRichText?.applyTextStyle(el, style); return el; }
+function cmsLink(target, label, href, style = {}) {
   if (!target) return;
-  cmsText(target, label || '');
+  cmsText(target, label || '', style);
   if (href) target.href = href;
   target.hidden = !label;
 }
@@ -368,14 +372,14 @@ function setupMobileNavigation(nav) {
 }
 function applyGlobalWebsiteConfig(config) {
   const site = config.site || {};
-  const brand = document.querySelector('.site-header .brand > span:last-child'); if (brand && site.brandName) brand.textContent = site.brandName;
-  const footer = document.querySelector('.site-footer .footer-row > span'); if (footer && site.footerText) footer.textContent = site.footerText;
+  const brand = document.querySelector('.site-header .brand > span:last-child'); if (brand && site.brandName) cmsText(brand, site.brandName, site.styles?.brandName);
+  const footer = document.querySelector('.site-footer .footer-row > span'); if (footer && site.footerText) cmsText(footer, site.footerText, site.styles?.footerText);
   const items = Array.isArray(config.navigation) ? [...config.navigation].filter((item) => item.enabled).sort((a, b) => Number(a.order) - Number(b.order)) : [];
   const nav = document.querySelector('.site-header .nav-links');
   if (nav && Array.isArray(config.navigation)) {
     nav.replaceChildren();
     for (const item of items) {
-      const link = node('a', item.account ? 'nav-account' : '', item.label || '链接'); decorateLink(link, item); nav.append(link);
+      const link = cmsNode('a', item.account ? 'nav-account' : '', item.label || '链接', item.styles?.label); decorateLink(link, item); nav.append(link);
     }
     setupMobileNavigation(nav);
   }
@@ -387,7 +391,7 @@ function applyGlobalWebsiteConfig(config) {
       const key = String(item.href || '/'); if (seen.has(key)) continue; seen.add(key); merged.push(item);
     }
     footerLinks.replaceChildren();
-    for (const item of merged) { const link = node('a', '', item.label || '链接'); decorateLink(link, item); footerLinks.append(link); }
+    for (const item of merged) { const link = cmsNode('a', '', item.label || '链接', item.styles?.label); decorateLink(link, item); footerLinks.append(link); }
   }
   if (page === 'home') {
     if (site.title) document.title = site.title;
@@ -405,40 +409,43 @@ function applyHero(section, module) {
   const badge = section.querySelector('#latestBadge'); const customBadge = String(module.badge || '').trim();
   if (badge) {
     delete badge.dataset.cmsOverride;
-    if (customBadge && customBadge !== LEGACY_AUTO_RELEASE_BADGE) { badge.textContent = customBadge; badge.dataset.cmsOverride = '1'; }
+    if (customBadge && customBadge !== LEGACY_AUTO_RELEASE_BADGE) { cmsText(badge, customBadge, module.styles?.badge); badge.dataset.cmsOverride = '1'; }
+    else cmsRichText?.applyTextStyle(badge, module.styles?.badge);
   }
-  cmsText(section.querySelector('h1'), module.title); cmsText(section.querySelector('.hero-copy'), module.body);
-  const actions = section.querySelectorAll('.hero-actions a'); cmsLink(actions[0], module.primaryLabel, module.primaryHref); cmsLink(actions[1], module.secondaryLabel, module.secondaryHref); cmsLink(actions[2], module.tertiaryLabel, module.tertiaryHref);
-  cmsText(section.querySelector('.status-pill'), module.statusLabel);
+  cmsText(section.querySelector('h1'), module.title, module.styles?.title); cmsText(section.querySelector('.hero-copy'), module.body, module.styles?.body);
+  const actions = section.querySelectorAll('.hero-actions a'); cmsLink(actions[0], module.primaryLabel, module.primaryHref, module.styles?.primaryLabel); cmsLink(actions[1], module.secondaryLabel, module.secondaryHref, module.styles?.secondaryLabel); cmsLink(actions[2], module.tertiaryLabel, module.tertiaryHref, module.styles?.tertiaryLabel);
+  cmsText(section.querySelector('.status-pill'), module.statusLabel, module.styles?.statusLabel);
   const labels = section.querySelectorAll('.lock-label'); const values = section.querySelectorAll('.lock-value');
   const labelValues = [module.modeLabel, module.stateLabel, module.modelLabel, module.reasoningLabel, module.protectionLabel];
+  const labelStyles = [module.styles?.modeLabel, module.styles?.stateLabel, module.styles?.modelLabel, module.styles?.reasoningLabel, module.styles?.protectionLabel];
   const stateValues = [module.modeValue, module.stateValue, module.modelValue, module.reasoningValue, module.protectionValue];
-  labels.forEach((item, index) => cmsText(item, labelValues[index])); values.forEach((item, index) => cmsText(item, stateValues[index]));
-  cmsText(section.querySelector('.hero-card.note'), module.noteText);
-  const signal = section.querySelector('.hero-card.signal'); if (signal) { cmsText(signal.querySelector('b'), module.signalTitle); cmsText(signal.querySelector('small'), module.signalText); }
+  const stateStyles = [module.styles?.modeValue, module.styles?.stateValue, module.styles?.modelValue, module.styles?.reasoningValue, module.styles?.protectionValue];
+  labels.forEach((item, index) => cmsText(item, labelValues[index], labelStyles[index])); values.forEach((item, index) => cmsText(item, stateValues[index], stateStyles[index]));
+  cmsText(section.querySelector('.hero-card.note'), module.noteText, module.styles?.noteText);
+  const signal = section.querySelector('.hero-card.signal'); if (signal) { cmsText(signal.querySelector('b'), module.signalTitle, module.styles?.signalTitle); cmsText(signal.querySelector('small'), module.signalText, module.styles?.signalText); }
 }
 function applyFeatures(section, module) {
-  cmsText(section.querySelector('.section-head h2'), module.title); cmsText(section.querySelector('.section-head p'), module.lead);
+  cmsText(section.querySelector('.section-head h2'), module.title, module.styles?.title); cmsText(section.querySelector('.section-head p'), module.lead, module.styles?.lead);
   const grid = section.querySelector('.grid-3'); if (!grid) return; grid.replaceChildren();
-  (module.items || []).forEach((item, index) => { const card = node('article', 'feature-card'); card.append(node('div', 'feature-icon', String(index + 1).padStart(2, '0')), node('h3', '', item.title || ''), node('p', '', item.body || '')); grid.append(card); });
+  (module.items || []).forEach((item, index) => { const card = node('article', 'feature-card'); card.append(node('div', 'feature-icon', String(index + 1).padStart(2, '0')), cmsNode('h3', '', item.title || '', item.styles?.title), cmsNode('p', '', item.body || '', item.styles?.body)); grid.append(card); });
 }
 function workflowNode(item, index) {
   const accents = ['acid', '', 'sky', 'coral', '', 'acid', 'sky', 'coral'];
-  const mapNode = node('div', `map-node${accents[index] ? ` ${accents[index]}` : ''}`); mapNode.append(node('b', '', item.title || ''), node('span', '', item.body || '')); return mapNode;
+  const mapNode = node('div', `map-node${accents[index] ? ` ${accents[index]}` : ''}`); mapNode.append(cmsNode('b', '', item.title || '', item.styles?.title), cmsNode('span', '', item.body || '', item.styles?.body)); return mapNode;
 }
 function applyWorkflow(section, module) {
-  cmsText(section.querySelector('.section-head h2'), module.title); cmsText(section.querySelector('.section-head p'), module.lead);
+  cmsText(section.querySelector('.section-head h2'), module.title, module.styles?.title); cmsText(section.querySelector('.section-head p'), module.lead, module.styles?.lead);
   const columns = section.querySelectorAll('.map-col'); const items = (module.items || []).slice(0, 8);
   if (columns.length >= 2) {
     const split = Math.ceil(items.length / 2); columns[0].replaceChildren(...items.slice(0, split).map((item, index) => workflowNode(item, index))); columns[1].replaceChildren(...items.slice(split).map((item, index) => workflowNode(item, split + index)));
   }
-  const actions = section.querySelectorAll('.hero-actions a'); cmsLink(actions[0], module.primaryLabel, module.primaryHref); cmsLink(actions[1], module.secondaryLabel, module.secondaryHref);
+  const actions = section.querySelectorAll('.hero-actions a'); cmsLink(actions[0], module.primaryLabel, module.primaryHref, module.styles?.primaryLabel); cmsLink(actions[1], module.secondaryLabel, module.secondaryHref, module.styles?.secondaryLabel);
 }
-function applyCallout(section, module) { cmsText(section.querySelector('h2'), module.title); cmsText(section.querySelector('p'), module.body); cmsLink(section.querySelector('a.btn'), module.buttonLabel, module.buttonHref); }
+function applyCallout(section, module) { cmsText(section.querySelector('h2'), module.title, module.styles?.title); cmsText(section.querySelector('p'), module.body, module.styles?.body); cmsLink(section.querySelector('a.btn'), module.buttonLabel, module.buttonHref, module.styles?.buttonLabel); }
 function createCustomModule(module) {
   const section = node('section', 'section'); section.dataset.cmsCustom = module.id; section.dataset.cmsModule = module.id;
-  const shell = node('div', 'shell'); const head = node('div', 'section-head'); const left = node('div'); const title = node('h2', '', module.title || ''); const body = node('p', '', module.body || ''); title.style.whiteSpace = 'pre-line'; body.style.whiteSpace = 'pre-line'; left.append(title, body); head.append(left); shell.append(head);
-  if (module.buttonLabel) { const actions = node('div', 'hero-actions'); const link = node('a', 'btn btn-primary', module.buttonLabel); link.href = module.buttonHref || '/'; actions.append(link); shell.append(actions); }
+  const shell = node('div', 'shell'); const head = node('div', 'section-head'); const left = node('div'); const title = cmsNode('h2', '', module.title || '', module.styles?.title); const body = cmsNode('p', '', module.body || '', module.styles?.body); title.style.whiteSpace = 'pre-line'; body.style.whiteSpace = 'pre-line'; left.append(title, body); head.append(left); shell.append(head);
+  if (module.buttonLabel) { const actions = node('div', 'hero-actions'); const link = cmsNode('a', 'btn btn-primary', module.buttonLabel, module.styles?.buttonLabel); link.href = module.buttonHref || '/'; actions.append(link); shell.append(actions); }
   section.append(shell); return section;
 }
 function applyHomeModules(config) {
@@ -459,6 +466,7 @@ function applyHomeModules(config) {
   }
 }
 async function loadWebsiteConfig() {
+  cmsRichText = await cmsRichTextPromise;
   const data = await api('/site/api/website');
   const config = data.config || {};
   applyGlobalWebsiteConfig(config);

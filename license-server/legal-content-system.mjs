@@ -1,3 +1,5 @@
+import { normalizeTextStyles } from './text-style.mjs';
+
 const LEGAL_DEFAULTS = {
   privacy: {
     key: 'privacy', name: '隐私政策', path: '/privacy',
@@ -179,6 +181,7 @@ export function normalizeLegalDocument(key, input = {}) {
     browserTitle: text(input.browserTitle, base.browserTitle, 180), description: text(input.description, base.description, 600),
     eyebrow: text(input.eyebrow, base.eyebrow, 180), title: text(input.title, base.title, 180), subtitle: text(input.subtitle, base.subtitle, 180),
     lastUpdated: text(input.lastUpdated, base.lastUpdated, 40), content: text(input.content, base.content, 45_000),
+    styles: normalizeTextStyles(input.styles, ['eyebrow','title','subtitle','content']),
   };
 }
 function sameDocument(left, right) { if (!left || !right) return false; return JSON.stringify(normalizeLegalDocument(left.key, left)) === JSON.stringify(normalizeLegalDocument(right.key, right)); }

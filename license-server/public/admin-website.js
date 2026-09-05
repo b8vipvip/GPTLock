@@ -1,3 +1,4 @@
+import { createTextStyleToolbar } from '/rich-text-style.js';
 const $ = (id) => document.getElementById(id);
 const state = { config: null, persisted: null, updatedAt: null };
 
@@ -17,22 +18,35 @@ function checkbox(checked = false) { const item = input('', 'checkbox'); item.ch
 function button(text, handler, className = '') { const item = node('button', className, text); item.type = 'button'; item.addEventListener('click', handler); return item; }
 function localDate(value) { const date = new Date(value || ''); return Number.isNaN(date.getTime()) ? '尚未发布修改' : `最近保存：${date.toLocaleString('zh-CN', { hour12: false })}`; }
 function getAt(root, path) { let value = root; for (const key of path) value = value?.[key]; return value; }
-function setAt(root, path, value) { let target = root; for (let index = 0; index < path.length - 1; index += 1) target = target[path[index]]; target[path.at(-1)] = clone(value); }
+function setAt(root, path, value) { let target = root; for (let index = 0; index < path.length - 1; index += 1) { const key = path[index]; if (!target[key] || typeof target[key] !== 'object' || Array.isArray(target[key])) target[key] = {}; target = target[key]; } target[path.at(-1)] = clone(value); }
 function attach(control, object, key, parser = (value) => value) { const event = control.type === 'checkbox' ? 'change' : 'input'; control.addEventListener(event, () => { object[key] = parser(control.type === 'checkbox' ? control.checked : control.value); }); return control; }
 function toggleRowDisabled(row, enabled) { row.classList.toggle('is-disabled', !enabled); }
 function savedTime() { return new Date().toLocaleTimeString('zh-CN', { hour12: false }); }
+function textStylePath(path, key = path.at(-1)) { return [...path.slice(0, -1), 'styles', key]; }
+function ensureFieldStyle(object, key) { object.styles ||= {}; object.styles[key] ||= {}; return object.styles[key]; }
+function installTextStyleEditor(wrap, control, object, key, path) {
+  if (!wrap || !control || !object) return null;
+  wrap.querySelector(':scope > .cms-style-toolbar')?.remove(); wrap.classList.add('has-rich-style');
+  const targetPath = textStylePath(path, key); const style = ensureFieldStyle(object, key);
+  const toolbar = createTextStyleToolbar({ control, value: style, onChange: (next) => { object.styles[key] = next; } });
+  wrap.insertBefore(toolbar, control); return targetPath;
+}
 
-function addSaveFooter(wrap, path) {
-  if (!wrap || wrap.dataset.fieldSaveReady === '1') return wrap;
-  wrap.dataset.fieldSaveReady = '1'; wrap.classList.add('cms-field');
+function addSaveFooter(wrap, path, extraPaths = []) {
+  if (!wrap) return wrap;
+  wrap.querySelector(':scope > .cms-field-footer')?.remove(); wrap.dataset.fieldSaveReady = '1'; wrap.classList.add('cms-field');
   const footer = node('span', 'cms-field-footer'); const status = node('small', 'cms-field-status');
-  const save = button('保存', () => void persistPath(path, save, status), 'cms-field-save');
+  const save = button('保存', () => void persistPath(path, save, status, extraPaths), 'cms-field-save');
   footer.append(status, save); wrap.append(footer); return wrap;
 }
-function savedLabel(title, control, path, options = {}) { const wrap = label(title, control); if (options.wide) wrap.classList.add('wide'); addSaveFooter(wrap, path); return wrap; }
+function savedLabel(title, control, path, options = {}) {
+  const wrap = label(title, control); if (options.wide) wrap.classList.add('wide'); const extraPaths = [];
+  if (options.rich && options.object && options.key) { const stylePath = installTextStyleEditor(wrap, control, options.object, options.key, path); if (stylePath) extraPaths.push(stylePath); }
+  addSaveFooter(wrap, path, extraPaths); return wrap;
+}
 function textField(grid, object, key, title, options = {}, path) {
   const control = options.multiline ? textarea(object[key], options.rows || 4) : input(object[key]); if (options.max) control.maxLength = options.max; attach(control, object, key);
-  grid.append(savedLabel(title, control, path, { wide: options.wide })); return control;
+  grid.append(savedLabel(title, control, path, { wide: options.wide, rich: options.rich !== false, object, key })); return control;
 }
 function hrefField(grid, object, key, title, path, wide = false) { const control = input(object[key]); control.placeholder = '/guide 或 https://...'; attach(control, object, key); grid.append(savedLabel(title, control, path, { wide })); return control; }
 function updateSavedStamp(data) { state.updatedAt = data.updatedAt; $('websiteUpdated').textContent = localDate(state.updatedAt); }
@@ -43,16 +57,17 @@ function collectSite() {
   state.config.site.description = $('siteDescription').value;
   state.config.site.footerText = $('siteFooterText').value;
 }
-async function persistPath(path, saveButton, statusNode) {
+async function persistPath(path, saveButton, statusNode, extraPaths = []) {
   if (!state.config || !state.persisted) return;
-  collectSite(); const next = clone(state.persisted); setAt(next, path, getAt(state.config, path));
+  collectSite(); const next = clone(state.persisted); const paths = [path, ...extraPaths];
+  for (const fieldPath of paths) setAt(next, fieldPath, getAt(state.config, fieldPath));
   const original = saveButton?.textContent || '保存'; if (saveButton) { saveButton.disabled = true; saveButton.textContent = '保存中…'; }
   if (statusNode) statusNode.textContent = '正在保存';
   try {
     const data = await api('/admin/api/website', { method: 'PUT', body: JSON.stringify({ config: next }) });
-    state.persisted = clone(data.config); setAt(state.config, path, getAt(data.config, path)); updateSavedStamp(data);
+    state.persisted = clone(data.config); for (const fieldPath of paths) setAt(state.config, fieldPath, getAt(data.config, fieldPath)); updateSavedStamp(data);
     if (statusNode) statusNode.textContent = `已保存 ${savedTime()}`;
-    message('该字段已保存并立即在官网生效。', 'good');
+    message('该字段及文本样式已保存并立即在官网生效。', 'good');
   } catch (error) {
     if (statusNode) statusNode.textContent = '保存失败'; message(error.message, 'bad');
   } finally {
@@ -72,9 +87,13 @@ function autoPersistPath(path) { void persistPath(path, null, null); }
 
 function installSiteFieldSaves() {
   const fields = [
-    ['siteBrandName', ['site','brandName']], ['siteTitle', ['site','title']], ['siteDescription', ['site','description']], ['siteFooterText', ['site','footerText']],
+    ['siteBrandName', ['site','brandName'], true], ['siteTitle', ['site','title'], false], ['siteDescription', ['site','description'], false], ['siteFooterText', ['site','footerText'], true],
   ];
-  for (const [id, path] of fields) addSaveFooter($(id)?.closest('label'), path);
+  for (const [id, path, rich] of fields) {
+    const control = $(id); const wrap = control?.closest('label'); if (!control || !wrap) continue; wrap.querySelector(':scope > .cms-style-toolbar')?.remove(); wrap.querySelector(':scope > .cms-field-footer')?.remove(); wrap.classList.remove('has-rich-style');
+    const extraPaths = []; if (rich) { const object = getAt(state.config, path.slice(0, -1)); const stylePath = installTextStyleEditor(wrap, control, object, path.at(-1), path); if (stylePath) extraPaths.push(stylePath); }
+    addSaveFooter(wrap, path, extraPaths);
+  }
 }
 
 function renderNavigation() {
@@ -89,7 +108,7 @@ function renderNavigation() {
     const hrefInput = attach(input(item.href), item, 'href'); hrefInput.placeholder = '/path 或 https://...';
     const orderInput = attach(input(item.order, 'number'), item, 'order', Number); orderInput.min = '-9999'; orderInput.max = '9999';
     const remove = button('删除', async () => { state.config.navigation = state.config.navigation.filter((entry) => entry !== item); renderNavigation(); await persistAll({ buttonNode: remove, success: '导航已删除并立即生效。' }); }, 'danger');
-    row.append(enabledWrap, savedLabel('名称', labelInput, [...base,'label']), savedLabel('链接', hrefInput, [...base,'href']), savedLabel('顺序', orderInput, [...base,'order']), remove);
+    row.append(enabledWrap, savedLabel('名称', labelInput, [...base,'label'], { rich: true, object: item, key: 'label' }), savedLabel('链接', hrefInput, [...base,'href']), savedLabel('顺序', orderInput, [...base,'order']), remove);
     wrap.append(row);
   }
   if (!rows.length) wrap.append(node('div', 'module-empty', '当前没有顶部导航。'));
@@ -148,7 +167,7 @@ function renderPages() {
   const wrap = $('pagesEditor'); wrap.replaceChildren();
   for (const [key, page] of Object.entries(state.config.pages || {})) {
     const card = node('article', 'module-editor'); const head = node('div', 'module-head'); const title = node('div', 'module-title'); title.append(node('strong', '', page.name || key), node('small', '', `/${key === 'account' ? 'account' : key}`)); const preview = node('a', 'button-link', '预览 ↗'); preview.href = `/${key}`; preview.target = '_blank'; preview.rel = 'noopener noreferrer'; head.append(title, preview); card.append(head);
-    const grid = node('div', 'module-grid'); textField(grid, page, 'browserTitle', '浏览器标题', { max: 160 }, ['pages',key,'browserTitle']); textField(grid, page, 'description', 'SEO 描述', { multiline: true, rows: 3, max: 500, wide: true }, ['pages',key,'description']); textField(grid, page.hero, 'eyebrow', '顶部短标题', { max: 160 }, ['pages',key,'hero','eyebrow']); textField(grid, page.hero, 'title', '页面主标题', { multiline: true, rows: 2, max: 300 }, ['pages',key,'hero','title']); textField(grid, page.hero, 'body', '页面引导说明', { multiline: true, rows: 4, max: 2000, wide: true }, ['pages',key,'hero','body']); card.append(grid);
+    const grid = node('div', 'module-grid'); textField(grid, page, 'browserTitle', '浏览器标题', { max: 160, rich: false }, ['pages',key,'browserTitle']); textField(grid, page, 'description', 'SEO 描述', { multiline: true, rows: 3, max: 500, wide: true, rich: false }, ['pages',key,'description']); textField(grid, page.hero, 'eyebrow', '顶部短标题', { max: 160 }, ['pages',key,'hero','eyebrow']); textField(grid, page.hero, 'title', '页面主标题', { multiline: true, rows: 2, max: 300 }, ['pages',key,'hero','title']); textField(grid, page.hero, 'body', '页面引导说明', { multiline: true, rows: 4, max: 2000, wide: true }, ['pages',key,'hero','body']); card.append(grid);
     const modules = node('div', 'nested-items'); (page.modules || []).forEach((module,index) => modules.append(renderPageModule(key,module,index))); card.append(modules); wrap.append(card);
   }
 }

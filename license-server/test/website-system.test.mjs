@@ -15,7 +15,7 @@ function createDb() {
 test('website config keeps required modules, sanitizes links, and migrates operational pages', () => {
   const config = normalizeWebsiteConfig({
     schemaVersion: 1,
-    site: { brandName: ' My GPTWork ', title: 'Custom title' },
+    site: { brandName: ' My GPTWork ', title: 'Custom title', styles: { brandName: { font: 'georgia', size: 24, color: '#AABBCC', background: 'url(javascript:1)', bold: true, underline: true } } },
     navigation: [
       { id: 'bad', label: 'Bad', href: 'javascript:alert(1)', enabled: true, order: 3 },
       { id: 'docs', label: 'Docs', href: 'https://example.com/docs', enabled: true, order: 2 },
@@ -25,8 +25,9 @@ test('website config keeps required modules, sanitizes links, and migrates opera
       { id: 'custom-one', type: 'custom', name: '自定义', enabled: true, order: 5, title: 'Hello', body: 'World', buttonLabel: 'Go', buttonHref: 'javascript:bad()' },
     ],
   });
-  assert.equal(config.schemaVersion, 2);
+  assert.equal(config.schemaVersion, 3);
   assert.equal(config.site.brandName, 'My GPTWork');
+  assert.deepEqual(config.site.styles.brandName, { font: 'georgia', size: 24, color: '#aabbcc', bold: true, underline: true });
   assert.equal(config.navigation[0].href, '/');
   assert.equal(config.navigation[1].href, 'https://example.com/docs');
   assert.equal(config.homeModules.find((item) => item.id === 'hero').enabled, false);
@@ -68,7 +69,7 @@ test('website system seeds defaults, persists page updates, and can reset', asyn
   const system = createWebsiteSystem({ db, json });
   const seeded = system.read();
   assert.equal(seeded.config.site.brandName, 'GPTWork');
-  assert.equal(seeded.config.schemaVersion, 2);
+  assert.equal(seeded.config.schemaVersion, 3);
   assert.ok(seeded.updatedAt);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM app_settings').get().count, 1);
 
