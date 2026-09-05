@@ -107,3 +107,22 @@ test('real ChatGPT conversation-length boundary text remains a collection signal
   assert.equal(budget.classifyConversationLengthLimitText("You've reached the maximum length for this conversation. You can start a new chat to continue.")?.locale, 'en');
   assert.equal(budget.classifyConversationLengthLimitText('我们正在讨论对话长度上限这个概念。'), null);
 });
+
+
+test('restored checkpoints must match account conversation key and model before reuse', () => {
+  const checkpoint = budget.buildContextCheckpoint({
+    accountScope: 'acct-one', accountScopeSource: 'user-id', conversationId: 'conv-a',
+    conversationKey: 'conversation:conv-a', model: 'gpt-5.6-sol',
+    snapshot: { historyTokens: 800, historyCharacters: 3200, messageCount: 8, historyMeasurementSource: 'conversation-tree+dom-reconcile' },
+    currentNode: 'node-a', measuredAt: '2026-09-05T09:00:00.000Z',
+  });
+  assert.equal(budget.checkpointMatchesContext(checkpoint, {
+    accountScope: 'acct-one', conversationId: 'conv-a', conversationKey: 'conversation:conv-a', model: 'gpt-5.6-sol',
+  }), true);
+  assert.equal(budget.checkpointMatchesContext(checkpoint, {
+    accountScope: 'acct-one', conversationId: 'conv-b', conversationKey: 'conversation:conv-b', model: 'gpt-5.6-sol',
+  }), false);
+  assert.equal(budget.checkpointMatchesContext(checkpoint, {
+    accountScope: 'acct-two', conversationId: 'conv-a', conversationKey: 'conversation:conv-a', model: 'gpt-5.6-sol',
+  }), false);
+});

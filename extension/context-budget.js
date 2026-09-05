@@ -78,6 +78,9 @@
   let conversationMetricsCache = null;
   let conversationMetricsCheckedAt = 0;
   let conversationMetricsPromise = null;
+  let conversationMetricsPromiseKey = null;
+  let conversationMetricsRequestSequence = 0;
+  let observedConversationKey = null;
   let restoredCheckpoint = null;
   let restoredCheckpointKey = null;
   let checkpointLoadSequence = 0;
@@ -206,6 +209,24 @@
     const normalizedModel = normalizeModelId(model);
     if (!account || !conversation || !normalizedModel) return null;
     return `${PENDING_BYPASS_STORAGE_PREFIX}${account}:${conversation}:${normalizedModel}`;
+  }
+
+  function checkpointMatchesContext(checkpoint, {
+    accountScope,
+    conversationId,
+    conversationKey,
+    model,
+  } = {}) {
+    if (!checkpoint || typeof checkpoint !== 'object') return false;
+    const account = String(accountScope ?? '').trim();
+    const conversation = String(conversationId ?? '').trim();
+    const key = String(conversationKey ?? '').trim();
+    const normalizedModel = normalizeModelId(model);
+    if (!account || !conversation || !key || !normalizedModel) return false;
+    return checkpoint.accountScope === account
+      && checkpoint.conversationId === conversation
+      && checkpoint.conversationKey === key
+      && normalizeModelId(checkpoint.model) === normalizedModel;
   }
 
   function buildContextCheckpoint({
@@ -343,6 +364,7 @@
     classifyConversationLengthLimitText,
     extractConversationMetrics,
     checkpointStorageKey,
+    checkpointMatchesContext,
     pendingBypassStorageKey,
     buildContextCheckpoint,
     serializePendingBypassRecord,
@@ -498,12 +520,12 @@
       const stored = await chrome.storage.local.get(key);
       if (sequence !== checkpointLoadSequence) return null;
       const checkpoint = stored[key] ?? null;
-      if (
-        checkpoint
-        && checkpoint.accountScope === currentAccountScope
-        && checkpoint.conversationId === conversationId
-        && normalizeModelId(checkpoint.model) === normalizeModelId(model)
-      ) {
+      if (checkpointMatchesContext(checkpoint, {
+        accountScope: currentAccountScope,
+        conversationId,
+        conversationKey: currentConversationKey(),
+        model,
+      })) {
         restoredCheckpoint = checkpoint;
       } else {
         restoredCheckpoint = null;
@@ -523,7 +545,14 @@
     if (!key || snapshot?.historyMeasurementSource !== 'conversation-tree+dom-reconcile') return null;
     if (snapshot.conversationKey !== currentConversationKey()) return null;
     try {
-      const stored = restoredCheckpointKey === key && restoredCheckpoint
+      const inMemoryCheckpointUsable = restoredCheckpointKey === key
+        && checkpointMatchesContext(restoredCheckpoint, {
+          accountScope: currentAccountScope,
+          conversationId,
+          conversationKey: snapshot.conversationKey,
+          model,
+        });
+      const stored = inMemoryCheckpointUsable
         ? { [key]: restoredCheckpoint }
         : await chrome.storage.local.get(key);
       const previous = stored[key] ?? null;
@@ -639,6 +668,9 @@
     const conversationId = currentConversationId();
     const conversationKey = currentConversationKey();
     if (!conversationId) {
+      conversationMetricsRequestSequence += 1;
+      conversationMetricsPromise = null;
+      conversationMetricsPromiseKey = null;
       conversationMetricsCache = null;
       conversationMetricsCheckedAt = Date.now();
       return null;
@@ -649,19 +681,33 @@
       && conversationMetricsCache?.conversationKey === conversationKey
       && now - conversationMetricsCheckedAt < CONVERSATION_METRICS_REFRESH_MS
     ) return conversationMetricsCache;
-    if (conversationMetricsPromise) return conversationMetricsPromise;
-    conversationMetricsPromise = (async () => {
+    if (conversationMetricsPromise && conversationMetricsPromiseKey === conversationKey) {
+      return conversationMetricsPromise;
+    }
+
+    const requestSequence = ++conversationMetricsRequestSequence;
+    const requestPromise = (async () => {
       const metrics = await fetchConversationMetrics(conversationId);
+      if (requestSequence !== conversationMetricsRequestSequence || currentConversationKey() !== conversationKey) {
+        return null;
+      }
       conversationMetricsCheckedAt = Date.now();
-      if (metrics && currentConversationKey() === conversationKey) {
+      if (metrics) {
         conversationMetricsCache = { ...metrics, conversationKey, measuredAt: new Date().toISOString() };
         scheduleRefresh();
       }
       return conversationMetricsCache;
-    })().finally(() => {
-      conversationMetricsPromise = null;
-    });
-    return conversationMetricsPromise;
+    })();
+    conversationMetricsPromise = requestPromise;
+    conversationMetricsPromiseKey = conversationKey;
+    try {
+      return await requestPromise;
+    } finally {
+      if (conversationMetricsPromise === requestPromise) {
+        conversationMetricsPromise = null;
+        conversationMetricsPromiseKey = null;
+      }
+    }
   }
 
   function formatCompactTokens(tokens) {
@@ -685,17 +731,20 @@
       0,
     );
     const conversationKey = currentConversationKey();
+    const conversationId = currentConversationId();
+    const model = detectModel();
     const cacheFresh = Boolean(
       conversationMetricsCache
       && conversationMetricsCache.conversationKey === conversationKey
       && Date.now() - conversationMetricsCheckedAt <= CONVERSATION_METRICS_MAX_AGE_MS
     );
-    const checkpointUsable = Boolean(
-      !cacheFresh
-      && restoredCheckpoint
-      && restoredCheckpoint.accountScope === currentAccountScope
-      && restoredCheckpoint.conversationKey === conversationKey
-    );
+    const checkpointMatched = checkpointMatchesContext(restoredCheckpoint, {
+      accountScope: currentAccountScope,
+      conversationId,
+      conversationKey,
+      model,
+    });
+    const checkpointUsable = Boolean(!cacheFresh && checkpointMatched);
     const historyCharacters = cacheFresh
       ? Math.max(domHistoryCharacters, Number(conversationMetricsCache.characters) || 0)
       : checkpointUsable
@@ -707,7 +756,6 @@
         ? Math.max(messages.length, Number(restoredCheckpoint.activeMessageCount) || 0)
         : messages.length;
     const draft = composerText();
-    const model = detectModel();
     const confirmedLowerBoundTokens = storedMetric(activeProfile?.confirmedConversationTokens);
     const hardLimitUpperBoundTokens = storedMetric(activeProfile?.hardLimitUpperBoundTokens);
     return {
@@ -739,12 +787,13 @@
           ? 'checkpoint+dom-restore'
           : 'dom-fallback',
       checkpointRestored: checkpointUsable,
-      checkpointMeasuredAt: checkpointUsable ? restoredCheckpoint.lastMeasuredAt ?? null : null,
-      cumulativeConversationTokens: storedMetric(restoredCheckpoint?.cumulativeTokens),
-      cumulativeConversationCharacters: restoredCheckpoint
+      checkpointMatched,
+      checkpointMeasuredAt: checkpointMatched ? restoredCheckpoint.lastMeasuredAt ?? null : null,
+      cumulativeConversationTokens: checkpointMatched ? storedMetric(restoredCheckpoint.cumulativeTokens) : 0,
+      cumulativeConversationCharacters: checkpointMatched
         ? Math.max(historyCharacters, Number(restoredCheckpoint.cumulativeCharacters) || 0)
         : historyCharacters,
-      cumulativeMessageCount: restoredCheckpoint
+      cumulativeMessageCount: checkpointMatched
         ? Math.max(historyMessageCount, Number(restoredCheckpoint.cumulativeMessages) || 0)
         : historyMessageCount,
       draftCharacters: draft.length,
@@ -889,6 +938,7 @@
   function recompute() {
     refreshTimer = null;
     try {
+      ensureConversationNavigation();
       const notice = findVisibleConversationLengthLimit();
       if (notice) lastHardLimitNotice = { ...notice, conversationKey: currentConversationKey(), detectedAt: new Date().toISOString() };
       publishSnapshot(snapshotNow());
@@ -1615,28 +1665,54 @@
     subtree: true,
     characterData: true,
   });
-  function handleConversationNavigation() {
+  function resetConversationScopedState() {
     // Detach only. The old conversation's pending record remains recoverable until its TTL expires.
     pendingBypass = null;
     restoredPendingKey = null;
     restoredCheckpoint = null;
     restoredCheckpointKey = null;
+    checkpointLoadSequence += 1;
+    conversationMetricsRequestSequence += 1;
+    conversationMetricsPromise = null;
+    conversationMetricsPromiseKey = null;
     conversationMetricsCache = null;
     conversationMetricsCheckedAt = 0;
     lastHardLimitNotice = null;
     lastHardLimitFingerprint = null;
+  }
+
+  function handleConversationNavigation() {
+    const nextConversationKey = currentConversationKey();
+    if (observedConversationKey === nextConversationKey) return false;
+    observedConversationKey = nextConversationKey;
+    resetConversationScopedState();
     scheduleRefresh();
     void refreshAccountScope(true).then(() => {
+      if (observedConversationKey !== nextConversationKey) return;
       void loadConversationCheckpoint();
       void restorePendingBypass();
     });
     void refreshConversationMetrics(true);
+    return true;
   }
+
+  function ensureConversationNavigation() {
+    const nextConversationKey = currentConversationKey();
+    if (observedConversationKey === null) {
+      observedConversationKey = nextConversationKey;
+      return false;
+    }
+    if (observedConversationKey === nextConversationKey) return false;
+    return handleConversationNavigation();
+  }
+
+  observedConversationKey = currentConversationKey();
   window.addEventListener('popstate', handleConversationNavigation);
   window.addEventListener('hashchange', handleConversationNavigation);
   window.addEventListener('resize', scheduleRefresh);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
+      ensureConversationNavigation();
       void refreshAccountScope(true);
       void refreshConversationMetrics(true);
     }

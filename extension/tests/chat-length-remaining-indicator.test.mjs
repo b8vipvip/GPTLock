@@ -74,7 +74,7 @@ test('chat length display no longer waits for or consumes private remainingPerce
   });
   assert.equal(result.source, 'local-operational-budget');
   assert.equal(result.percent, 75);
-  assert.equal(indicator.formatPercent(result.percent), '75%');
+  assert.equal(indicator.formatPercent(result.percent), '75.0%');
   assert.match(source, /estimateTextTokens/);
   assert.match(source, /local-operational-budget/);
   assert.doesNotMatch(source, /__GPTLOCK_PRIVATE_CONTEXT_BUDGET_AUTHORITY__/);
@@ -84,4 +84,19 @@ test('unknown models retain the conservative fallback window from the verified e
   const window = indicator.contextWindowForModel('some-new-model');
   assert.equal(window.tokens, 128_000);
   assert.equal(window.source, 'conservative-fallback');
+});
+
+
+test('remaining display keeps one decimal so active conversations visibly move', () => {
+  assert.equal(indicator.formatPercent(17.34), '17.3%');
+  assert.equal(indicator.formatPercent(16.96), '17.0%');
+  assert.equal(indicator.formatPercent(16.94), '16.9%');
+});
+
+test('diagnostic hashes do not expose raw conversation ids', () => {
+  const one = indicator.diagnosticConversationHash('conversation:alpha-secret-id');
+  const two = indicator.diagnosticConversationHash('conversation:beta-secret-id');
+  assert.match(one, /^ctx-[0-9a-f]{8}$/);
+  assert.notEqual(one, two);
+  assert.doesNotMatch(one, /alpha|secret/i);
 });

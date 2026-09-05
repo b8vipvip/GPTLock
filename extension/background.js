@@ -1418,6 +1418,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await broadcastTabState(sender.tab.id);
         return publicTabState(state);
       }
+      case 'GPTLOCK_CONTEXT_BUDGET_DIAGNOSTIC': {
+        if (!sender.tab?.id) throw new Error('Context budget diagnostic requires a tab');
+        const details = message.details && typeof message.details === 'object' ? message.details : {};
+        const numberOrZero = (value) => {
+          const number = Number(value);
+          return Number.isFinite(number) && number > 0 ? number : 0;
+        };
+        logRuntime('info', 'context-budget', 'remaining_snapshot', {
+          tabId: sender.tab.id,
+          conversationHash: String(details.conversationHash || 'ctx-unknown').slice(0, 32),
+          model: String(details.model || '').slice(0, 128) || null,
+          remainingPercent: Math.min(100, Math.max(0, Number(details.remainingPercent) || 0)),
+          remainingDisplay: String(details.remainingDisplay || '').slice(0, 16),
+          remainingSource: String(details.remainingSource || 'unknown').slice(0, 80),
+          measurementSource: String(details.measurementSource || 'unknown').slice(0, 80),
+          historyTokens: numberOrZero(details.historyTokens),
+          historyCharacters: numberOrZero(details.historyCharacters),
+          historyMessages: numberOrZero(details.historyMessages),
+          cumulativeTokens: numberOrZero(details.cumulativeTokens),
+          cumulativeCharacters: numberOrZero(details.cumulativeCharacters),
+          cumulativeMessages: numberOrZero(details.cumulativeMessages),
+          checkpointMatched: details.checkpointMatched === true,
+          checkpointRestored: details.checkpointRestored === true,
+          hardLimitObservedCount: Math.max(0, Math.floor(Number(details.hardLimitObservedCount) || 0)),
+        });
+        return { recorded: true };
+      }
       case 'GPTLOCK_CONTEXT_CHANGED': {
         if (!sender.tab?.id) throw new Error('Context update requires a tab');
         const state = ensureTabState(sender.tab.id, message.url || sender.tab.url);
