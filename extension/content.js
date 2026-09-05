@@ -34,6 +34,8 @@
     'button[aria-label*="停止"]',
   ];
   const AUTO_PROBE_TEXT = 'GPTWork 自动验证测试：请只回复“验证完成”。';
+  const BLOCKING_GUARD_HEARTBEAT_MS = 1500;
+  const BLOCKING_GUARD_MAX_AGE_MS = 4500;
 
   let reportTimer = null;
   let alignTimer = null;
@@ -47,6 +49,7 @@
   let sendConsumedAt = 0;
   let indicator = null;
   let autoProbeRunning = false;
+  let lastRuntimeContactAt = Date.now();
 
   function elementTexts(element) {
     return [
@@ -82,7 +85,7 @@
     const composer = COMPOSER_SELECTORS.map((selector) => document.querySelector(selector)).find((element) => element && visible(element));
     if (!composer) return [];
     const composerRect = composer.getBoundingClientRect();
-    return [...document.querySelectorAll('button,[role=\"button\"],[aria-haspopup]')].filter((element) => {
+    return [...document.querySelectorAll('button,[role="button"],[aria-haspopup]')].filter((element) => {
       if (!visible(element)) return false;
       const rect = element.getBoundingClientRect();
       return rect.bottom >= composerRect.top - 96 && rect.top <= composerRect.bottom + 96;
@@ -133,11 +136,11 @@
     const nearbyControls = composerNearbyControls();
     const model = firstNormalized(MODEL_SELECTORS, normalizeDisplayedModel)
       || firstNormalizedElements(nearbyControls, normalizeDisplayedModel)
-      || firstNormalized(['button,[role=\"button\"]'], normalizeDisplayedModel);
+      || firstNormalized(['button,[role="button"]'], normalizeDisplayedModel);
     const reasoning = firstNormalized(REASONING_SELECTORS, normalizeDisplayedReasoning)
       || firstNormalizedElements(nearbyControls, normalizeDisplayedReasoning)
       || firstNormalized(MODEL_SELECTORS, normalizeDisplayedReasoning)
-      || (model ? firstNormalized(['button,[role=\"button\"]'], normalizeDisplayedReasoning) : null);
+      || (model ? firstNormalized(['button,[role="button"]'], normalizeDisplayedReasoning) : null);
     return {
       model,
       reasoning,
@@ -150,14 +153,34 @@
     };
   }
 
+  function runtimeContextAvailable() {
+    try {
+      return Boolean(globalThis.chrome?.runtime?.id);
+    } catch {
+      return false;
+    }
+  }
+
   function sendMessage(message) {
     return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage(message, (response) => {
-        const error = chrome.runtime.lastError;
-        if (error) reject(new Error(error.message));
-        else if (!response?.ok) reject(new Error(response?.error || 'Extension request failed'));
-        else resolve(response.data);
-      });
+      try {
+        chrome.runtime.sendMessage(message, (response) => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            lastRuntimeContactAt = 0;
+            reject(new Error(error.message));
+          } else if (!response?.ok) {
+            lastRuntimeContactAt = Date.now();
+            reject(new Error(response?.error || 'Extension request failed'));
+          } else {
+            lastRuntimeContactAt = Date.now();
+            resolve(response.data);
+          }
+        });
+      } catch (error) {
+        lastRuntimeContactAt = 0;
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -214,7 +237,7 @@
     if (auto?.running) {
       button.textContent = `GPTWork · 自动验证 ${auto.attempt || 1}/${auto.maxAttempts || 2}`;
       button.dataset.tone = 'wait';
-      button.title = `自动验证正在进行；证据不足时会自动重试 / Auto verification is running and will retry incomplete evidence.`;
+      button.title = '自动验证正在进行；证据不足时会自动重试 / Auto verification is running and will retry incomplete evidence.';
       return;
     }
     const labels = {
@@ -269,6 +292,26 @@
     scheduleAlign();
   }
 
+  function failOpenStaleRuntime() {
+    cachedSettings = { ...(cachedSettings || {}), enabled: false };
+    if (cachedState) {
+      cachedState = {
+        ...cachedState,
+        phase: 'initial',
+        guard: {
+          ...(cachedState.guard || {}),
+          canSend: true,
+          allowKind: 'disabled',
+          status: 'disabled',
+          reason: 'gptlock_disabled',
+        },
+      };
+    }
+    document.getElementById('gptlock-notice-host')?.remove();
+    indicator?.remove();
+    indicator = null;
+  }
+
   function locallyMarkSendStarted() {
     if (!cachedState?.guard || !cachedSettings?.networkVerificationEnabled) return;
     if (['disabled', 'outside_scope'].includes(cachedState.guard.allowKind)) return;
@@ -288,8 +331,22 @@
 
   function handlePotentialSend(event) {
     if (event.type === 'submit' && Date.now() - sendConsumedAt < 750) return true;
+
+    // The page-level listener can outlive the extension service worker when a user
+    // disables/reloads/uninstalls the extension. A stale listener must never keep
+    // ChatGPT blocked after GPTWork itself is no longer reachable.
+    if (cachedSettings?.enabled === false || !runtimeContextAvailable()) {
+      failOpenStaleRuntime();
+      return true;
+    }
+
     const guard = cachedState?.guard;
-    if (!guard?.canSend) {
+    if (!guard) return true;
+    if (!guard.canSend && Date.now() - lastRuntimeContactAt > BLOCKING_GUARD_MAX_AGE_MS) {
+      failOpenStaleRuntime();
+      return true;
+    }
+    if (!guard.canSend) {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
@@ -298,12 +355,12 @@
         type: 'GPTLOCK_SEND_BLOCKED',
         status: guard.status,
         reason: guard.reason,
-      }).catch(() => {});
+      }).catch(() => failOpenStaleRuntime());
       return false;
     }
     sendConsumedAt = Date.now();
     locallyMarkSendStarted();
-    void sendMessage({ type: 'GPTLOCK_SEND_STARTED' }).catch(() => {});
+    void sendMessage({ type: 'GPTLOCK_SEND_STARTED' }).catch(() => failOpenStaleRuntime());
     return true;
   }
 
@@ -582,6 +639,7 @@
       return false;
     }
     if (message?.type === 'GPTLOCK_GUARD_STATE') {
+      lastRuntimeContactAt = Date.now();
       updateCache(message);
       sendResponse({ ok: true });
       return false;
@@ -618,9 +676,20 @@
     ],
   });
 
+  window.setInterval(() => {
+    if (cachedSettings?.enabled === false || cachedState?.guard?.canSend !== false) return;
+    if (!runtimeContextAvailable()) {
+      failOpenStaleRuntime();
+      return;
+    }
+    void sendMessage({ type: 'GPTLOCK_GET_STATE' })
+      .then((state) => updateCache({ state: state.tabState, policy: state.policy, settings: state.settings }))
+      .catch(() => failOpenStaleRuntime());
+  }, BLOCKING_GUARD_HEARTBEAT_MS);
+
   ensureIndicator();
   void sendMessage({ type: 'GPTLOCK_GET_STATE' })
     .then((state) => updateCache({ state: state.tabState, policy: state.policy, settings: state.settings }))
-    .catch(() => renderIndicator());
+    .catch(() => failOpenStaleRuntime());
   scheduleReport();
 })();
