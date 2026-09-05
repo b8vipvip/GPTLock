@@ -26,7 +26,6 @@ const elements = {
   reconnect: document.getElementById('reconnect'),
   autoVerify: document.getElementById('autoVerify'),
   logs: document.getElementById('logs'),
-  save: document.getElementById('save'),
   formMessage: document.getElementById('formMessage'),
   installHelp: document.getElementById('installHelp'),
   installTitle: document.getElementById('installTitle'),
@@ -34,22 +33,19 @@ const elements = {
   installCore: document.getElementById('installCore'),
 };
 
-let loadedSettings = normalizeSettings();
+const knownModelIds = new Set(KNOWN_MODELS.map((model) => model.id));
+let writeQueue = Promise.resolve();
+let applyingRemoteState = false;
+let messageTimer = null;
 
-function ensureEnabledControlInteractive() {
-  if (!elements.enabled) return;
-  if (elements.enabled.disabled) elements.enabled.disabled = false;
-  elements.enabled.removeAttribute('disabled');
-  elements.enabled.closest('.check-row')?.removeAttribute('aria-disabled');
-}
+function checkbox(container, name, id, label, detail = '', dataset = {}) {
+  const existing = [...container.querySelectorAll(`input[name="${name}"]`)]
+    .find((input) => input.value === id);
+  if (existing) return existing;
 
-ensureEnabledControlInteractive();
-const enabledControlObserver = new MutationObserver(() => ensureEnabledControlInteractive());
-enabledControlObserver.observe(elements.enabled, { attributes: true, attributeFilter: ['disabled'] });
-
-function checkbox(container, name, id, label, detail = '') {
   const row = document.createElement('label');
   row.className = 'check-row';
+  for (const [key, value] of Object.entries(dataset)) row.dataset[key] = value;
   const input = document.createElement('input');
   input.type = 'checkbox';
   input.name = name;
@@ -65,6 +61,13 @@ function checkbox(container, name, id, label, detail = '') {
   }
   row.append(input, text);
   container.append(row);
+  return input;
+}
+
+function modelLabel(model) {
+  const known = KNOWN_MODELS.find((item) => item.id === model);
+  if (known) return known.label;
+  return model;
 }
 
 for (const model of KNOWN_MODELS) checkbox(elements.modelChoices, 'model', model.id, model.label, model.id);
@@ -97,6 +100,80 @@ function sendMessage(message) {
   });
 }
 
+function storageGet(keys) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.sync.get(keys, (stored) => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve(stored || {});
+    });
+  });
+}
+
+function storageSet(patch) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.sync.set(patch, () => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve();
+    });
+  });
+}
+
+function showMessage(text, tone = 'good') {
+  if (!elements.formMessage) return;
+  clearTimeout(messageTimer);
+  elements.formMessage.textContent = text;
+  elements.formMessage.className = tone === 'bad' ? 'inline-message bad' : 'inline-message good';
+  messageTimer = window.setTimeout(() => {
+    elements.formMessage.textContent = '';
+    elements.formMessage.className = '';
+  }, 2400);
+}
+
+function queueWrite(task) {
+  writeQueue = writeQueue
+    .catch(() => {})
+    .then(task)
+    .then(() => showMessage('已即时同步 / Synced.'))
+    .catch((error) => {
+      showMessage(`同步失败 / Sync failed: ${error.message}`, 'bad');
+      throw error;
+    });
+  return writeQueue;
+}
+
+async function patchPolicy(patch) {
+  const stored = await storageGet('policy');
+  const current = normalizePolicy(stored.policy);
+  const next = normalizePolicy({ ...current, ...patch });
+  await storageSet({ policy: next });
+  return next;
+}
+
+async function patchSettings(patch) {
+  const stored = await storageGet('settings');
+  const current = normalizeSettings(stored.settings);
+  const next = normalizeSettings({ ...current, ...patch });
+  await storageSet({ settings: next });
+  return next;
+}
+
+function renderCustomChoice(model, checked = true) {
+  const concrete = normalizeConcreteModelId(model);
+  if (!concrete) return null;
+  const input = checkbox(
+    elements.modelChoices,
+    'model',
+    concrete,
+    modelLabel(concrete),
+    `${concrete} · 自定义 / Custom`,
+    { customModel: concrete },
+  );
+  input.checked = checked;
+  return input;
+}
+
 function parseCustomModels() {
   const raw = elements.customModels.value
     .split(',')
@@ -115,6 +192,7 @@ function validateCustomModels(parsed) {
   if (parsed.routingAliases.length) {
     throw new Error(`${parsed.routingAliases.join(', ')} 是自动路由标识，不是具体模型，不能加入锁定列表。`);
   }
+  if (!parsed.models.length) throw new Error('请输入至少一个具体模型 ID。');
 }
 
 function concreteSelectedModels() {
@@ -152,102 +230,133 @@ function renderStatus(nativeStatus = {}) {
   elements.evidenceStatus.textContent = `${verification.evidenceSource} · ${verification.confidence}`;
 }
 
-async function load() {
-  ensureEnabledControlInteractive();
-  const state = await sendMessage({ type: 'GPTLOCK_GET_STATE' });
-  elements.extensionVersion.textContent = state.extensionVersion || '';
-  const policy = normalizePolicy(state.policy);
-  loadedSettings = normalizeSettings(state.settings);
-  setSelected('model', policy.lockedModels);
-  setSelected('reasoning', policy.allowedReasoningLevels);
-  const known = new Set(KNOWN_MODELS.map((model) => model.id));
-  elements.customModels.value = policy.lockedModels.filter((model) => !known.has(model)).join(', ');
-  document.querySelector(`input[name="mode"][value="${policy.strictMode}"]`).checked = true;
-  elements.preferredReasoning.value = loadedSettings.preferredReasoning;
-  elements.enabled.checked = loadedSettings.enabled;
-  ensureEnabledControlInteractive();
-  elements.networkVerification.checked = loadedSettings.networkVerificationEnabled;
-  elements.autoAlignSelection.checked = loadedSettings.autoAlignSelection;
-  renderStatus(state.nativeStatus);
+async function applyState(state) {
+  applyingRemoteState = true;
+  try {
+    elements.extensionVersion.textContent = state.extensionVersion || '';
+    const policy = normalizePolicy(state.policy);
+    const settings = normalizeSettings(state.settings);
+
+    for (const model of policy.lockedModels) {
+      if (!knownModelIds.has(model)) renderCustomChoice(model, true);
+    }
+    setSelected('model', policy.lockedModels);
+    setSelected('reasoning', policy.allowedReasoningLevels);
+    const mode = document.querySelector(`input[name="mode"][value="${policy.strictMode}"]`);
+    if (mode) mode.checked = true;
+    elements.preferredReasoning.value = settings.preferredReasoning;
+    elements.enabled.checked = settings.enabled;
+    elements.networkVerification.checked = settings.networkVerificationEnabled;
+    elements.autoAlignSelection.checked = settings.autoAlignSelection;
+    renderStatus(state.nativeStatus);
+  } finally {
+    applyingRemoteState = false;
+  }
 }
 
-async function saveCustomModels() {
-  if (!elements.saveCustomModels) return;
+async function load() {
+  const state = await sendMessage({ type: 'GPTLOCK_GET_STATE' });
+  await applyState(state);
+}
+
+async function persistModelSelection(changedInput) {
+  const lockedModels = [...new Set(concreteSelectedModels())];
+  if (!lockedModels.length) {
+    changedInput.checked = true;
+    throw new Error('至少保留一个锁定模型 / Keep at least one locked model.');
+  }
+  await patchPolicy({ lockedModels });
+}
+
+async function persistReasoningSelection(changedInput) {
+  const levels = selected('reasoning');
+  if (!levels.length) {
+    changedInput.checked = true;
+    throw new Error('至少保留一个推理强度 / Keep at least one reasoning level.');
+  }
+
+  const stored = await storageGet(['policy', 'settings']);
+  const currentPolicy = normalizePolicy(stored.policy);
+  const currentSettings = normalizeSettings(stored.settings);
+  const preferredReasoning = levels.includes(currentSettings.preferredReasoning)
+    ? currentSettings.preferredReasoning
+    : levels[0];
+  const policy = normalizePolicy({ ...currentPolicy, allowedReasoningLevels: levels });
+  const settings = normalizeSettings({ ...currentSettings, preferredReasoning });
+  await storageSet({ policy, settings });
+  elements.preferredReasoning.value = preferredReasoning;
+}
+
+async function addCustomModels() {
   const parsed = parseCustomModels();
   validateCustomModels(parsed);
-  const stored = await chrome.storage.sync.get('policy');
-  const basePolicy = normalizePolicy(stored.policy);
-  const lockedModels = [...new Set([...concreteSelectedModels(), ...parsed.models])];
-  if (!lockedModels.length) throw new Error('至少选择或填写一个具体模型。');
+  for (const model of parsed.models) renderCustomChoice(model, true);
+  const lockedModels = [...new Set(concreteSelectedModels())];
+  await patchPolicy({ lockedModels });
+  elements.customModels.value = '';
+  if (elements.customModelsMessage) {
+    elements.customModelsMessage.textContent = `已添加：${parsed.models.join(', ')} / Added.`;
+    elements.customModelsMessage.className = 'inline-message good';
+  }
+}
 
-  elements.saveCustomModels.disabled = true;
-  if (elements.customModelsMessage) elements.customModelsMessage.textContent = '正在保存模型策略…';
-  try {
-    await chrome.storage.sync.set({
-      policy: { ...basePolicy, lockedModels },
-    });
-    const known = new Set(KNOWN_MODELS.map((model) => model.id));
-    elements.customModels.value = lockedModels.filter((model) => !known.has(model)).join(', ');
-    if (elements.customModelsMessage) {
-      elements.customModelsMessage.textContent = '已添加并保存；模型锁定策略立即生效 / Added and saved.';
-      elements.customModelsMessage.className = 'inline-message good';
+function persistFromChange(event) {
+  if (applyingRemoteState) return;
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+
+  if (target.matches('input[name="model"]')) {
+    void queueWrite(() => persistModelSelection(target)).catch(() => void load().catch(() => {}));
+    return;
+  }
+  if (target.matches('input[name="reasoning"]')) {
+    void queueWrite(() => persistReasoningSelection(target)).catch(() => void load().catch(() => {}));
+    return;
+  }
+  if (target.matches('input[name="mode"]')) {
+    const strictMode = target.value === 'true';
+    void queueWrite(() => patchPolicy({ strictMode })).catch(() => void load().catch(() => {}));
+    return;
+  }
+  if (target === elements.preferredReasoning) {
+    const preferredReasoning = target.value;
+    if (!selected('reasoning').includes(preferredReasoning)) {
+      void load().catch(() => {});
+      showMessage('优先推理强度必须位于允许列表中 / Preferred reasoning must be allowed.', 'bad');
+      return;
     }
-  } finally {
-    elements.saveCustomModels.disabled = false;
+    void queueWrite(() => patchSettings({ preferredReasoning })).catch(() => void load().catch(() => {}));
+    return;
+  }
+  if (target === elements.enabled) {
+    void queueWrite(() => patchSettings({ enabled: target.checked })).catch(() => void load().catch(() => {}));
+    return;
+  }
+  if (target === elements.networkVerification) {
+    void queueWrite(() => patchSettings({ networkVerificationEnabled: target.checked })).catch(() => void load().catch(() => {}));
+    return;
+  }
+  if (target === elements.autoAlignSelection) {
+    void queueWrite(() => patchSettings({ autoAlignSelection: target.checked })).catch(() => void load().catch(() => {}));
   }
 }
 
-async function save() {
-  elements.formMessage.textContent = '';
-  const parsed = parseCustomModels();
-  try {
-    validateCustomModels(parsed);
-  } catch (error) {
-    elements.formMessage.textContent = error.message;
-    return;
-  }
-  const lockedModels = [...new Set([...concreteSelectedModels(), ...parsed.models])];
-  const allowedReasoningLevels = selected('reasoning');
-  if (!lockedModels.length || !allowedReasoningLevels.length) {
-    elements.formMessage.textContent = '至少选择一个具体模型和一个推理强度 / Select at least one concrete model and one reasoning level.';
-    return;
-  }
-
-  const strictMode = document.querySelector('input[name="mode"]:checked')?.value === 'true';
-  const preferredReasoning = allowedReasoningLevels.includes(elements.preferredReasoning.value)
-    ? elements.preferredReasoning.value
-    : allowedReasoningLevels[0];
-  const settings = {
-    enabled: elements.enabled.checked,
-    preferredReasoning,
-    networkVerificationEnabled: elements.networkVerification.checked,
-    autoAlignSelection: elements.autoAlignSelection.checked,
-    firstRequestMode: loadedSettings.firstRequestMode,
-  };
-  await chrome.storage.sync.set({
-    policy: { lockedModels, allowedReasoningLevels, strictMode },
-    settings,
-  });
-  loadedSettings = normalizeSettings(settings);
-  elements.formMessage.textContent = '已保存；请求锁定策略已同步 / Saved; request-lock policy synced.';
-  window.setTimeout(() => void load().catch(() => {}), 700);
-}
-
-elements.save.addEventListener('click', () => {
-  void save().catch((error) => {
-    elements.formMessage.textContent = `保存失败 / Save failed: ${error.message}`;
-  });
-});
+document.addEventListener('change', persistFromChange);
 
 if (elements.saveCustomModels) {
   elements.saveCustomModels.addEventListener('click', () => {
     if (elements.customModelsMessage) elements.customModelsMessage.className = 'inline-message';
-    void saveCustomModels().catch((error) => {
-      if (elements.customModelsMessage) {
-        elements.customModelsMessage.textContent = `保存失败 / Save failed: ${error.message}`;
-        elements.customModelsMessage.className = 'inline-message bad';
-      }
-    });
+    elements.saveCustomModels.disabled = true;
+    void queueWrite(addCustomModels)
+      .catch((error) => {
+        if (elements.customModelsMessage) {
+          elements.customModelsMessage.textContent = `添加失败 / Add failed: ${error.message}`;
+          elements.customModelsMessage.className = 'inline-message bad';
+        }
+      })
+      .finally(() => {
+        elements.saveCustomModels.disabled = false;
+      });
   });
   elements.customModels.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
@@ -266,18 +375,17 @@ elements.reconnect.addEventListener('click', () => {
 });
 
 elements.autoVerify.addEventListener('click', () => {
-  elements.formMessage.textContent = '正在自动对齐并发送可见测试消息 / Sending visible verification message…';
+  showMessage('正在自动对齐并发送可见测试消息 / Sending visible verification message…');
   elements.autoVerify.disabled = true;
   void sendMessage({ type: 'GPTLOCK_AUTO_VERIFY' })
     .then(async (result) => {
       await load();
-      elements.formMessage.textContent = result.sent
-        ? '已自动发送可见测试消息；无需人工发送，响应完成后自动确认 / Visible test sent automatically.'
-        : `自动验证未发送 / Not sent · ${result.tabState?.guard?.reason || result.tabState?.guard?.status || 'unknown'}`;
+      showMessage(result.sent
+        ? '已自动发送可见测试消息；响应完成后自动确认 / Visible test sent automatically.'
+        : `自动验证未发送 / Not sent · ${result.tabState?.guard?.reason || result.tabState?.guard?.status || 'unknown'}`,
+      );
     })
-    .catch((error) => {
-      elements.formMessage.textContent = `自动验证失败 / Auto verification failed: ${error.message}`;
-    })
+    .catch((error) => showMessage(`自动验证失败 / Auto verification failed: ${error.message}`, 'bad'))
     .finally(() => {
       elements.autoVerify.disabled = false;
     });
@@ -291,8 +399,10 @@ elements.installCore.addEventListener('click', () => {
   void chrome.tabs.create({ url: RELEASES_URL });
 });
 
-window.addEventListener('pageshow', ensureEnabledControlInteractive);
-window.addEventListener('unload', () => enabledControlObserver.disconnect(), { once: true });
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'sync' || (!changes.policy && !changes.settings)) return;
+  window.setTimeout(() => void load().catch(() => {}), 0);
+});
 
 void load().catch((error) => {
   renderStatus({ connected: false, lastError: error.message });

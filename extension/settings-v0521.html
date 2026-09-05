@@ -6,7 +6,7 @@
   <title>GPTWork 设置 / Settings</title>
   <link rel="stylesheet" href="options.css">
 </head>
-<body data-settings-revision="v0521-astra-priority">
+<body data-settings-revision="v0521-instant-sync">
   <main class="shell">
     <header>
       <div>
@@ -21,7 +21,7 @@
       <h2 id="globalHeading">总开关 <span>Global switch</span></h2>
       <label class="check-row wide">
         <input id="enabled" type="checkbox">
-        <span><strong>启用 GPTWork 请求锁定</strong><small>When disabled, request interception and response verification both pause.</small></span>
+        <span><strong>启用 GPTWork 请求锁定</strong><small>选择后立即生效并同步。关闭后请求拦截与响应确认立即暂停 / Changes apply and sync immediately.</small></span>
       </label>
     </section>
 
@@ -55,22 +55,23 @@
     <section class="card" aria-labelledby="modelHeading">
       <h2 id="modelHeading">锁定模型 <span>Locked models</span></h2>
       <p class="help">默认优先 GPT-6 Astra，其次 GPT-5.6 Sol。GPTWork 会先尽力把 ChatGPT 页面切到 Astra；如果当前账号或当前模式尚未开放 Astra，而正式请求已经是允许列表中的 Sol，则保留 Sol，不会为了显示“已锁定”而伪造一个 Astra transport ID。</p>
-      <p class="permission-note">正式聊天 POST 发出前会再次检查顶层 <code>model</code>。Astra 的网页内部 transport slug 可能随 OpenAI 变化；GPTWork 会把可信的 Astra family slug 统一识别为 <code>gpt-6-astra</code>，但保留 ChatGPT 自己发送的实际 slug。只有正式请求或响应元数据确认的具体模型才会进入持久“自动识别 / Discovered”；<code>auto</code> 是 ChatGPT 自动路由标识，不代表具体模型，不会加入自动识别或锁定策略。</p>
+      <p class="permission-note">正式聊天 POST 发出前会再次检查顶层 <code>model</code>。Astra 的网页内部 transport slug 可能随 OpenAI 变化；GPTWork 会把可信的 Astra family slug 统一识别为 <code>gpt-6-astra</code>，但保留 ChatGPT 自己发送的实际 slug。所有勾选与取消都会即时同步，无需再点击页面底部保存按钮。</p>
+      <p class="permission-note"><code>auto</code> 是 ChatGPT 自动路由标识，不代表具体模型，不会加入自动识别或锁定策略；自定义模型必须填写实际传输 model ID。</p>
       <div id="modelChoices" class="choices"></div>
       <label class="field" for="customModels">
         <span>自定义模型标识（逗号分隔）</span>
-        <small>填写实际传输 model ID；不要填写显示名称。Custom concrete model IDs, comma-separated.</small>
+        <small>填写实际传输 model ID；添加后会立即显示在上方模型列表并生效。Custom concrete model IDs, comma-separated.</small>
       </label>
       <div class="custom-model-editor">
         <input id="customModels" type="text" spellcheck="false" placeholder="例如 / e.g. gpt-6-astra-preview">
-        <button id="saveCustomModels" class="primary" type="button">添加并保存 / Add &amp; save</button>
+        <button id="saveCustomModels" class="primary" type="button">添加 / Add</button>
       </div>
       <p id="customModelsMessage" class="inline-message" role="status" aria-live="polite"></p>
     </section>
 
     <section class="card" aria-labelledby="reasoningHeading">
       <h2 id="reasoningHeading">允许的推理强度 <span>Allowed reasoning levels</span></h2>
-      <p class="help">若正式请求顶层已经存在可识别的推理强度字段，GPTWork 会把不允许的值改为优先推理强度；不会凭空添加网页当前没有发送的字段。</p>
+      <p class="help">若正式请求顶层已经存在可识别的推理强度字段，GPTWork 会把不允许的值改为优先推理强度；不会凭空添加网页当前没有发送的字段。选择后立即同步。</p>
       <div id="reasoningChoices" class="choices"></div>
       <label class="field" for="preferredReasoning">
         <span>优先推理强度</span>
@@ -96,14 +97,14 @@
 
     <section class="card" aria-labelledby="modeHeading">
       <h2 id="modeHeading">处理模式 <span>Enforcement mode</span></h2>
-      <p class="help">请求锁定优先保证正常聊天。核心离线、页面识别缺失、响应字段缺失或推理强度确认异常只告警；只有响应明确确认实际模型不在锁定列表时，强制模式才阻断后续发送。</p>
+      <p class="help">请求锁定优先保证正常聊天。核心离线、页面识别缺失、响应字段缺失或推理强度确认异常只告警；只有与当前最新正式请求关联、且响应明确确认实际模型不在锁定列表时，强制模式才阻断后续发送。</p>
       <label class="radio-row">
         <input type="radio" name="mode" value="false">
         <span><strong>提醒</strong><small>Warn — 永不因响应确认结果阻断</small></span>
       </label>
       <label class="radio-row">
         <input type="radio" name="mode" value="true">
-        <span><strong>强制</strong><small>Strict — only a confirmed response-model mismatch blocks subsequent sends</small></span>
+        <span><strong>强制</strong><small>Strict — only a current confirmed response-model mismatch blocks subsequent sends</small></span>
       </label>
     </section>
 
@@ -132,9 +133,10 @@
 
     <footer>
       <p id="formMessage" role="status" aria-live="polite"></p>
-      <button id="save" class="primary" type="button">保存并同步 / Save &amp; sync</button>
+      <p class="permission-note">所有配置均为即时保存与同步 / All configuration changes are saved and synced immediately.</p>
     </footer>
   </main>
+  <script src="settings-enabled-guard.js"></script>
   <script src="settings-shell.js"></script>
   <script type="module" src="options.js"></script>
   <script type="module" src="options-update.js"></script>
