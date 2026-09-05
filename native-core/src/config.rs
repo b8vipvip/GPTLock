@@ -72,7 +72,7 @@ impl Policy {
 }
 
 fn default_locked_models() -> Vec<String> {
-    vec!["gpt-5.6-sol".to_owned()]
+    vec!["gpt-6-astra".to_owned(), "gpt-5.6-sol".to_owned()]
 }
 
 fn default_reasoning_levels() -> Vec<String> {
@@ -349,6 +349,12 @@ fn set_private_file_permissions(_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_policy_prefers_astra_and_keeps_sol_fallback() {
+        let policy = Policy::default();
+        assert_eq!(policy.locked_models, ["gpt-6-astra", "gpt-5.6-sol"]);
+    }
 
     #[test]
     fn legacy_policy_fields_are_migrated() {

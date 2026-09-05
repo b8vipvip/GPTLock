@@ -8,6 +8,9 @@ export const LEGACY_SETTINGS_PAGES = new Set([
 const DISCOVERED_MODELS_KEY = 'discoveredModels';
 const DISCOVERED_MODEL_EVIDENCE_KEY = 'discoveredModelEvidence';
 const POLICY_KEY = 'policy';
+const ASTRA_POLICY_MIGRATION_KEY = 'astraPolicyMigrationV1';
+const ASTRA_MODEL_ID = 'gpt-6-astra';
+const SOL_MODEL_ID = 'gpt-5.6-sol';
 const NON_CONCRETE_MODEL_IDS = new Set(['auto']);
 
 function extensionPageName(url) {
@@ -40,6 +43,7 @@ export async function purgeNonConcreteModelState() {
     DISCOVERED_MODELS_KEY,
     DISCOVERED_MODEL_EVIDENCE_KEY,
     POLICY_KEY,
+    ASTRA_POLICY_MIGRATION_KEY,
   ]);
   const patch = {};
 
@@ -62,10 +66,20 @@ export async function purgeNonConcreteModelState() {
 
   const policy = stored[POLICY_KEY];
   if (policy && typeof policy === 'object' && Array.isArray(policy.lockedModels)) {
-    const lockedModels = policy.lockedModels.filter((model) => !isNonConcreteModelId(model));
+    let lockedModels = policy.lockedModels.filter((model) => !isNonConcreteModelId(model));
     if (!sameJson(lockedModels, policy.lockedModels)) {
       patch[POLICY_KEY] = { ...policy, lockedModels };
     }
+    if (!stored[ASTRA_POLICY_MIGRATION_KEY]
+      && lockedModels.includes(SOL_MODEL_ID)
+      && !lockedModels.includes(ASTRA_MODEL_ID)) {
+      lockedModels = [ASTRA_MODEL_ID, ...lockedModels];
+      patch[POLICY_KEY] = { ...policy, lockedModels };
+    }
+  }
+
+  if (!stored[ASTRA_POLICY_MIGRATION_KEY]) {
+    patch[ASTRA_POLICY_MIGRATION_KEY] = true;
   }
 
   if (Object.keys(patch).length) await chrome.storage.sync.set(patch);
@@ -96,6 +110,8 @@ function runMigration() {
 // cache-busted settings document without requiring the user to close them. Model state
 // cleanup runs at the same lifecycle points so a historical `auto` router alias cannot
 // remain lockable merely because the user has not opened Settings after upgrading.
+// The Astra preference is folded into the same atomic storage patch: existing policies
+// that already allow Sol gain Astra once, but a later manual Astra opt-out is respected.
 runMigration();
 chrome.runtime.onInstalled.addListener(runMigration);
 chrome.runtime.onStartup.addListener(runMigration);

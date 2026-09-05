@@ -8,7 +8,7 @@
   "properties": {
     "lockedModels": {
       "type": "array",
-      "description": "允许的模型标识，可多选 / Allowed model identifiers",
+      "description": "允许的模型标识，可多选；顺序同时表示优先级 / Allowed model identifiers in preference order",
       "minItems": 1,
       "maxItems": 32,
       "uniqueItems": true,
@@ -18,7 +18,7 @@
         "maxLength": 128,
         "pattern": "^[a-zA-Z0-9._:-]+$"
       },
-      "default": ["gpt-5.6-sol"]
+      "default": ["gpt-6-astra", "gpt-5.6-sol"]
     },
     "allowedReasoningLevels": {
       "type": "array",
