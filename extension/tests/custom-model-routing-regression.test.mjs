@@ -35,11 +35,13 @@ test('auto remains observable as request metadata but is never a concrete lock t
   assert.deepEqual(fallback.lockedModels, ['gpt-5.6-sol']);
 });
 
-test('settings expose a dedicated custom model save action', () => {
+test('settings expose an immediate custom model Add action', () => {
   assert.match(optionsHtml, /id="saveCustomModels"/);
-  assert.match(optionsHtml, /添加并保存/);
+  assert.match(optionsHtml, />添加 \/ Add<\/button>/);
+  assert.doesNotMatch(optionsHtml, /添加并保存/);
   assert.match(optionsHtml, /auto<\/code> 是 ChatGPT 自动路由标识/);
-  assert.match(optionsJs, /async function saveCustomModels\(\)/);
+  assert.match(optionsJs, /async function addCustomModels\(\)/);
+  assert.match(optionsJs, /renderCustomChoice\(model, true\)/);
   assert.match(optionsJs, /normalizeConcreteModelId/);
   assert.match(optionsJs, /自动路由标识，不是具体模型/);
 });
