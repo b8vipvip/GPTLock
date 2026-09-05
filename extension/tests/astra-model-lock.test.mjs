@@ -94,6 +94,7 @@ test('Astra evidence patch loads immediately after the base page evidence adapte
 
 test('existing Sol policies receive the one-shot Astra preference migration', () => {
   assert.match(migrationSource, /astraPolicyMigrationV1/);
-  assert.match(migrationSource, /lockedModels: \[ASTRA_MODEL_ID, \.\.\.lockedModels\]/);
+  assert.match(migrationSource, /lockedModels = \[ASTRA_MODEL_ID, \.\.\.lockedModels\]/);
+  assert.match(migrationSource, /patch\[ASTRA_POLICY_MIGRATION_KEY\] = true/);
   assert.match(migrationSource, /later manual Astra opt-out is respected/);
 });
