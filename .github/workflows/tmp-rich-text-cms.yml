@@ -1,0 +1,35 @@
+name: Temporary rich text CMS patch
+
+on:
+  push:
+    branches:
+      - feat/website-safe-rich-text-20260905
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/website-safe-rich-text-20260905
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply safe rich text CMS patch
+        run: python3 scripts/tmp-rich-text-cms-patch.py
+      - name: Check license server JavaScript
+        run: npm --prefix license-server run check
+      - name: Run license server tests
+        run: npm --prefix license-server test
+      - name: Commit final implementation
+        run: |
+          rm -f .github/workflows/tmp-rich-text-cms.yml scripts/tmp-rich-text-cms-patch.py
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "feat: add safe text styling to website CMS"
+          git push origin HEAD:feat/website-safe-rich-text-20260905
