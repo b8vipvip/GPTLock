@@ -28,6 +28,7 @@ jobs:
           p = Path('license-server/public/admin-website.html')
           s = p.read_text(encoding='utf-8')
           s = s.replace('单行输入框绿色“保存”位于右侧', '单行输入框的绿色“保存”位于输入框右侧')
+          s = s.replace('多行输入框绿色“保存”位于内部右下角', '多行输入框的绿色“保存”位于输入框内部右下角')
           p.write_text(s, encoding='utf-8')
           PY
       - name: Check license server JavaScript
