@@ -55,7 +55,7 @@
     <section class="card" aria-labelledby="modelHeading">
       <h2 id="modelHeading">锁定模型 <span>Locked models</span></h2>
       <p class="help">默认优先 GPT-6 Astra，其次 GPT-5.6 Sol。GPTWork 会先尽力把 ChatGPT 页面切到 Astra；如果当前账号或当前模式尚未开放 Astra，而正式请求已经是允许列表中的 Sol，则保留 Sol，不会为了显示“已锁定”而伪造一个 Astra transport ID。</p>
-      <p class="permission-note">正式聊天 POST 发出前会再次检查顶层 <code>model</code>。Astra 的网页内部 transport slug 可能随 OpenAI 变化；GPTWork 会把可信的 Astra family slug 统一识别为 <code>gpt-6-astra</code>，但保留 ChatGPT 自己发送的实际 slug。只有正式请求或响应元数据确认的具体模型才会进入持久“自动识别 / Discovered”；<code>auto</code> 仍只是路由标识。</p>
+      <p class="permission-note">正式聊天 POST 发出前会再次检查顶层 <code>model</code>。Astra 的网页内部 transport slug 可能随 OpenAI 变化；GPTWork 会把可信的 Astra family slug 统一识别为 <code>gpt-6-astra</code>，但保留 ChatGPT 自己发送的实际 slug。只有正式请求或响应元数据确认的具体模型才会进入持久“自动识别 / Discovered”；<code>auto</code> 是 ChatGPT 自动路由标识，不代表具体模型，不会加入自动识别或锁定策略。</p>
       <div id="modelChoices" class="choices"></div>
       <label class="field" for="customModels">
         <span>自定义模型标识（逗号分隔）</span>
