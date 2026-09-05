@@ -18,6 +18,7 @@
   const ATTACHMENT_TOKEN_ESTIMATE = 4_000;
   const MAX_ADAPTIVE_LIMIT_TOKENS = 16_000_000;
   const REFRESH_MS = 750;
+  const DIAGNOSTIC_MIN_INTERVAL_MS = 5_000;
   const HARD_LIMIT_ACTION_PATTERN = /开始新(?:对话|聊天)|新建(?:对话|聊天)|start (?:a )?new chat|new chat/i;
   const COMPOSER_SELECTORS = [
     '#prompt-textarea',
@@ -35,8 +36,7 @@
   function formatPercent(value) {
     const percent = clampPercent(value);
     if (percent === 0 || percent === 100) return `${Math.round(percent)}%`;
-    if (percent < 10) return `${percent.toFixed(1)}%`;
-    return `${Math.round(percent)}%`;
+    return `${percent.toFixed(1)}%`;
   }
 
   function normalizeModelId(value) {
@@ -161,6 +161,36 @@
     return clampPercent((1 - (current / limit)) * 100);
   }
 
+  function diagnosticConversationHash(value) {
+    const text = String(value ?? 'unknown');
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return `ctx-${hash.toString(16).padStart(8, '0')}`;
+  }
+
+  function buildDiagnosticDetails(snapshot, localBudget, result) {
+    return {
+      conversationHash: diagnosticConversationHash(snapshot?.conversationKey),
+      model: normalizeModelId(snapshot?.model),
+      remainingPercent: Number(clampPercent(result?.percent).toFixed(2)),
+      remainingDisplay: formatPercent(result?.percent),
+      remainingSource: String(result?.source || 'unknown'),
+      measurementSource: String(localBudget?.measurementSource || 'unknown'),
+      historyTokens: Math.max(0, Math.ceil(Number(localBudget?.historyTokens) || 0)),
+      historyCharacters: Math.max(0, Math.ceil(Number(localBudget?.historyCharacters) || 0)),
+      historyMessages: Math.max(0, Math.ceil(Number(localBudget?.historyMessages) || 0)),
+      cumulativeTokens: Math.max(0, Math.ceil(Number(localBudget?.cumulativeTokens) || 0)),
+      cumulativeCharacters: Math.max(0, Math.ceil(Number(localBudget?.cumulativeCharacters) || 0)),
+      cumulativeMessages: Math.max(0, Math.ceil(Number(localBudget?.cumulativeMessages) || 0)),
+      checkpointMatched: snapshot?.checkpointMatched === true,
+      checkpointRestored: snapshot?.checkpointRestored === true,
+      hardLimitObservedCount: Math.max(0, Math.floor(Number(snapshot?.hardLimitObservedCount) || 0)),
+    };
+  }
+
   function calculateRemainingPercent({ snapshot = null, profile = null, hardLimitVisible = false, localBudget = null } = {}) {
     if (hardLimitVisible || snapshot?.hardLimitVisible) {
       return { percent: 0, source: 'chatgpt-visible-hard-limit', metricCount: 0 };
@@ -215,6 +245,8 @@
     computeLocalBudget,
     remainingForMetric,
     calculateRemainingPercent,
+    diagnosticConversationHash,
+    buildDiagnosticDetails,
   });
   globalThis[KEY] = api;
 
@@ -223,6 +255,8 @@
   let rootObserver = null;
   let observedRoot = null;
   let refreshQueued = false;
+  let lastDiagnosticFingerprint = '';
+  let lastDiagnosticAt = 0;
 
   function visible(element) {
     const rect = element?.getBoundingClientRect?.();
@@ -332,6 +366,8 @@
       model: windowProfile.model,
       contextWindowSource: windowProfile.source,
       measurementSource: measured.source,
+      historyCharacters: measured.characters,
+      historyMessages: measured.messages,
       cumulativeTokens: Math.max(measured.tokens, Number(snapshot?.cumulativeConversationTokens) || 0),
       cumulativeCharacters: Math.max(measured.characters, Number(snapshot?.cumulativeConversationCharacters) || 0),
       cumulativeMessages: Math.max(measured.messages, Number(snapshot?.cumulativeMessageCount) || 0),
@@ -359,18 +395,43 @@
     return false;
   }
 
-  function detailText(result, localBudget) {
+  function maybeLogDiagnostic(details) {
+    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
+    const fingerprint = [
+      details.conversationHash,
+      details.remainingDisplay,
+      details.remainingSource,
+      details.measurementSource,
+      details.historyTokens,
+      details.cumulativeTokens,
+      details.cumulativeCharacters,
+      details.cumulativeMessages,
+      details.checkpointMatched,
+    ].join(':');
+    if (fingerprint === lastDiagnosticFingerprint) return;
+    const now = Date.now();
+    if (lastDiagnosticAt && now - lastDiagnosticAt < DIAGNOSTIC_MIN_INTERVAL_MS) return;
+    lastDiagnosticFingerprint = fingerprint;
+    lastDiagnosticAt = now;
+    void chrome.runtime.sendMessage({
+      type: 'GPTLOCK_CONTEXT_BUDGET_DIAGNOSTIC',
+      details,
+    }).catch(() => {});
+  }
+
+  function detailText(result, localBudget, snapshot) {
+    const scope = `\n统计范围：仅当前对话（${diagnosticConversationHash(snapshot?.conversationKey)}）`;
     if (result.source === 'chatgpt-visible-hard-limit') {
-      return '聊天长度剩余：0%\nChatGPT 已明确提示当前对话达到长度上限，因此当前聊天剩余长度直接记为 0%。';
+      return `聊天长度剩余：0%\nChatGPT 已明确提示当前对话达到长度上限，因此当前聊天剩余长度直接记为 0%。${scope}`;
     }
     if (result.source === 'learned-chatgpt-thread-boundary') {
-      return `聊天长度剩余：${formatPercent(result.percent)}\n沿用已验证逻辑：基于该账户/模型此前真实“对话长度上限”样本，按累计 token/字符/消息规模取最保守剩余比例。`;
+      return `聊天长度剩余：${formatPercent(result.percent)}\n沿用已验证逻辑：基于该账户/模型此前真实“对话长度上限”样本，按当前对话自己的累计 token/字符/消息规模取最保守剩余比例。${scope}`;
     }
     if (result.source === 'local-operational-budget') {
       const source = localBudget?.measurementSource === 'conversation-tree' ? '完整活动分支' : '页面消息';
-      return `聊天长度剩余：${formatPercent(result.percent)}\n沿用已验证的本地上下文估算逻辑；当前按${source}和模型安全预算计算，不依赖私有核心返回 remainingPercent。`;
+      return `聊天长度剩余：${formatPercent(result.percent)}\n沿用已验证的本地上下文估算逻辑；当前按${source}和模型安全预算计算，不依赖私有核心返回 remainingPercent。${scope}`;
     }
-    return '聊天长度剩余：未知\n当前页面尚没有足够聊天内容用于估算。';
+    return `聊天长度剩余：未知\n当前页面尚没有足够聊天内容用于估算。${scope}`;
   }
 
   function observeRoot(root) {
@@ -403,6 +464,8 @@
     const localBudget = currentLocalBudget(snapshot, profile, budgetApi);
     const hardLimitVisible = hasVisibleConversationHardLimit(budgetApi);
     const result = calculateRemainingPercent({ snapshot, profile, hardLimitVisible, localBudget });
+    const diagnosticDetails = buildDiagnosticDetails(snapshot, localBudget, result);
+    maybeLogDiagnostic(diagnosticDetails);
 
     const host = document.getElementById('gptlock-model-indicator-host');
     const root = host?.shadowRoot;
@@ -431,7 +494,7 @@
     if (row.dataset.remainingSource !== result.source) row.dataset.remainingSource = result.source;
     if (row.dataset.measurementSource !== localBudget.measurementSource) row.dataset.measurementSource = localBudget.measurementSource;
 
-    const detail = detailText(result, localBudget);
+    const detail = detailText(result, localBudget, snapshot);
     if (row.title !== detail) row.title = detail;
     if (row.getAttribute('aria-label') !== detail) row.setAttribute('aria-label', detail);
   }
