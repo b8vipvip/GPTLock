@@ -34,10 +34,12 @@ test('publish creates a new version and rollback never overwrites history', () =
   const initial = legal.readPublished('terms');
   const draft = structuredClone(legal.readAdmin('terms').draft);
   draft.title = '新版服务条款';
+  draft.styles = { title: { font: 'georgia', size: 28, color: '#FF0000', background: 'expression(bad)', bold: true } };
   legal.saveDraft('terms', draft);
   const published = legal.publish('terms', 'PUBLISH:terms');
   assert.equal(published.published.version, 2);
   assert.equal(published.published.document.title, '新版服务条款');
+  assert.deepEqual(published.published.document.styles.title, { font: 'georgia', size: 28, color: '#ff0000', bold: true });
   assert.equal(legal.readVersion('terms', 1).document.title, initial.document.title);
 
   const rolled = legal.rollback('terms', 1, 'ROLLBACK:terms');

@@ -1,3 +1,5 @@
+const cmsRichTextPromise = import('/rich-text-style.js').catch(() => null);
+
 (() => {
   const current = document.body.dataset.adminPage || '';
   const nav = document.querySelector('.sidebar nav');
@@ -30,7 +32,8 @@
   if (!operationalPages.includes(page) && !legalPages.includes(legalKey)) return;
 
   function qs(selector, root = document) { return root.querySelector(selector); }
-  function setText(node, value) { if (!node || value === undefined || value === null) return; node.textContent = String(value); node.style.whiteSpace = 'pre-line'; }
+  let richText = null;
+  function setText(node, value, style = {}) { if (!node || value === undefined || value === null) return; node.textContent = String(value); node.style.whiteSpace = 'pre-line'; richText?.applyTextStyle(node, style); }
   function safeHref(value) {
     const href = String(value || '');
     if (/^\/(?!\/)[^\s]*$/.test(href)) return href;
@@ -94,6 +97,7 @@
   }
 
   async function loadLegal() {
+    richText = await cmsRichTextPromise;
     const response = await fetch(`/site/api/legal/${encodeURIComponent(legalKey)}`, { credentials: 'same-origin', cache: 'no-store' });
     if (!response.ok) return;
     const data = await response.json().catch(() => null); const doc = data?.document; if (!doc) return;
@@ -102,15 +106,16 @@
     if (doc.description) meta.content = doc.description;
     const main = qs('main.legal'); if (!main) return;
     main.replaceChildren();
-    const eyebrow = document.createElement('span'); eyebrow.className = 'eyebrow'; eyebrow.textContent = doc.eyebrow || '';
-    const h1 = document.createElement('h1'); h1.textContent = doc.title || '';
-    if (doc.subtitle) { h1.append(document.createElement('br')); const small = document.createElement('small'); small.textContent = doc.subtitle; h1.append(small); }
+    const eyebrow = document.createElement('span'); eyebrow.className = 'eyebrow'; setText(eyebrow, doc.eyebrow || '', doc.styles?.eyebrow);
+    const h1 = document.createElement('h1'); const titleText = document.createElement('span'); setText(titleText, doc.title || '', doc.styles?.title); h1.append(titleText);
+    if (doc.subtitle) { h1.append(document.createElement('br')); const small = document.createElement('small'); setText(small, doc.subtitle, doc.styles?.subtitle); h1.append(small); }
     const metaLine = document.createElement('p'); metaLine.className = 'meta'; metaLine.textContent = `最后更新 / Last updated: ${doc.lastUpdated || '—'} · v${Number(data.version || 0)}`;
-    const body = document.createElement('div'); body.dataset.legalPublishedVersion = String(data.version || 0); renderLegalMarkdown(body, doc.content || '');
+    const body = document.createElement('div'); body.dataset.legalPublishedVersion = String(data.version || 0); renderLegalMarkdown(body, doc.content || ''); richText?.applyTextStyle(body, doc.styles?.content);
     main.append(eyebrow, h1, metaLine, body);
   }
 
   async function loadOperational() {
+    richText = await cmsRichTextPromise;
     const response = await fetch('/site/api/website', { credentials: 'same-origin', cache: 'no-store' });
     if (!response.ok) return;
     const data = await response.json().catch(() => null); const config = data?.config; const current = config?.pages?.[page];
@@ -123,8 +128,8 @@
   }
   function heroRoot() { if (['guide','releases','account'].includes(page)) return qs('.page-hero'); if (['issues','support'].includes(page)) return qs('main.support'); return null; }
   function applyHero(hero) {
-    const root = heroRoot(); if (!root) return; setText(qs('.eyebrow', root), hero.eyebrow); const h1 = qs('h1', root); if (h1 && hero.title) setText(h1, hero.title);
-    let body = null; if (['guide','releases','account'].includes(page)) body = qs(':scope > p', root); else body = [...root.children].find((node) => node.tagName === 'P'); if (body && hero.body) setText(body, hero.body);
+    const root = heroRoot(); if (!root) return; setText(qs('.eyebrow', root), hero.eyebrow, hero.styles?.eyebrow); const h1 = qs('h1', root); if (h1 && hero.title) setText(h1, hero.title, hero.styles?.title);
+    let body = null; if (['guide','releases','account'].includes(page)) body = qs(':scope > p', root); else body = [...root.children].find((node) => node.tagName === 'P'); if (body && hero.body) setText(body, hero.body, hero.styles?.body);
   }
   function targetFor(id) {
     if (page === 'guide') { const sections = [...document.querySelectorAll('main > section')]; return id === 'guide-steps' ? sections[1] : id === 'guide-callout' ? sections[2] : null; }
@@ -135,7 +140,7 @@
     return null;
   }
   function moduleRoot() { if (page === 'guide' || page === 'releases') return qs('main'); if (page === 'issues' || page === 'support') return qs('main.support'); if (page === 'account') return qs('.account-layout'); return null; }
-  function applyCallout(target, module) { if (!target) return; setText(qs('h2', target), module.title); setText(qs('p', target), module.body); const link = qs('a.btn', target); if (link) { setText(link, module.buttonLabel); if (module.buttonHref) link.href = module.buttonHref; } }
+  function applyCallout(target, module) { if (!target) return; setText(qs('h2', target), module.title, module.styles?.title); setText(qs('p', target), module.body, module.styles?.body); const link = qs('a.btn', target); if (link) { setText(link, module.buttonLabel, module.styles?.buttonLabel); if (module.buttonHref) link.href = module.buttonHref; } }
   function applyModules(modules) {
     const sorted = [...modules].sort((a, b) => Number(a.order) - Number(b.order)); const root = moduleRoot();
     for (const module of sorted) { const target = targetFor(module.id); if (!target) continue; if (!module.enabled) target.style.display = 'none'; else target.style.removeProperty('display'); target.dataset.cmsPageModule = module.id; if (module.type === 'callout') applyCallout(target, module); }
@@ -149,6 +154,7 @@
   if (document.body.dataset.adminPage !== 'website') return;
   const $ = (id) => document.getElementById(id);
   const legalState = { documents: [], active: 'privacy', loaded: false };
+  let richText = null; const styledFields = ['eyebrow','title','subtitle','content'];
   const editableFields = ['browserTitle','description','eyebrow','title','subtitle','content'];
   const fieldControls = {
     browserTitle:'legalBrowserTitle', description:'legalDescription', eyebrow:'legalEyebrow', title:'legalTitle', subtitle:'legalSubtitle', content:'legalContent',
@@ -166,20 +172,30 @@
   function replace(data) { const index = legalState.documents.findIndex((item) => item.key === data.key); if (index >= 0) legalState.documents[index] = data; else legalState.documents.push(data); }
   function collect() {
     const item = current(); if (!item) return null;
-    item.draft = { ...item.draft, browserTitle: $('legalBrowserTitle').value, description: $('legalDescription').value, eyebrow: $('legalEyebrow').value, title: $('legalTitle').value, subtitle: $('legalSubtitle').value, content: $('legalContent').value };
-    return { ...item.draft };
+    item.draft = { ...item.draft, styles: { ...(item.draft.styles || {}) }, browserTitle: $('legalBrowserTitle').value, description: $('legalDescription').value, eyebrow: $('legalEyebrow').value, title: $('legalTitle').value, subtitle: $('legalSubtitle').value, content: $('legalContent').value };
+    return { ...item.draft, styles: { ...(item.draft.styles || {}) } };
+  }
+  function legalStyle(item, field) { item.draft.styles ||= {}; item.draft.styles[field] ||= {}; return item.draft.styles[field]; }
+  function refreshLegalStyleEditors(item) {
+    if (!richText) return;
+    for (const field of styledFields) {
+      const control = $(fieldControls[field]); const label = control?.closest('label'); if (!control || !label) continue;
+      label.querySelector(':scope > .cms-style-toolbar')?.remove(); label.classList.add('has-rich-style');
+      const toolbar = richText.createTextStyleToolbar({ control, value: legalStyle(item, field), onChange: (next) => { item.draft.styles[field] = next; } });
+      label.insertBefore(toolbar, control);
+    }
   }
   function localMerge(data, pending, savedField = null) {
-    const merged = { ...data, draft: { ...data.published.document } };
+    const merged = { ...data, draft: { ...data.published.document, styles: { ...(data.published.document.styles || {}), ...(pending.styles || {}) } } };
     for (const field of editableFields) merged.draft[field] = pending[field] ?? merged.draft[field];
-    if (savedField) merged.draft[savedField] = data.published.document[savedField];
+    if (savedField) { merged.draft[savedField] = data.published.document[savedField]; if (styledFields.includes(savedField)) merged.draft.styles[savedField] = data.published.document.styles?.[savedField] || {}; }
     merged.draft.lastUpdated = data.published.document.lastUpdated;
-    merged.dirty = editableFields.some((field) => String(merged.draft[field] ?? '') !== String(data.published.document[field] ?? ''));
+    merged.dirty = editableFields.some((field) => String(merged.draft[field] ?? '') !== String(data.published.document[field] ?? '')) || styledFields.some((field) => JSON.stringify(merged.draft.styles?.[field] || {}) !== JSON.stringify(data.published.document.styles?.[field] || {}));
     return merged;
   }
   function docLines(doc) {
     const body = String(doc?.content || '').split('\n'); const limited = body.length > 400 ? [...body.slice(0, 400), `… 已截断，正文共 ${body.length} 行 …`] : body;
-    return [`浏览器标题: ${doc?.browserTitle || ''}`, `SEO: ${doc?.description || ''}`, `顶部短标题: ${doc?.eyebrow || ''}`, `主标题: ${doc?.title || ''}`, `副标题: ${doc?.subtitle || ''}`, `Last updated: ${doc?.lastUpdated || ''}`, '', ...limited];
+    return [`浏览器标题: ${doc?.browserTitle || ''}`, `SEO: ${doc?.description || ''}`, `顶部短标题: ${doc?.eyebrow || ''}`, `主标题: ${doc?.title || ''}`, `副标题: ${doc?.subtitle || ''}`, `文本样式: ${JSON.stringify(doc?.styles || {})}`, `Last updated: ${doc?.lastUpdated || ''}`, '', ...limited];
   }
   function lineDiff(before, after) {
     const a = docLines(before), b = docLines(after); const dp = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
@@ -218,17 +234,18 @@
   function render() {
     const item = current(); if (!item || !$('legalName')) return; tabs();
     $('legalName').textContent = `${item.name} · ${item.path}`; $('legalState').textContent = `已发布 v${item.published.version} · ${date(item.published.publishedAt)}${item.dirty ? ' · 当前页面有未保存编辑' : ' · 已同步'}`;
-    $('legalBrowserTitle').value = item.draft.browserTitle || ''; $('legalDescription').value = item.draft.description || ''; $('legalEyebrow').value = item.draft.eyebrow || ''; $('legalTitle').value = item.draft.title || ''; $('legalSubtitle').value = item.draft.subtitle || ''; $('legalLastUpdated').value = item.published.document.lastUpdated || ''; $('legalContent').value = item.draft.content || ''; $('legalPreview').href = item.path; history(item); renderDiff(item.published.document, item.draft);
+    $('legalBrowserTitle').value = item.draft.browserTitle || ''; $('legalDescription').value = item.draft.description || ''; $('legalEyebrow').value = item.draft.eyebrow || ''; $('legalTitle').value = item.draft.title || ''; $('legalSubtitle').value = item.draft.subtitle || ''; $('legalLastUpdated').value = item.published.document.lastUpdated || ''; $('legalContent').value = item.draft.content || ''; $('legalPreview').href = item.path; refreshLegalStyleEditors(item); history(item); renderDiff(item.published.document, item.draft);
     document.querySelectorAll('.legal-fields .cms-field-status').forEach((el) => { el.textContent = ''; });
   }
   async function load() {
     if (!$('legalTabs') || $('app')?.hidden) return;
+    await legalToolbarReady;
     try { const data = await api('/admin/api/legal'); legalState.documents = data.documents || []; if (!legalState.documents.some((item) => item.key === legalState.active)) legalState.active = legalState.documents[0]?.key || 'privacy'; legalState.loaded = true; render(); }
     catch (error) { if (error.status !== 401) msg(error.message, 'bad'); }
   }
   async function saveLegalField(field, saveButton, statusNode) {
     const item = current(); if (!item) return; const pending = collect(); const original = saveButton.textContent; saveButton.disabled = true; saveButton.textContent = '保存中…'; statusNode.textContent = '正在发布';
-    const next = { ...item.published.document, [field]: pending[field] };
+    const next = { ...item.published.document, [field]: pending[field] }; if (styledFields.includes(field)) next.styles = { ...(item.published.document.styles || {}), [field]: pending.styles?.[field] || {} };
     try {
       const saved = await api(`/admin/api/legal/${item.key}/draft`, { method: 'PUT', body: JSON.stringify({ document: next }) });
       if (!saved.dirty) {
@@ -244,13 +261,14 @@
     } catch (error) { statusNode.textContent = '保存失败'; msg(error.message, 'bad'); }
     finally { saveButton.disabled = false; saveButton.textContent = original; }
   }
-  function installLegalFieldSaves() {
+  async function installLegalFieldSaves() {
+    richText = await cmsRichTextPromise;
     for (const [field, id] of Object.entries(fieldControls)) {
       const control = $(id); const label = control?.closest('label'); if (!control || !label || label.dataset.fieldSaveReady === '1') continue;
       label.dataset.fieldSaveReady = '1'; label.classList.add('cms-field'); const footer = node('span', 'cms-field-footer'); const status = node('small', 'cms-field-status'); const save = node('button', 'cms-field-save', '保存'); save.type = 'button'; save.addEventListener('click', () => void saveLegalField(field, save, status)); footer.append(status, save); label.append(footer);
     }
   }
-  installLegalFieldSaves();
+  const legalToolbarReady = installLegalFieldSaves();
   const app = $('app'); if (app) new MutationObserver(() => { if (!app.hidden && !legalState.loaded) void load(); }).observe(app, { attributes: true, attributeFilter: ['hidden'] });
   if (app && !app.hidden) void load();
 })();
